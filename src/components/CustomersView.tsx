@@ -232,7 +232,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                 <div>
                   <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
                     <span>{cust.name}</span>
-                    {cust.type.includes('Wholesale') && (
+                    {cust.type?.includes('Wholesale') && (
                       <span className="px-1.5 py-0.5 text-[9px] font-bold bg-indigo-50 text-indigo-700 rounded-md border border-indigo-100">
                         B2B
                       </span>
@@ -244,13 +244,13 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                   </div>
                 </div>
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
-                  cust.pricingTier === 'wholesale_vip'
+                  cust.tier?.includes('VIP')
                     ? 'bg-purple-100 text-purple-800'
-                    : cust.pricingTier === 'wholesale_standard'
+                    : cust.tier?.includes('Standard')
                     ? 'bg-blue-100 text-blue-800'
                     : 'bg-slate-100 text-slate-800'
                 }`}>
-                  {cust.pricingTier.replace('_', ' ')}
+                  {cust.tier || 'Standard'}
                 </span>
               </div>
 
@@ -332,7 +332,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                     <td className="py-4 px-4">
                       <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
                         <span>{cust.name}</span>
-                        {cust.type.includes('Wholesale') && (
+                        {cust.type?.includes('Wholesale') && (
                           <span className="px-1.5 py-0.5 text-[9px] font-bold bg-indigo-50 text-indigo-700 rounded-md border border-indigo-100">
                             B2B
                           </span>
