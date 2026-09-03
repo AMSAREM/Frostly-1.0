@@ -1,0 +1,6 @@
+{
+  "name": "Frostly - Seafood Business Platform",
+  "description": "Progressive Web App (PWA) seafood ERP and management platform with Financials (P&L, AR/AP), Customer CRM, Supplier & Catch Inward logs, offline local caching, and Dual Retail POS & Wholesale order fulfillment.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

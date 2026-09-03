@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgMask" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#312e81"/>
+      <stop offset="50%" stop-color="#4338ca"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+    <linearGradient id="frostMask" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e0f2fe"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+    <filter id="glowMask" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  <!-- Full bleed for maskable safe area -->
+  <rect width="512" height="512" fill="url(#bgMask)"/>
+  
+  <path d="M 0 380 Q 128 340 256 380 T 512 380 L 512 512 L 0 512 Z" fill="#ffffff" fill-opacity="0.08"/>
+  <path d="M 0 420 Q 128 380 256 420 T 512 420 L 512 512 L 0 512 Z" fill="#38bdf8" fill-opacity="0.14"/>
+
+  <!-- Centered in 80% safe zone -->
+  <g transform="translate(256, 256)" filter="url(#glowMask)">
+    <circle cx="0" cy="0" r="32" fill="url(#frostMask)"/>
+    <circle cx="0" cy="0" r="18" fill="#4f46e5"/>
+    
+    <!-- Arms scaled within safe zone -->
+    <path d="M 0 -32 L 0 -115 M -26 -80 L 0 -54 L 26 -80 M -18 -102 L 0 -90 L 18 -102" stroke="url(#frostMask)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <path d="M 0 32 L 0 115 M -26 80 L 0 54 L 26 80 M -18 102 L 0 90 L 18 102" stroke="url(#frostMask)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    
+    <g transform="rotate(60)">
+      <path d="M 0 -32 L 0 -115 M -26 -80 L 0 -54 L 26 -80" stroke="url(#frostMask)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </g>
+    <g transform="rotate(120)">
+      <path d="M 0 -32 L 0 -115 M -26 -80 L 0 -54 L 26 -80" stroke="url(#frostMask)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </g>
+    <g transform="rotate(240)">
+      <path d="M 0 -32 L 0 -115 M -26 -80 L 0 -54 L 26 -80" stroke="url(#frostMask)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </g>
+    <g transform="rotate(300)">
+      <path d="M 0 -32 L 0 -115 M -26 -80 L 0 -54 L 26 -80" stroke="url(#frostMask)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </g>
+  </g>
+</svg>

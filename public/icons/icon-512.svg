@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg512" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3730a3"/>
+      <stop offset="35%" stop-color="#4f46e5"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+    <linearGradient id="frost512" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e0f2fe"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+    <filter id="glow512" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg512)"/>
+  
+  <!-- Subtle wave backdrop -->
+  <path d="M 0 370 Q 128 320 256 370 T 512 370 L 512 512 L 0 512 Z" fill="#ffffff" fill-opacity="0.08"/>
+  <path d="M 0 410 Q 128 360 256 410 T 512 410 L 512 512 L 0 512 Z" fill="#38bdf8" fill-opacity="0.14"/>
+
+  <!-- Central Emblem -->
+  <g transform="translate(256, 256)" filter="url(#glow512)">
+    <circle cx="0" cy="0" r="38" fill="url(#frost512)"/>
+    <circle cx="0" cy="0" r="22" fill="#4f46e5"/>
+    
+    <!-- 6 Snowflake / Crystal Arms -->
+    <!-- Arm 1 (Up) -->
+    <path d="M 0 -38 L 0 -144 M -32 -100 L 0 -68 L 32 -100 M -22 -128 L 0 -112 L 22 -128" stroke="url(#frost512)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <!-- Arm 2 (Down) -->
+    <path d="M 0 38 L 0 144 M -32 100 L 0 68 L 32 100 M -22 128 L 0 112 L 22 128" stroke="url(#frost512)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <!-- Arm 3 (60 deg) -->
+    <g transform="rotate(60)">
+      <path d="M 0 -38 L 0 -144 M -32 -100 L 0 -68 L 32 -100" stroke="url(#frost512)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </g>
+    <!-- Arm 4 (120 deg) -->
+    <g transform="rotate(120)">
+      <path d="M 0 -38 L 0 -144 M -32 -100 L 0 -68 L 32 -100" stroke="url(#frost512)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </g>
+    <!-- Arm 5 (240 deg) -->
+    <g transform="rotate(240)">
+      <path d="M 0 -38 L 0 -144 M -32 -100 L 0 -68 L 32 -100" stroke="url(#frost512)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </g>
+    <!-- Arm 6 (300 deg) -->
+    <g transform="rotate(300)">
+      <path d="M 0 -38 L 0 -144 M -32 -100 L 0 -68 L 32 -100" stroke="url(#frost512)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </g>
+  </g>
+
+  <!-- Super-Cryo Telemetry Pill -->
+  <rect x="320" y="60" width="132" height="52" rx="26" fill="#0f172a" fill-opacity="0.75" stroke="#38bdf8" stroke-width="2" stroke-opacity="0.3"/>
+  <text x="386" y="93" fill="#38bdf8" font-family="-apple-system, system-ui, sans-serif" font-weight="800" font-size="22" text-anchor="middle" letter-spacing="1">-60°C</text>
+</svg>

@@ -1,0 +1,63 @@
+{
+  "name": "Frostly - Seafood Logistics & Business Platform",
+  "short_name": "Frostly",
+  "description": "Seafood wholesale ERP, cold-chain telemetry, P&L financials, and retail/wholesale order fulfillment.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#4f46e5",
+  "categories": ["business", "finance", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Retail & Wholesale POS",
+      "short_name": "POS & Orders",
+      "description": "Quick point of sale and wholesale ordering",
+      "url": "/?tab=retail_wholesale",
+      "icons": [{ "src": "/icons/icon-192.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Financials & P&L",
+      "short_name": "Financials",
+      "description": "View P&L summaries and cash flow reports",
+      "url": "/?tab=financials",
+      "icons": [{ "src": "/icons/icon-192.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Catch & Inventory Ledger",
+      "short_name": "Inventory",
+      "description": "Track super-frozen seafood batches and temperatures",
+      "url": "/?tab=inventory",
+      "icons": [{ "src": "/icons/icon-192.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Harvesters & Suppliers",
+      "short_name": "Suppliers",
+      "description": "Manage vessel landings and purchase orders",
+      "url": "/?tab=suppliers",
+      "icons": [{ "src": "/icons/icon-192.svg", "sizes": "192x192" }]
+    }
+  ]
+}
