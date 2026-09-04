@@ -24,27 +24,43 @@ export const NewBatchModal: React.FC<NewBatchModalProps> = ({
   onAddBatch,
   useImperial
 }) => {
-  const [selectedSpeciesId, setSelectedSpeciesId] = useState(SPECIES_CATALOG[0].id);
-  const selectedSpecies = SPECIES_CATALOG.find(s => s.id === selectedSpeciesId) || SPECIES_CATALOG[0];
+  const defaultSpecies = SPECIES_CATALOG[0] || {
+    id: 'spec-general',
+    name: 'Standard Catch',
+    scientificName: '',
+    category: 'Pelagic' as const,
+    defaultZone: 'Commercial Cold Storage (-22°C)' as StorageZone,
+    standardPricePerKg: 35.0,
+    availableGrades: ['Sashimi AAA', 'Grade #1', 'Grade #2'] as QualityGrade[],
+    faoZones: ['FAO 61 (Northwest Pacific)', 'FAO 71 (Western Central Pacific)'],
+    gearTypes: ['Pelagic Longline', 'Handline'],
+    seasonalPeak: 'Year-Round',
+    image: '',
+    shelfLifeFreshDays: 7,
+    shelfLifeFrozenMonths: 18
+  };
 
-  const [vesselName, setVesselName] = useState('F/V Pacific Pioneer');
-  const [vesselReg, setVesselReg] = useState('US-CA-8842');
-  const [captainName, setCaptainName] = useState('Capt. Robert Vance');
-  const [landingPort, setLandingPort] = useState('Port of San Francisco (Pier 45)');
-  const [harvestDate, setHarvestDate] = useState('2026-08-20');
-  const [faoArea, setFaoArea] = useState(selectedSpecies.faoZones[0]);
-  const [gearType, setGearType] = useState(selectedSpecies.gearTypes[0]);
-  const [grade, setGrade] = useState<QualityGrade>(selectedSpecies.availableGrades[0]);
-  const [weightKg, setWeightKg] = useState<number>(350);
+  const [selectedSpeciesId, setSelectedSpeciesId] = useState(defaultSpecies.id);
+  const selectedSpecies = SPECIES_CATALOG.find(s => s.id === selectedSpeciesId) || defaultSpecies;
+
+  const [vesselName, setVesselName] = useState('');
+  const [vesselReg, setVesselReg] = useState('');
+  const [captainName, setCaptainName] = useState('');
+  const [landingPort, setLandingPort] = useState('');
+  const [harvestDate, setHarvestDate] = useState(new Date().toISOString().split('T')[0]);
+  const [faoArea, setFaoArea] = useState(selectedSpecies.faoZones[0] || 'FAO 61');
+  const [gearType, setGearType] = useState(selectedSpecies.gearTypes[0] || 'Pelagic Longline');
+  const [grade, setGrade] = useState<QualityGrade>(selectedSpecies.availableGrades[0] || 'Grade #1');
+  const [weightKg, setWeightKg] = useState<number>(100);
   const [storageZone, setStorageZone] = useState<StorageZone>(selectedSpecies.defaultZone);
   const [coreTemp, setCoreTemp] = useState<number>(
     selectedSpecies.defaultZone.includes('-60') ? -59.2 : selectedSpecies.defaultZone.includes('-22') ? -22.0 : 1.2
   );
-  const [histaminePpm, setHistaminePpm] = useState<number>(3.5);
+  const [histaminePpm, setHistaminePpm] = useState<number>(2.0);
   const [costPerKg, setCostPerKg] = useState<number>(Number((selectedSpecies.standardPricePerKg * 0.65).toFixed(2)));
   const [wholesalePrice, setWholesalePrice] = useState<number>(selectedSpecies.standardPricePerKg);
-  const [certifications, setCertifications] = useState<string[]>(['MSC Certified', 'FDA HACCP Title 21']);
-  const [notes, setNotes] = useState('Immediate chill in slurry. Clear eye test and firm elastic muscle tone.');
+  const [certifications, setCertifications] = useState<string[]>(['FDA HACCP Title 21']);
+  const [notes, setNotes] = useState('');
 
   const availableCerts = ['MSC Certified', 'ASC Certified', 'FDA HACCP Title 21', 'Friend of the Sea', 'Iki-Jime Humane Seal', 'GlobalG.A.P.'];
 

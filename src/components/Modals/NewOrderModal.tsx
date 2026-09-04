@@ -27,45 +27,52 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
   onAddOrder,
   useImperial
 }) => {
-  const [clientName, setClientName] = useState('Sushi Yoshizumi (1 Michelin Star)');
-  const [clientCategory, setClientCategory] = useState<ClientOrder['clientCategory']>('Michelin Restaurant');
-  const [contactPerson, setContactPerson] = useState('Head Chef Akira Yoshizumi');
-  const [contactEmail, setContactEmail] = useState('orders@yoshizumi.com');
-  const [contactPhone, setContactPhone] = useState('+1 (650) 884-9021');
-  const [destinationCity, setDestinationCity] = useState('San Mateo, CA');
-  const [deliveryAddress, setDeliveryAddress] = useState('325 E 4th Ave, San Mateo, CA 94401');
-  const [requiredDeliveryDate, setRequiredDeliveryDate] = useState('2026-08-21 07:00');
-  const [packaging, setPackaging] = useState<ClientOrder['packagingRequirement']>('Dry Ice & Insulated Wax Carton');
-  const [specialInstructions, setSpecialInstructions] = useState('Pre-chill container to -50°C. Chef inspects loin upon dock arrival.');
+  const [clientName, setClientName] = useState('');
+  const [clientCategory, setClientCategory] = useState<ClientOrder['clientCategory']>('Wholesale Distributor');
+  const [contactPerson, setContactPerson] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+  const [destinationCity, setDestinationCity] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [requiredDeliveryDate, setRequiredDeliveryDate] = useState(
+    new Date(Date.now() + 86400000).toISOString().split('T')[0]
+  );
+  const [packaging, setPackaging] = useState<ClientOrder['packagingRequirement']>('Waxed Seafood Master Box');
+  const [specialInstructions, setSpecialInstructions] = useState('');
 
   // Order Items
-  const [items, setItems] = useState<OrderLineItem[]>([
-    {
-      id: 'item-' + Date.now(),
-      speciesId: batches[0]?.speciesId || 'spec-bluefin',
-      speciesName: batches[0]?.speciesName || 'Pacific Bluefin Tuna (Hon-Maguro)',
-      grade: batches[0]?.grade || 'Sashimi AAA',
-      lotId: batches[0]?.id || 'LOT-2026-BFT-0982',
-      requestedWeightKg: 12.0,
-      actualWeighedKg: null,
-      pricePerKg: batches[0]?.wholesalePricePerKg || 118.00,
-      notes: 'Center cut loin'
-    }
-  ]);
+  const [items, setItems] = useState<OrderLineItem[]>(() => {
+    if (batches.length === 0) return [];
+    const b = batches[0];
+    return [
+      {
+        id: 'item-' + Date.now(),
+        speciesId: b.speciesId,
+        speciesName: b.speciesName,
+        grade: b.grade,
+        lotId: b.id,
+        requestedWeightKg: Math.min(10, b.availableWeightKg),
+        actualWeighedKg: null,
+        pricePerKg: b.wholesalePricePerKg,
+        notes: ''
+      }
+    ];
+  });
 
   const handleAddItem = () => {
     const defaultBatch = batches[0];
+    if (!defaultBatch) return;
     setItems([
       ...items,
       {
         id: 'item-' + Date.now() + Math.random(),
-        speciesId: defaultBatch?.speciesId || 'spec-salmon',
-        speciesName: defaultBatch?.speciesName || 'Wild King & Atlantic Salmon (Icy Fjord)',
-        grade: defaultBatch?.grade || 'Grade #1',
-        lotId: defaultBatch?.id || 'LOT-2026-SAL-1104',
-        requestedWeightKg: 10.0,
+        speciesId: defaultBatch.speciesId,
+        speciesName: defaultBatch.speciesName,
+        grade: defaultBatch.grade,
+        lotId: defaultBatch.id,
+        requestedWeightKg: Math.min(10, defaultBatch.availableWeightKg),
         actualWeighedKg: null,
-        pricePerKg: defaultBatch?.wholesalePricePerKg || 25.50,
+        pricePerKg: defaultBatch.wholesalePricePerKg,
         notes: ''
       }
     ]);

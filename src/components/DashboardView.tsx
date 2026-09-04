@@ -358,32 +358,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div className="divide-y divide-slate-100">
-            {orders.slice(0, 4).map(order => (
-              <div key={order.id} className="py-3 flex items-center justify-between hover:bg-slate-50/50 px-2 rounded-xl transition-colors gap-2">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap">
-                    <span className="font-bold text-slate-900 text-xs truncate max-w-[140px] sm:max-w-[200px]">{order.clientName}</span>
-                    <span className="text-[10px] font-mono-code text-slate-400 shrink-0">{order.id}</span>
-                  </div>
-                  <div className="text-[11px] text-slate-500 mt-0.5 truncate">
-                    {order.items.map(i => `${i.speciesName} (${i.requestedWeightKg}kg)`).join(', ')}
-                  </div>
-                </div>
-
-                <div className="text-right shrink-0">
-                  <div className="font-mono-code font-black text-slate-900 text-xs">
-                    {formatCurrency(order.adjustedTotalUSD || order.quotedTotalUSD)}
-                  </div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold inline-block mt-0.5 ${
-                    order.status === 'Delivered'
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-indigo-100 text-indigo-800'
-                  }`}>
-                    {order.status}
-                  </span>
-                </div>
+            {orders.length === 0 ? (
+              <div className="py-8 text-center text-xs text-slate-400">
+                No client orders placed yet. Click "+ Place Order" above to record an order.
               </div>
-            ))}
+            ) : (
+              orders.slice(0, 4).map(order => (
+                <div key={order.id} className="py-3 flex items-center justify-between hover:bg-slate-50/50 px-2 rounded-xl transition-colors gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap">
+                      <span className="font-bold text-slate-900 text-xs truncate max-w-[140px] sm:max-w-[200px]">{order.clientName}</span>
+                      <span className="text-[10px] font-mono-code text-slate-400 shrink-0">{order.id}</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5 truncate">
+                      {order.items.map(i => `${i.speciesName} (${i.requestedWeightKg}kg)`).join(', ')}
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <div className="font-mono-code font-black text-slate-900 text-xs">
+                      {formatCurrency(order.adjustedTotalUSD || order.quotedTotalUSD)}
+                    </div>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold inline-block mt-0.5 ${
+                      order.status === 'Delivered'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-indigo-100 text-indigo-800'
+                    }`}>
+                      {order.status}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
@@ -408,35 +414,41 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div className="divide-y divide-slate-100">
-            {purchaseOrders.slice(0, 4).map(po => {
-              const item = po.speciesItems[0];
-              return (
-                <div key={po.id} className="py-3 flex items-center justify-between hover:bg-slate-50/50 px-2 rounded-xl transition-colors gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap">
-                      <span className="font-bold text-slate-900 text-xs truncate max-w-[140px] sm:max-w-[200px]">{po.supplierName}</span>
-                      <span className="text-[10px] font-mono-code text-slate-400 shrink-0">{po.id}</span>
+            {purchaseOrders.length === 0 ? (
+              <div className="py-8 text-center text-xs text-slate-400">
+                No supplier dock landings recorded yet. Go to Suppliers to log intake.
+              </div>
+            ) : (
+              purchaseOrders.slice(0, 4).map(po => {
+                const item = po.speciesItems[0];
+                return (
+                  <div key={po.id} className="py-3 flex items-center justify-between hover:bg-slate-50/50 px-2 rounded-xl transition-colors gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap">
+                        <span className="font-bold text-slate-900 text-xs truncate max-w-[140px] sm:max-w-[200px]">{po.supplierName}</span>
+                        <span className="text-[10px] font-mono-code text-slate-400 shrink-0">{po.id}</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 mt-0.5 truncate">
+                        {item?.speciesName} • {item?.weightKg.toLocaleString()} kg ({item?.grade})
+                      </div>
                     </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5 truncate">
-                      {item?.speciesName} • {item?.weightKg.toLocaleString()} kg ({item?.grade})
-                    </div>
-                  </div>
 
-                  <div className="text-right shrink-0">
-                    <div className="font-mono-code font-black text-rose-700 text-xs">
-                      {formatCurrency(po.totalCostUSD)}
+                    <div className="text-right shrink-0">
+                      <div className="font-mono-code font-black text-rose-700 text-xs">
+                        {formatCurrency(po.totalCostUSD)}
+                      </div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold inline-block mt-0.5 ${
+                        po.paymentStatus === 'Paid in Full'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}>
+                        {po.paymentStatus}
+                      </span>
                     </div>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold inline-block mt-0.5 ${
-                      po.paymentStatus === 'Paid in Full'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-amber-100 text-amber-800'
-                    }`}>
-                      {po.paymentStatus}
-                    </span>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
       </div>

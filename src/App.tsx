@@ -85,10 +85,11 @@ export default function App() {
     return formatCurrency(amount, settings.currency || 'GHS');
   };
 
-  // Safe local storage load helper
+  // Safe local storage load helper (Purges previous v2 seeded mock data)
   const [batches, setBatches] = useState<InventoryBatch[]>(() => {
     try {
-      const saved = localStorage.getItem('frostly_batches_v2');
+      localStorage.removeItem('frostly_batches_v2');
+      const saved = localStorage.getItem('frostly_batches_v3');
       const parsed = saved ? JSON.parse(saved) : null;
       return Array.isArray(parsed) ? parsed : INITIAL_BATCHES;
     } catch {
@@ -98,7 +99,8 @@ export default function App() {
 
   const [orders, setOrders] = useState<ClientOrder[]>(() => {
     try {
-      const saved = localStorage.getItem('frostly_orders_v2');
+      localStorage.removeItem('frostly_orders_v2');
+      const saved = localStorage.getItem('frostly_orders_v3');
       const parsed = saved ? JSON.parse(saved) : null;
       return Array.isArray(parsed) ? parsed : INITIAL_ORDERS;
     } catch {
@@ -108,7 +110,8 @@ export default function App() {
 
   const [customers, setCustomers] = useState<Customer[]>(() => {
     try {
-      const saved = localStorage.getItem('frostly_customers_v2');
+      localStorage.removeItem('frostly_customers_v2');
+      const saved = localStorage.getItem('frostly_customers_v3');
       const parsed = saved ? JSON.parse(saved) : null;
       return Array.isArray(parsed) ? parsed : INITIAL_CUSTOMERS;
     } catch {
@@ -118,7 +121,8 @@ export default function App() {
 
   const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
     try {
-      const saved = localStorage.getItem('frostly_suppliers_v2');
+      localStorage.removeItem('frostly_suppliers_v2');
+      const saved = localStorage.getItem('frostly_suppliers_v3');
       const parsed = saved ? JSON.parse(saved) : null;
       return Array.isArray(parsed) ? parsed : INITIAL_SUPPLIERS;
     } catch {
@@ -128,7 +132,8 @@ export default function App() {
 
   const [products, setProducts] = useState<RetailWholesaleProduct[]>(() => {
     try {
-      const saved = localStorage.getItem('frostly_products_v2');
+      localStorage.removeItem('frostly_products_v2');
+      const saved = localStorage.getItem('frostly_products_v3');
       const parsed = saved ? JSON.parse(saved) : null;
       return Array.isArray(parsed) ? parsed : INITIAL_PRODUCTS;
     } catch {
@@ -138,7 +143,8 @@ export default function App() {
 
   const [retailSales, setRetailSales] = useState<RetailTransaction[]>(() => {
     try {
-      const saved = localStorage.getItem('frostly_retail_sales_v2');
+      localStorage.removeItem('frostly_retail_sales_v2');
+      const saved = localStorage.getItem('frostly_retail_sales_v3');
       const parsed = saved ? JSON.parse(saved) : null;
       return Array.isArray(parsed) ? parsed : INITIAL_RETAIL_TRANSACTIONS;
     } catch {
@@ -148,7 +154,8 @@ export default function App() {
 
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderLanding[]>(() => {
     try {
-      const saved = localStorage.getItem('frostly_purchase_orders_v2');
+      localStorage.removeItem('frostly_purchase_orders_v2');
+      const saved = localStorage.getItem('frostly_purchase_orders_v3');
       const parsed = saved ? JSON.parse(saved) : null;
       return Array.isArray(parsed) ? parsed : INITIAL_PURCHASE_ORDERS;
     } catch {
@@ -158,7 +165,8 @@ export default function App() {
 
   const [financialEntries, setFinancialEntries] = useState<FinancialLedgerEntry[]>(() => {
     try {
-      const saved = localStorage.getItem('frostly_financial_entries_v2');
+      localStorage.removeItem('frostly_financial_entries_v2');
+      const saved = localStorage.getItem('frostly_financial_entries_v3');
       const parsed = saved ? JSON.parse(saved) : null;
       return Array.isArray(parsed) ? parsed : INITIAL_FINANCIAL_ENTRIES;
     } catch {
@@ -177,39 +185,39 @@ export default function App() {
 
   // Persistence Effects
   useEffect(() => {
-    localStorage.setItem('frostly_batches_v2', JSON.stringify(batches));
+    localStorage.setItem('frostly_batches_v3', JSON.stringify(batches));
   }, [batches]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_orders_v2', JSON.stringify(orders));
+    localStorage.setItem('frostly_orders_v3', JSON.stringify(orders));
   }, [orders]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_customers_v2', JSON.stringify(customers));
+    localStorage.setItem('frostly_customers_v3', JSON.stringify(customers));
   }, [customers]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_suppliers_v2', JSON.stringify(suppliers));
+    localStorage.setItem('frostly_suppliers_v3', JSON.stringify(suppliers));
   }, [suppliers]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_products_v2', JSON.stringify(products));
+    localStorage.setItem('frostly_products_v3', JSON.stringify(products));
   }, [products]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_retail_sales_v2', JSON.stringify(retailSales));
+    localStorage.setItem('frostly_retail_sales_v3', JSON.stringify(retailSales));
   }, [retailSales]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_purchase_orders_v2', JSON.stringify(purchaseOrders));
+    localStorage.setItem('frostly_purchase_orders_v3', JSON.stringify(purchaseOrders));
   }, [purchaseOrders]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_financial_entries_v2', JSON.stringify(financialEntries));
+    localStorage.setItem('frostly_financial_entries_v3', JSON.stringify(financialEntries));
   }, [financialEntries]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_settings_v2', JSON.stringify(settings));
+    localStorage.setItem('frostly_settings_v3', JSON.stringify(settings));
   }, [settings]);
 
   // Settings & Data Management Handlers

@@ -63,12 +63,12 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
 
   // New Inward Catch / PO Form State
   const [poSupplierId, setPoSupplierId] = useState(suppliers[0]?.id || '');
-  const [poVessel, setPoVessel] = useState('F/V Pacific Star');
-  const [poSpeciesName, setPoSpeciesName] = useState('Pacific Bluefin Tuna (Hon-Maguro)');
-  const [poWeightKg, setPoWeightKg] = useState('500');
-  const [poCostPerKg, setPoCostPerKg] = useState('65.00');
-  const [poGrade, setPoGrade] = useState<QualityGrade>('Sashimi AAA');
-  const [poStorageZone, setPoStorageZone] = useState<StorageZone>('Super-Cryo Deep Freeze (-60°C)');
+  const [poVessel, setPoVessel] = useState('');
+  const [poSpeciesName, setPoSpeciesName] = useState('');
+  const [poWeightKg, setPoWeightKg] = useState('');
+  const [poCostPerKg, setPoCostPerKg] = useState('');
+  const [poGrade, setPoGrade] = useState<QualityGrade>('Grade #1');
+  const [poStorageZone, setPoStorageZone] = useState<StorageZone>('Commercial Cold Storage (-22°C)');
   const [poNotes, setPoNotes] = useState('');
 
   // Aggregations
