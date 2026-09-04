@@ -689,6 +689,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                     <UserPlus className="w-3.5 h-3.5" />
                     {isLoading ? 'Creating Tenant Workspace...' : 'Create Organization & Sign In'}
                   </button>
+
+                  <p className="text-[10px] text-slate-400 text-center leading-relaxed">
+                    Zero-step signup requires &quot;Confirm email&quot; to be disabled in Supabase Auth settings. If enabled, verify your inbox link first.
+                  </p>
                 </form>
               )}
 
@@ -775,6 +779,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                     <CheckCircle2 className="w-3.5 h-3.5" />
                     {isLoading ? 'Validating Token & Joining...' : 'Accept Invite & Join'}
                   </button>
+
+                  <p className="text-[10px] text-slate-400 text-center leading-relaxed">
+                    Zero-step signup requires &quot;Confirm email&quot; to be disabled in Supabase Auth settings. If enabled, verify your inbox link first.
+                  </p>
                 </form>
               )}
             </div>

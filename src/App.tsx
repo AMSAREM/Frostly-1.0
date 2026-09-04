@@ -275,16 +275,12 @@ export default function App() {
   }, []);
 
   // Persistence Effects
-  // ARCHITECTURAL MANDATE: All batch mutations MUST go through batchRepository.save() or batchRepository.updateWeights().
-  // Direct writes to 'frostly_batches_v3' are managed exclusively by batchRepository to ensure sync queue integrity.
+  // ARCHITECTURAL MANDATE: All batch and customer mutations MUST go through batchRepository or customerRepository.
+  // Direct writes to 'frostly_batches_v3' and 'frostly_customers_v3' are managed exclusively by the repositories to ensure sync queue integrity.
 
   useEffect(() => {
     localStorage.setItem('frostly_orders_v3', JSON.stringify(orders));
   }, [orders]);
-
-  useEffect(() => {
-    localStorage.setItem('frostly_customers_v3', JSON.stringify(customers));
-  }, [customers]);
 
   useEffect(() => {
     localStorage.setItem('frostly_suppliers_v3', JSON.stringify(suppliers));
@@ -333,9 +329,15 @@ export default function App() {
     financialEntries?: FinancialLedgerEntry[];
     settings?: AppSettings;
   }) => {
-    if (imported.batches) setBatches(imported.batches);
+    if (imported.batches) {
+      setBatches(imported.batches);
+      batchRepository.resetCache(imported.batches);
+    }
     if (imported.orders) setOrders(imported.orders);
-    if (imported.customers) setCustomers(imported.customers);
+    if (imported.customers) {
+      setCustomers(imported.customers);
+      customerRepository.resetCache(imported.customers);
+    }
     if (imported.suppliers) setSuppliers(imported.suppliers);
     if (imported.products) setProducts(imported.products);
     if (imported.retailSales) setRetailSales(imported.retailSales);
@@ -366,6 +368,7 @@ export default function App() {
     setUseImperial(DEFAULT_SETTINGS.useImperial);
     localStorage.clear();
     batchRepository.resetCache(INITIAL_BATCHES);
+    customerRepository.resetCache(INITIAL_CUSTOMERS);
     addNotification({
       title: 'Demo Data Restored',
       message: 'All seafood inventory and financials reset to factory sample state.',

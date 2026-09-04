@@ -308,7 +308,17 @@ export async function createInvite(
 }
 
 /**
- * Compound Flow: Sign up a new user and immediately initialize a new organization
+ * Compound Flow: Sign up a new user and immediately initialize a new organization.
+ * 
+ * SUPABASE AUTH SETTING DEPENDENCY:
+ * This 1-step compound flow requires that "Confirm email" is DISABLED in your Supabase Auth project
+ * (Dashboard > Authentication > Providers > Email > uncheck "Confirm email").
+ * When email confirmation is disabled, supabase.auth.signUp() immediately returns an active JWT session,
+ * allowing create_organization_and_admin() to authenticate via auth.uid() in the same request.
+ * 
+ * If "Confirm email" is enabled, signUp() creates the user without an active session (session: null).
+ * In that case, this function returns a descriptive error guiding the user to confirm their email before
+ * signing in to complete organization creation.
  */
 export async function signUpAndCreateOrganization(
   email: string,
@@ -337,7 +347,16 @@ export async function signUpAndCreateOrganization(
       return { session: null, profile: null, error: signUpErr.message };
     }
 
-    // In case auto-confirm is enabled or session is returned
+    // Check if email confirmation is required by Supabase Auth project settings
+    if (!signUpData.session) {
+      return {
+        session: null,
+        profile: null,
+        error:
+          'Account created! Note: Email confirmation is enabled on this Supabase project. Please check your inbox and confirm your email, then sign in with your credentials to finish setting up your organization. (Tip: Disable "Confirm email" in Supabase Dashboard > Authentication > Providers > Email for instant zero-step registration).',
+      };
+    }
+
     cachedSession = signUpData.session;
 
     const orgRes = await createOrganizationAndAdmin(orgName, adminFullName, adminDepartment);
@@ -353,7 +372,17 @@ export async function signUpAndCreateOrganization(
 }
 
 /**
- * Compound Flow: Sign up a new user and immediately accept an organization invite
+ * Compound Flow: Sign up a new user and immediately accept an organization invite.
+ * 
+ * SUPABASE AUTH SETTING DEPENDENCY:
+ * This 1-step compound flow requires that "Confirm email" is DISABLED in your Supabase Auth project
+ * (Dashboard > Authentication > Providers > Email > uncheck "Confirm email").
+ * When email confirmation is disabled, supabase.auth.signUp() immediately returns an active JWT session,
+ * allowing accept_invite() to authenticate via auth.uid() in the same request.
+ * 
+ * If "Confirm email" is enabled, signUp() creates the user without an active session (session: null).
+ * In that case, this function returns a descriptive error guiding the user to confirm their email before
+ * signing in and accepting the invite.
  */
 export async function signUpAndAcceptInvite(
   email: string,
@@ -380,6 +409,16 @@ export async function signUpAndAcceptInvite(
 
     if (signUpErr) {
       return { session: null, profile: null, error: signUpErr.message };
+    }
+
+    // Check if email confirmation is required by Supabase Auth project settings
+    if (!signUpData.session) {
+      return {
+        session: null,
+        profile: null,
+        error:
+          'Account created! Note: Email confirmation is enabled on this Supabase project. Please check your inbox and confirm your email, then sign in and use "Join with Invite" with your token. (Tip: Disable "Confirm email" in Supabase Dashboard > Authentication > Providers > Email for instant zero-step onboarding).',
+      };
     }
 
     cachedSession = signUpData.session;

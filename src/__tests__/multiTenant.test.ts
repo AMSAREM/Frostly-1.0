@@ -34,7 +34,18 @@ import { batchRepository } from '../repositories/batchRepository';
 import { syncQueue } from '../sync/queue';
 import { Customer, InventoryBatch } from '../types';
 
-describe('Multi-Tenant Architecture & Complete Isolation', () => {
+/**
+ * Multi-Tenant Migration SQL Structure & Static DDL Contract Assertions
+ * 
+ * NOTE ON SCOPE:
+ * These unit tests verify the static syntax, constraint declarations, trigger attachments,
+ * and RLS policy definitions declared inside `supabase/migrations/011_multi_tenant.sql`.
+ * 
+ * For live, active PostgreSQL execution testing proving that Tenant A cannot query or mutate
+ * Tenant B data under real Row-Level Security, see:
+ * `src/__tests__/postgresRlsIntegration.test.ts`
+ */
+describe('Multi-Tenant Migration SQL DDL Contract & Static Syntax Validation', () => {
   const migrationSql = fs.readFileSync(
     path.join(process.cwd(), 'supabase/migrations/011_multi_tenant.sql'),
     'utf-8'
@@ -63,8 +74,8 @@ describe('Multi-Tenant Architecture & Complete Isolation', () => {
     'reefer_sensor_readings'
   ];
 
-  describe('Phase 1: Schema Migration & Composite Key Structure', () => {
-    it('defines organizations and invites tables with required schema', () => {
+  describe('Migration SQL Structure: Schema & Composite Key DDL Contract', () => {
+    it('declares organizations and invites tables with required schema', () => {
       expect(migrationSql).toContain('CREATE TABLE IF NOT EXISTS public.organizations');
       expect(migrationSql).toContain('CREATE TABLE IF NOT EXISTS public.invites');
       expect(migrationSql).toContain('token TEXT NOT NULL UNIQUE');
@@ -72,12 +83,12 @@ describe('Multi-Tenant Architecture & Complete Isolation', () => {
       expect(migrationSql).toContain('used_at TIMESTAMPTZ');
     });
 
-    it('seeds the default organization row for clean legacy backfilling', () => {
+    it('declares the default organization row for clean legacy backfilling', () => {
       expect(migrationSql).toContain('00000000-0000-0000-0000-000000000001');
       expect(migrationSql).toContain('Frostly Cold-Chain Operations (Default)');
     });
 
-    it('adds organization_id NOT NULL and references to organizations on staff_profiles and all 20 business tables', () => {
+    it('declares organization_id NOT NULL and references to organizations on staff_profiles and all 20 business tables', () => {
       expect(migrationSql).toContain('ALTER TABLE public.staff_profiles');
       for (const table of businessTables) {
         expect(migrationSql).toContain(`'${table}'`);
@@ -85,11 +96,11 @@ describe('Multi-Tenant Architecture & Complete Isolation', () => {
       expect(migrationSql).toContain('ADD CONSTRAINT fk_\' || quote_ident(t) || \'_organization FOREIGN KEY (organization_id) REFERENCES public.organizations(id)');
     });
 
-    it('converts all 20 business tables to composite PRIMARY KEY (organization_id, id)', () => {
+    it('declares composite PRIMARY KEY (organization_id, id) for all 20 business tables', () => {
       expect(migrationSql).toContain('PRIMARY KEY (organization_id, id)');
     });
 
-    it('re-establishes all 42 foreign keys as composite (organization_id, target_id) keys', () => {
+    it('declares all 42 foreign keys as composite (organization_id, target_id) keys in migration SQL', () => {
       expect(migrationSql).toContain('FOREIGN KEY (organization_id, species_id) REFERENCES public.species(organization_id, id)');
       expect(migrationSql).toContain('FOREIGN KEY (organization_id, customer_id) REFERENCES public.customers(organization_id, id)');
       expect(migrationSql).toContain('FOREIGN KEY (organization_id, supplier_id) REFERENCES public.suppliers(organization_id, id)');
@@ -99,20 +110,20 @@ describe('Multi-Tenant Architecture & Complete Isolation', () => {
     });
   });
 
-  describe('Phase 2: Tenant Isolation, Automatic Stamping & RLS', () => {
-    it('implements current_org_id() lookup backed by auth.uid()', () => {
+  describe('Migration SQL Structure: Automatic Stamping Triggers & RLS Policy Declarations', () => {
+    it('verifies SQL text defines current_org_id() lookup backed by auth.uid()', () => {
       expect(migrationSql).toContain('CREATE OR REPLACE FUNCTION public.current_org_id()');
       expect(migrationSql).toContain('SELECT organization_id FROM public.staff_profiles');
       expect(migrationSql).toContain('WHERE id = auth.uid() AND is_active = TRUE');
     });
 
-    it('attaches stamp_organization_id() BEFORE INSERT trigger to all business tables and invites', () => {
+    it('verifies SQL text defines stamp_organization_id() BEFORE INSERT trigger on all business tables', () => {
       expect(migrationSql).toContain('CREATE OR REPLACE FUNCTION public.stamp_organization_id()');
       expect(migrationSql).toContain('NEW.organization_id := v_org_id;');
       expect(migrationSql).toContain('trg_stamp_org_');
     });
 
-    it('enforces strict RLS filtering with organization_id = current_org_id() across all business tables', () => {
+    it('verifies SQL text defines strict RLS filtering with organization_id = current_org_id() across all 20 business tables', () => {
       for (const table of businessTables) {
         const hasTableRls = migrationSql.includes(`ON public.${table}`) && 
           migrationSql.includes('organization_id = public.current_org_id()');
@@ -120,15 +131,15 @@ describe('Multi-Tenant Architecture & Complete Isolation', () => {
       }
     });
 
-    it('denies generic direct INSERT on staff_profiles to authenticated users', () => {
+    it('verifies SQL text revokes generic direct INSERT on staff_profiles for authenticated users', () => {
       expect(migrationSql).toContain('DROP POLICY IF EXISTS "staff_profiles_insert" ON public.staff_profiles;');
       // Ensure no CREATE POLICY ... FOR INSERT ON public.staff_profiles exists in the migration
       expect(migrationSql).not.toContain('CREATE POLICY "staff_profiles_insert"');
     });
   });
 
-  describe('Phase 3: The Two Bootstrap Gates (create_organization_and_admin & accept_invite)', () => {
-    it('defines create_organization_and_admin with duplicate user protection', () => {
+  describe('Migration SQL Structure: Bootstrap Function Syntax & Invitation Logic Simulation', () => {
+    it('verifies SQL text defines create_organization_and_admin with duplicate user protection', () => {
       expect(migrationSql).toContain('CREATE OR REPLACE FUNCTION public.create_organization_and_admin');
       expect(migrationSql).toContain('already registered with an organization');
       expect(migrationSql).toContain('INSERT INTO public.organizations');
@@ -136,7 +147,7 @@ describe('Multi-Tenant Architecture & Complete Isolation', () => {
       expect(migrationSql).toContain("'admin'");
     });
 
-    it('defines accept_invite enforcing valid token, non-expired, and non-replayed constraints', () => {
+    it('verifies SQL text defines accept_invite with token existence, expiration, and replay prevention syntax', () => {
       expect(migrationSql).toContain('CREATE OR REPLACE FUNCTION public.accept_invite');
       expect(migrationSql).toContain('Invalid token: Invite was not found');
       expect(migrationSql).toContain('Replay error: This invite was already used');
@@ -144,13 +155,13 @@ describe('Multi-Tenant Architecture & Complete Isolation', () => {
       expect(migrationSql).toContain('SET used_at = NOW()');
     });
 
-    it('defines create_invite restricted strictly to organization administrators', () => {
+    it('verifies SQL text defines create_invite restricted strictly to organization administrators', () => {
       expect(migrationSql).toContain('CREATE OR REPLACE FUNCTION public.create_invite');
       expect(migrationSql).toContain('Access Denied: Only organization administrators can issue staff invites');
       expect(migrationSql).toContain('encode(gen_random_bytes(24), \'hex\')');
     });
 
-    it('simulates invite validation logic for happy path, expired token, and replayed token', () => {
+    it('unit tests algorithmic token validation rules (replay prevention, expiration, happy path)', () => {
       const mockInvite = {
         id: 'inv-101',
         organization_id: 'org-abc',
