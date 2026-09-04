@@ -229,6 +229,23 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   }
 
   /**
+   * Reset the local cache directly (e.g., during full reset)
+   */
+  public resetCache(entities: TDomain[]): void {
+    this.setLocalCache(entities);
+  }
+
+  /**
+   * Save multiple entities in batch
+   */
+  public async saveAll(entities: TDomain[], isInsert = false): Promise<TDomain[]> {
+    for (const entity of entities) {
+      await this.save(entity, isInsert);
+    }
+    return entities;
+  }
+
+  /**
    * Flush pending queued items for this table to Supabase
    */
   public async flushTableQueue(): Promise<{ processed: number; failed: number }> {

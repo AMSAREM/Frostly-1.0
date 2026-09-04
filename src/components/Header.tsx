@@ -18,9 +18,13 @@ import {
   X,
   Check,
   Radio,
-  Sliders
+  Sliders,
+  ShieldCheck,
+  KeyRound,
+  RefreshCw
 } from 'lucide-react';
 import { SystemNotification } from '../types';
+import { syncManager, SyncState } from '../sync/syncManager';
 
 export type ActiveTab = 'dashboard' | 'retail_wholesale' | 'customers' | 'suppliers' | 'financials' | 'inventory' | 'settings';
 
@@ -40,6 +44,9 @@ interface HeaderProps {
   isInstallable?: boolean;
   isInstalled?: boolean;
   isOnline?: boolean;
+  onOpenAuthModal?: () => void;
+  isAuthenticated?: boolean;
+  userRole?: string | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -57,11 +64,19 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenInstallModal,
   isInstallable = false,
   isInstalled = false,
-  isOnline = true
+  isOnline = true,
+  onOpenAuthModal,
+  isAuthenticated = false,
+  userRole = null
 }) => {
   const [showNotifMenu, setShowNotifMenu] = useState(false);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
   const [showQuickAddMenu, setShowQuickAddMenu] = useState(false);
+  const [syncState, setSyncState] = useState<SyncState>(() => syncManager.getState());
+
+  useEffect(() => {
+    return syncManager.subscribe(setSyncState);
+  }, []);
 
   const notifMenuRef = useRef<HTMLDivElement>(null);
   const quickAddRef = useRef<HTMLDivElement>(null);
@@ -353,6 +368,58 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Supabase Queue Sync Status Pill */}
+            {(syncState.pendingCount > 0 || syncState.isSyncing) && (
+              <button
+                id="header-sync-pill"
+                onClick={() => syncManager.flushAll()}
+                disabled={syncState.isSyncing}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+                  syncState.isSyncing
+                    ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                    : 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800'
+                }`}
+                title={
+                  syncState.isSyncing
+                    ? 'Flushing sync queue to Supabase...'
+                    : `${syncState.pendingCount} offline change${syncState.pendingCount === 1 ? '' : 's'} queued. Click to sync now.`
+                }
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${syncState.isSyncing ? 'animate-spin text-indigo-600' : 'text-amber-600'}`} />
+                <span className="hidden sm:inline font-bold">
+                  {syncState.isSyncing ? 'Syncing...' : `${syncState.pendingCount} queued`}
+                </span>
+              </button>
+            )}
+
+            {/* Supabase RLS Auth / Session Status Action */}
+            {onOpenAuthModal && (
+              <button
+                id="header-auth-session-btn"
+                onClick={onOpenAuthModal}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+                  isAuthenticated
+                    ? 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-800'
+                    : 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800'
+                }`}
+                title={isAuthenticated ? `Authenticated as ${userRole || 'Staff'}` : 'Offline / Sign in to Supabase'}
+              >
+                {isAuthenticated ? (
+                  <>
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="hidden sm:inline font-bold">
+                      {userRole ? userRole.toUpperCase() : 'AUTH'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <KeyRound className="w-3.5 h-3.5 text-amber-600" />
+                    <span className="hidden sm:inline font-medium">Auth</span>
+                  </>
+                )}
+              </button>
+            )}
 
             {/* Quick Settings Action (Desktop & Mobile) */}
             <button

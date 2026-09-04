@@ -48,6 +48,9 @@ import {
 import { formatCurrency } from './utils/formatters';
 import { batchRepository } from './repositories/batchRepository';
 import { syncManager } from './sync/syncManager';
+import { AuthModal } from './components/AuthModal';
+import { getSession, getStaffProfile, onAuthStateChange, signInAsTestUser, StaffProfile } from './data/auth';
+import { User } from '@supabase/supabase-js';
 
 export default function App() {
   // PWA and Network state
@@ -184,24 +187,82 @@ export default function App() {
   const [invoiceOrder, setInvoiceOrder] = useState<ClientOrder | null>(null);
   const [isNewBatchModalOpen, setIsNewBatchModalOpen] = useState(false);
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [staffProfile, setStaffProfile] = useState<StaffProfile | null>(null);
+
+  // Monitor Supabase Auth & Staff Profile
+  useEffect(() => {
+    let isMounted = true;
+    getSession().then((session) => {
+      if (isMounted) {
+        setCurrentUser(session?.user ?? null);
+        if (session) {
+          getStaffProfile().then((profile) => {
+            if (isMounted) setStaffProfile(profile);
+          });
+        }
+      }
+    });
+
+    const unsubscribe = onAuthStateChange((session, user) => {
+      if (isMounted) {
+        setCurrentUser(user);
+        if (session) {
+          getStaffProfile(true).then((profile) => {
+            if (isMounted) setStaffProfile(profile);
+          });
+          // Re-hydrate batches from remote now that session is authenticated
+          batchRepository.getBatches().then((fresh) => {
+            if (isMounted && fresh && fresh.length > 0) {
+              setBatches(fresh);
+            }
+          });
+          // Flush any pending queue
+          syncManager.flushAll().catch(console.warn);
+        } else {
+          setStaffProfile(null);
+        }
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
 
   // Hydrate batches from repository on mount (with live Supabase sync when online & authenticated)
   useEffect(() => {
     let isMounted = true;
+
+    // Optional automated dev auto-login when VITE_DEV_TEST_USER_PASSWORD is configured
+    if (!import.meta.env.PROD && (import.meta.env.VITE_DEV_TEST_USER_PASSWORD as string | undefined)) {
+      signInAsTestUser()
+        .then(({ session }) => {
+          if (session) {
+            console.log('[App] Auto-authenticated development staff account:', session.user.email);
+          }
+        })
+        .catch(console.warn);
+    }
+
     batchRepository.getBatches(batches).then(fresh => {
       if (isMounted && fresh && fresh.length > 0) {
         setBatches(fresh);
       }
+      // Drains offline sync queue immediately if network and session are active
+      syncManager.flushAll().catch(console.warn);
     }).catch(err => {
       console.warn('[App] Batch repository load error:', err);
     });
+
     return () => { isMounted = false; };
   }, []);
 
   // Persistence Effects
-  useEffect(() => {
-    localStorage.setItem('frostly_batches_v3', JSON.stringify(batches));
-  }, [batches]);
+  // ARCHITECTURAL MANDATE: All batch mutations MUST go through batchRepository.save() or batchRepository.updateWeights().
+  // Direct writes to 'frostly_batches_v3' are managed exclusively by batchRepository to ensure sync queue integrity.
 
   useEffect(() => {
     localStorage.setItem('frostly_orders_v3', JSON.stringify(orders));
@@ -290,6 +351,7 @@ export default function App() {
     setSettings(DEFAULT_SETTINGS);
     setUseImperial(DEFAULT_SETTINGS.useImperial);
     localStorage.clear();
+    batchRepository.resetCache(INITIAL_BATCHES);
     addNotification({
       title: 'Demo Data Restored',
       message: 'All seafood inventory and financials reset to factory sample state.',
@@ -360,6 +422,26 @@ export default function App() {
     };
     setFinancialEntries(prev => [newFinEntry, ...prev]);
 
+    // Update inventory batches: allocate weight through batchRepository
+    newOrder.items.forEach(item => {
+      if (!item.lotId) return;
+      const targetBatch = batches.find(b => b.id === item.lotId);
+      if (targetBatch) {
+        const newAllocated = targetBatch.allocatedWeightKg + item.requestedWeightKg;
+        const newAvailable = Math.max(0, targetBatch.initialWeightKg - newAllocated);
+        // All batch mutations MUST go through batchRepository
+        batchRepository.updateWeights(targetBatch.id, newAvailable, newAllocated)
+          .then(updated => {
+            if (updated) {
+              setBatches(prev => prev.map(b => b.id === updated.id ? updated : b));
+            }
+          })
+          .catch(err => {
+            console.warn('[App] Error updating batch weight in repository:', err);
+          });
+      }
+    });
+
     addNotification({
       type: 'order_update',
       title: `New B2B Order: ${newOrder.clientName}`,
@@ -383,6 +465,27 @@ export default function App() {
         status: order.status === 'Pending Confirmation' ? 'Weighing & Grading' : order.status
       };
     }));
+
+    // Calibrate batch allocations based on exact certified scale weight through batchRepository
+    updatedItems.forEach(item => {
+      if (!item.lotId || item.actualWeighedKg === null) return;
+      const targetBatch = batches.find(b => b.id === item.lotId);
+      if (targetBatch) {
+        const weightDelta = item.actualWeighedKg - item.requestedWeightKg;
+        const newAllocated = Math.max(0, targetBatch.allocatedWeightKg + weightDelta);
+        const newAvailable = Math.max(0, targetBatch.initialWeightKg - newAllocated);
+        // All batch mutations MUST go through batchRepository
+        batchRepository.updateWeights(targetBatch.id, newAvailable, newAllocated)
+          .then(updated => {
+            if (updated) {
+              setBatches(prev => prev.map(b => b.id === updated.id ? updated : b));
+            }
+          })
+          .catch(err => {
+            console.warn('[App] Error calibrating batch weight in repository:', err);
+          });
+      }
+    });
 
     addNotification({
       type: 'order_update',
@@ -723,6 +826,9 @@ export default function App() {
         isInstallable={isInstallable}
         isInstalled={isInstalled}
         isOnline={isOnline}
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        isAuthenticated={Boolean(currentUser)}
+        userRole={staffProfile?.role ?? (currentUser ? 'Staff' : null)}
       />
 
       {/* Main Content Area - with mobile bottom safe area padding */}
@@ -886,6 +992,17 @@ export default function App() {
         isIOS={isIOS}
         isInstallable={isInstallable}
         isStandalone={isStandalone}
+      />
+
+      {/* Supabase Authentication & RLS Session Gate Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onAuthSuccess={() => {
+          batchRepository.getBatches().then((fresh) => {
+            if (fresh && fresh.length > 0) setBatches(fresh);
+          });
+        }}
       />
     </div>
   );

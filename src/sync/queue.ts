@@ -10,10 +10,10 @@ class SyncQueue {
 
   constructor() {
     this.loadFromStorage();
-    this.initNetworkListeners();
   }
 
   private loadFromStorage(): void {
+    if (typeof localStorage === 'undefined') return;
     try {
       const stored = localStorage.getItem(QUEUE_STORAGE_KEY);
       if (stored) {
@@ -29,6 +29,7 @@ class SyncQueue {
   }
 
   private saveToStorage(): void {
+    if (typeof localStorage === 'undefined') return;
     try {
       localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(this.queue));
       this.notifyListeners();
@@ -45,14 +46,6 @@ class SyncQueue {
       } catch (err) {
         console.error('[SyncQueue] Error in listener callback:', err);
       }
-    });
-  }
-
-  private initNetworkListeners(): void {
-    if (typeof window === 'undefined') return;
-
-    window.addEventListener('online', () => {
-      console.log('[SyncQueue] Network back online. Auto-flush may be triggered by handlers.');
     });
   }
 

@@ -14,10 +14,16 @@ let cachedSession: Session | null = null;
 let cachedStaffProfile: StaffProfile | null = null;
 let isInitialized = false;
 
-// Default seeded test user credentials for development verification
+// Optional development test user email (configurable via env)
+export const DEFAULT_TEST_USER_EMAIL =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_EMAIL) ||
+  'admin@frostly.com';
+
 export const DEFAULT_TEST_USER = {
-  email: 'admin@frostly.com',
-  password: 'Password123!',
+  email: DEFAULT_TEST_USER_EMAIL,
+  password:
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) ||
+    '',
 };
 
 /**
@@ -125,13 +131,35 @@ export async function signIn(
 }
 
 /**
- * Convenience method to sign in with seeded/test credentials
+ * Convenience method to sign in with development test credentials.
+ * Strictly gated: will error out in production environments.
  */
 export async function signInAsTestUser(
-  email = DEFAULT_TEST_USER.email,
-  password = DEFAULT_TEST_USER.password
+  email?: string,
+  password?: string
 ): Promise<{ session: Session | null; error: string | null }> {
-  return signIn(email, password);
+  // Strict environment guard: completely block test user sign-in in production builds
+  if (typeof import.meta !== 'undefined' && import.meta.env?.PROD) {
+    return {
+      session: null,
+      error: 'Test user sign-in is disabled in production environments. Please sign in with staff credentials.',
+    };
+  }
+
+  const targetEmail = email || DEFAULT_TEST_USER_EMAIL;
+  const targetPassword =
+    password ||
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) ||
+    '';
+
+  if (!targetPassword) {
+    return {
+      session: null,
+      error: 'No dev test password configured in VITE_DEV_TEST_USER_PASSWORD. Please enter credentials manually.',
+    };
+  }
+
+  return signIn(targetEmail, targetPassword);
 }
 
 /**
