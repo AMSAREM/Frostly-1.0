@@ -3,6 +3,8 @@ import { supabase, isSupabaseConfigured } from '../utils/supabase';
 
 export interface StaffProfile {
   id: string;
+  organization_id: string;
+  organization_name?: string;
   email: string;
   full_name: string;
   role: 'admin' | 'ops_staff' | 'sales_staff' | 'dispatch_staff' | 'viewer';
@@ -84,7 +86,7 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
   try {
     const { data, error } = await supabase
       .from('staff_profiles')
-      .select('*')
+      .select('*, organizations(name)')
       .eq('id', user.id)
       .single();
 
@@ -93,7 +95,17 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       return null;
     }
 
-    cachedStaffProfile = data as StaffProfile;
+    const orgName = (data as any)?.organizations?.name;
+    cachedStaffProfile = {
+      id: data.id,
+      organization_id: data.organization_id,
+      organization_name: orgName,
+      email: data.email,
+      full_name: data.full_name,
+      role: data.role,
+      department: data.department,
+      is_active: data.is_active,
+    };
     return cachedStaffProfile;
   } catch (e) {
     console.warn('[Auth] Exception fetching staff profile:', e);
@@ -202,3 +214,185 @@ export function onAuthStateChange(
     authListener.subscription.unsubscribe();
   };
 }
+
+/**
+ * Creates an organization and assigns the current authenticated user as its administrator.
+ * Calls SECURITY DEFINER function public.create_organization_and_admin
+ */
+export async function createOrganizationAndAdmin(
+  orgName: string,
+  adminFullName?: string,
+  adminDepartment?: string
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  if (!isSupabaseConfigured) {
+    return { success: false, error: 'Supabase client is not configured' };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('create_organization_and_admin', {
+      p_org_name: orgName,
+      p_admin_full_name: adminFullName || null,
+      p_admin_department: adminDepartment || 'Executive',
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    await getStaffProfile(true);
+    return { success: true, data };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to initialize organization' };
+  }
+}
+
+/**
+ * Accepts an invitation token to join an existing organization.
+ * Calls SECURITY DEFINER function public.accept_invite
+ */
+export async function acceptInvite(
+  token: string,
+  fullName?: string,
+  department?: string
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  if (!isSupabaseConfigured) {
+    return { success: false, error: 'Supabase client is not configured' };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('accept_invite', {
+      p_token: token.trim(),
+      p_full_name: fullName || null,
+      p_department: department || 'Operations',
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    await getStaffProfile(true);
+    return { success: true, data };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to accept invitation' };
+  }
+}
+
+/**
+ * Creates an invitation token for a new staff member (Admin only).
+ * Calls SECURITY DEFINER function public.create_invite
+ */
+export async function createInvite(
+  email: string,
+  role: StaffProfile['role'] = 'viewer',
+  validityDays = 7
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  if (!isSupabaseConfigured) {
+    return { success: false, error: 'Supabase client is not configured' };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('create_invite', {
+      p_email: email.trim(),
+      p_role: role,
+      p_validity_days: validityDays,
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, data };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to issue invite' };
+  }
+}
+
+/**
+ * Compound Flow: Sign up a new user and immediately initialize a new organization
+ */
+export async function signUpAndCreateOrganization(
+  email: string,
+  password: string,
+  orgName: string,
+  adminFullName: string,
+  adminDepartment = 'Executive'
+): Promise<{ session: Session | null; profile: StaffProfile | null; error: string | null }> {
+  if (!isSupabaseConfigured) {
+    return { session: null, profile: null, error: 'Supabase client is not configured' };
+  }
+
+  try {
+    const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: adminFullName,
+          department: adminDepartment,
+        },
+      },
+    });
+
+    if (signUpErr) {
+      return { session: null, profile: null, error: signUpErr.message };
+    }
+
+    // In case auto-confirm is enabled or session is returned
+    cachedSession = signUpData.session;
+
+    const orgRes = await createOrganizationAndAdmin(orgName, adminFullName, adminDepartment);
+    if (!orgRes.success) {
+      return { session: signUpData.session, profile: null, error: orgRes.error || 'Failed to create organization' };
+    }
+
+    const profile = await getStaffProfile(true);
+    return { session: signUpData.session, profile, error: null };
+  } catch (e: any) {
+    return { session: null, profile: null, error: e?.message || 'Organization registration failed' };
+  }
+}
+
+/**
+ * Compound Flow: Sign up a new user and immediately accept an organization invite
+ */
+export async function signUpAndAcceptInvite(
+  email: string,
+  password: string,
+  token: string,
+  fullName: string,
+  department = 'Operations'
+): Promise<{ session: Session | null; profile: StaffProfile | null; error: string | null }> {
+  if (!isSupabaseConfigured) {
+    return { session: null, profile: null, error: 'Supabase client is not configured' };
+  }
+
+  try {
+    const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: fullName,
+          department,
+        },
+      },
+    });
+
+    if (signUpErr) {
+      return { session: null, profile: null, error: signUpErr.message };
+    }
+
+    cachedSession = signUpData.session;
+
+    const inviteRes = await acceptInvite(token, fullName, department);
+    if (!inviteRes.success) {
+      return { session: signUpData.session, profile: null, error: inviteRes.error || 'Failed to accept invite' };
+    }
+
+    const profile = await getStaffProfile(true);
+    return { session: signUpData.session, profile, error: null };
+  } catch (e: any) {
+    return { session: null, profile: null, error: e?.message || 'Invite registration failed' };
+  }
+}
+

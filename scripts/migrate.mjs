@@ -26,7 +26,8 @@ const migrationFiles = [
   '006_grants.sql',
   '007_storage_policies.sql',
   '008_realtime.sql',
-  '009_seed_data.sql'
+  '009_seed_data.sql',
+  '011_multi_tenant.sql'
 ];
 
 async function runMigrations() {

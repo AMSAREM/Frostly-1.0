@@ -213,14 +213,14 @@ export default function App() {
           getStaffProfile(true).then((profile) => {
             if (isMounted) setStaffProfile(profile);
           });
-          // Re-hydrate batches and customers from remote now that session is authenticated
+          // Re-hydrate batches and customers from remote for the authenticated tenant org
           batchRepository.getBatches().then((fresh) => {
-            if (isMounted && fresh && fresh.length > 0) {
+            if (isMounted && fresh) {
               setBatches(fresh);
             }
           });
           customerRepository.getCustomers().then((fresh) => {
-            if (isMounted && fresh && fresh.length > 0) {
+            if (isMounted && fresh) {
               setCustomers(fresh);
             }
           });
@@ -411,11 +411,17 @@ export default function App() {
     setCustomers(prev => prev.map(cust => {
       if (cust.name.toLowerCase() === newOrder.clientName.toLowerCase() || cust.companyName.toLowerCase() === newOrder.clientName.toLowerCase()) {
         const orderVal = newOrder.quotedTotalUSD;
+        const newTotalCount = cust.totalOrdersCount + 1;
+        const newTotalSpend = cust.totalSpendUSD + orderVal;
+        const newBalance = cust.outstandingBalanceUSD + orderVal;
+        customerRepository.updateFinancials(cust.id, newBalance, newTotalSpend, newTotalCount).catch(err => {
+          console.warn('[App] customerRepository updateFinancials on order failed:', err);
+        });
         return {
           ...cust,
-          totalOrdersCount: cust.totalOrdersCount + 1,
-          totalSpendUSD: cust.totalSpendUSD + orderVal,
-          outstandingBalanceUSD: cust.outstandingBalanceUSD + orderVal
+          totalOrdersCount: newTotalCount,
+          totalSpendUSD: newTotalSpend,
+          outstandingBalanceUSD: newBalance
         };
       }
       return cust;
@@ -721,9 +727,13 @@ export default function App() {
       // Customer paid receivable
       setCustomers(prev => prev.map(cust => {
         if (cust.id === entityId) {
+          const newBal = Math.max(0, cust.outstandingBalanceUSD - amount);
+          customerRepository.updateFinancials(cust.id, newBal, cust.totalSpendUSD, cust.totalOrdersCount).catch(err => {
+            console.warn('[App] customerRepository updateFinancials on AR settlement failed:', err);
+          });
           return {
             ...cust,
-            outstandingBalanceUSD: Math.max(0, cust.outstandingBalanceUSD - amount)
+            outstandingBalanceUSD: newBal
           };
         }
         return cust;
