@@ -47,6 +47,7 @@ import {
 } from './types';
 import { formatCurrency } from './utils/formatters';
 import { batchRepository } from './repositories/batchRepository';
+import { customerRepository } from './repositories/customerRepository';
 import { syncManager } from './sync/syncManager';
 import { AuthModal } from './components/AuthModal';
 import { getSession, getStaffProfile, onAuthStateChange, signInAsTestUser, StaffProfile } from './data/auth';
@@ -212,10 +213,15 @@ export default function App() {
           getStaffProfile(true).then((profile) => {
             if (isMounted) setStaffProfile(profile);
           });
-          // Re-hydrate batches from remote now that session is authenticated
+          // Re-hydrate batches and customers from remote now that session is authenticated
           batchRepository.getBatches().then((fresh) => {
             if (isMounted && fresh && fresh.length > 0) {
               setBatches(fresh);
+            }
+          });
+          customerRepository.getCustomers().then((fresh) => {
+            if (isMounted && fresh && fresh.length > 0) {
+              setCustomers(fresh);
             }
           });
           // Flush any pending queue
@@ -255,6 +261,14 @@ export default function App() {
       syncManager.flushAll().catch(console.warn);
     }).catch(err => {
       console.warn('[App] Batch repository load error:', err);
+    });
+
+    customerRepository.getCustomers(customers).then(fresh => {
+      if (isMounted && fresh && fresh.length > 0) {
+        setCustomers(fresh);
+      }
+    }).catch(err => {
+      console.warn('[App] Customer repository load error:', err);
     });
 
     return () => { isMounted = false; };
@@ -524,6 +538,9 @@ export default function App() {
   // Customer Management Handlers
   const handleAddCustomer = (newCust: Customer) => {
     setCustomers(prev => [newCust, ...prev]);
+    customerRepository.save(newCust, true).catch(err => {
+      console.warn('[App] customerRepository save error:', err);
+    });
     addNotification({
       type: 'order_update',
       title: `New Customer Enrolled: ${newCust.name}`,
@@ -534,6 +551,9 @@ export default function App() {
 
   const handleUpdateCustomer = (updatedCust: Customer) => {
     setCustomers(prev => prev.map(c => c.id === updatedCust.id ? updatedCust : c));
+    customerRepository.save(updatedCust, false).catch(err => {
+      console.warn('[App] customerRepository update error:', err);
+    });
   };
 
   const handleSelectCustomerForOrder = (customer: Customer) => {

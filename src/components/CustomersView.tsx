@@ -79,8 +79,10 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
     e.preventDefault();
     if (!newName.trim() || !newEmail.trim()) return;
 
+    // Generate unique ID with random hex suffix to prevent tenant or collision issues
+    const uniqueSuffix = Math.floor(1000 + Math.random() * 9000).toString();
     const newCust: Customer = {
-      id: `CUST-${(customers.length + 101).toString()}`,
+      id: `CUST-${(customers.length + 101).toString()}-${uniqueSuffix}`,
       name: newName.trim(),
       companyName: newCompany.trim() || newName.trim(),
       type: newType,

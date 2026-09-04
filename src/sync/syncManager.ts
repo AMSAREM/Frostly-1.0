@@ -1,5 +1,6 @@
 import { syncQueue } from './queue';
 import { batchRepository } from '../repositories/batchRepository';
+import { customerRepository } from '../repositories/customerRepository';
 import { getSession } from '../data/auth';
 
 type FlushHandler = () => Promise<{ processed: number; failed: number }>;
@@ -24,6 +25,7 @@ class SyncManager {
   constructor() {
     // Register core entity flush handlers
     this.registerHandler('inventory_batches', () => batchRepository.flushTableQueue());
+    this.registerHandler('customers', () => customerRepository.flushTableQueue());
 
     // Listen for online events to automatically flush all queued changes
     if (typeof window !== 'undefined') {

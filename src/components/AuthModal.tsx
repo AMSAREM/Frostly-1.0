@@ -303,21 +303,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                       id="fill-demo-creds-button"
                       type="button"
                       onClick={() => {
-                        setEmail(DEFAULT_TEST_USER_EMAIL);
+                        setEmail('admin@frostly.com');
+                        setPassword('FrostlyAdmin2026!');
                       }}
                       className="px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-700 bg-white hover:bg-indigo-50 text-[11px] font-semibold transition-colors cursor-pointer"
                     >
-                      Fill Email
+                      Fill Admin Demo
                     </button>
                     <button
                       id="quick-test-signin-button"
                       type="button"
-                      onClick={handleTestSignIn}
+                      onClick={async () => {
+                        setIsLoading(true);
+                        setError(null);
+                        setSuccessMsg(null);
+                        try {
+                          const result = await signIn('admin@frostly.com', 'FrostlyAdmin2026!');
+                          if (result.error) {
+                            setError(`Sign in failed: ${result.error}`);
+                          } else {
+                            setSuccessMsg(`Successfully authenticated as ${result.session?.user.email}`);
+                            syncManager.flushAll().catch(console.warn);
+                            if (onAuthSuccess) onAuthSuccess();
+                          }
+                        } catch (e: any) {
+                          setError(e?.message || 'Authentication error');
+                        } finally {
+                          setIsLoading(false);
+                        }
+                      }}
                       disabled={isLoading || !isSupabaseConfigured}
                       className="flex-1 flex items-center justify-center gap-2 py-1.5 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
                     >
                       <LogIn className="w-3.5 h-3.5" />
-                      {isLoading ? 'Authenticating...' : 'Sign In via Dev Env'}
+                      {isLoading ? 'Authenticating...' : '1-Click Admin Sign In'}
                     </button>
                   </div>
                 </div>
