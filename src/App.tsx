@@ -7,6 +7,7 @@ import { SuppliersView } from './components/SuppliersView';
 import { FinancialsView } from './components/FinancialsView';
 import { InventoryLedgerView } from './components/InventoryLedgerView';
 import { SettingsView } from './components/SettingsView';
+import { PlatformConsoleView } from './components/PlatformConsoleView';
 
 import { TraceabilityPassportModal } from './components/Modals/TraceabilityPassportModal';
 import { CatchWeightWeigherModal } from './components/Modals/CatchWeightWeigherModal';
@@ -49,8 +50,13 @@ import { formatCurrency } from './utils/formatters';
 import { batchRepository } from './repositories/batchRepository';
 import { customerRepository } from './repositories/customerRepository';
 import { syncManager } from './sync/syncManager';
-import { AuthModal } from './components/AuthModal';
-import { getSession, getStaffProfile, onAuthStateChange, signInAsTestUser, StaffProfile } from './data/auth';
+import { useAuth } from './components/AuthGate';
+import { 
+  signInAsTestUser, 
+  StaffProfile,
+  isSubscriptionPastDue,
+  isSubscriptionLockedOut
+} from './data/auth';
 import { User } from '@supabase/supabase-js';
 
 export default function App() {
@@ -75,7 +81,7 @@ export default function App() {
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get('tab') as ActiveTab;
-      if (tabParam && ['dashboard', 'retail_wholesale', 'customers', 'suppliers', 'financials', 'inventory', 'settings'].includes(tabParam)) {
+      if (tabParam && ['dashboard', 'retail_wholesale', 'customers', 'suppliers', 'financials', 'inventory', 'settings', 'platform'].includes(tabParam)) {
         return tabParam;
       }
     } catch (e) {
@@ -188,70 +194,13 @@ export default function App() {
   const [invoiceOrder, setInvoiceOrder] = useState<ClientOrder | null>(null);
   const [isNewBatchModalOpen, setIsNewBatchModalOpen] = useState(false);
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [staffProfile, setStaffProfile] = useState<StaffProfile | null>(null);
 
-  // Monitor Supabase Auth & Staff Profile
+  // Single authoritative source of truth for session and staff profile from AuthGate
+  const { session, user: currentUser, staffProfile, refreshProfile: handleRefreshProfile, signOut: handleSignOut } = useAuth();
+
+  // Hydrate batches from repository on mount and when authenticated session changes
   useEffect(() => {
     let isMounted = true;
-    getSession().then((session) => {
-      if (isMounted) {
-        setCurrentUser(session?.user ?? null);
-        if (session) {
-          getStaffProfile().then((profile) => {
-            if (isMounted) setStaffProfile(profile);
-          });
-        }
-      }
-    });
-
-    const unsubscribe = onAuthStateChange((session, user) => {
-      if (isMounted) {
-        setCurrentUser(user);
-        if (session) {
-          getStaffProfile(true).then((profile) => {
-            if (isMounted) setStaffProfile(profile);
-          });
-          // Re-hydrate batches and customers from remote for the authenticated tenant org
-          batchRepository.getBatches().then((fresh) => {
-            if (isMounted && fresh) {
-              setBatches(fresh);
-            }
-          });
-          customerRepository.getCustomers().then((fresh) => {
-            if (isMounted && fresh) {
-              setCustomers(fresh);
-            }
-          });
-          // Flush any pending queue
-          syncManager.flushAll().catch(console.warn);
-        } else {
-          setStaffProfile(null);
-        }
-      }
-    });
-
-    return () => {
-      isMounted = false;
-      unsubscribe();
-    };
-  }, []);
-
-  // Hydrate batches from repository on mount (with live Supabase sync when online & authenticated)
-  useEffect(() => {
-    let isMounted = true;
-
-    // Optional automated dev auto-login when VITE_DEV_TEST_USER_PASSWORD is configured
-    if (!import.meta.env.PROD && (import.meta.env.VITE_DEV_TEST_USER_PASSWORD as string | undefined)) {
-      signInAsTestUser()
-        .then(({ session }) => {
-          if (session) {
-            console.log('[App] Auto-authenticated development staff account:', session.user.email);
-          }
-        })
-        .catch(console.warn);
-    }
 
     batchRepository.getBatches(batches).then(fresh => {
       if (isMounted && fresh && fresh.length > 0) {
@@ -272,7 +221,7 @@ export default function App() {
     });
 
     return () => { isMounted = false; };
-  }, []);
+  }, [session?.user?.id]);
 
   // Persistence Effects
   // ARCHITECTURAL MANDATE: All batch and customer mutations MUST go through batchRepository or customerRepository.
@@ -859,10 +808,56 @@ export default function App() {
         isInstallable={isInstallable}
         isInstalled={isInstalled}
         isOnline={isOnline}
-        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        onSignOut={handleSignOut}
         isAuthenticated={Boolean(currentUser)}
         userRole={staffProfile?.role ?? (currentUser ? 'Staff' : null)}
+        userEmail={currentUser?.email ?? null}
       />
+
+      {/* Organization Licensing & Grace Period Status Alert Bar */}
+      {isSubscriptionPastDue(staffProfile?.organization) && (
+        <div id="app-past-due-banner" className="bg-amber-500 text-slate-950 px-4 py-2 text-xs font-medium flex items-center justify-between shadow-xs z-30">
+          <div className="max-w-7xl mx-auto w-full flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="font-bold uppercase tracking-wider bg-amber-950/20 px-2 py-0.5 rounded text-[10px]">
+                HACCP Audit Mode
+              </span>
+              <span>
+                Organization subscription payment is past due. Full read-only compliance access is active; write operations are paused.
+              </span>
+            </div>
+            <button
+              id="banner-resolve-billing-btn"
+              onClick={() => setActiveTab('settings')}
+              className="px-3 py-1 bg-slate-950 hover:bg-slate-900 text-amber-300 text-xs font-bold rounded-lg transition-colors shrink-0 self-start sm:self-auto cursor-pointer"
+            >
+              Resolve Billing
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isSubscriptionLockedOut(staffProfile?.organization) && (
+        <div id="app-suspended-banner" className="bg-rose-600 text-white px-4 py-2 text-xs font-medium flex items-center justify-between shadow-xs z-30">
+          <div className="max-w-7xl mx-auto w-full flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="font-bold uppercase tracking-wider bg-rose-950/30 px-2 py-0.5 rounded text-[10px]">
+                Subscription Locked
+              </span>
+              <span>
+                Organization evaluation period or subscription has expired. Please activate a plan to restore workspace access.
+              </span>
+            </div>
+            <button
+              id="banner-upgrade-plan-btn"
+              onClick={() => setActiveTab('settings')}
+              className="px-3 py-1 bg-white hover:bg-rose-50 text-rose-700 text-xs font-bold rounded-lg transition-colors shrink-0 self-start sm:self-auto cursor-pointer"
+            >
+              Upgrade Plan
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Area - with mobile bottom safe area padding */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24 md:pb-8">
@@ -959,9 +954,15 @@ export default function App() {
             retailSales={retailSales}
             purchaseOrders={purchaseOrders}
             financialEntries={financialEntries}
+            staffProfile={staffProfile}
+            onRefreshProfile={handleRefreshProfile}
             onRestoreAllData={handleRestoreAllData}
             onResetToDefaults={handleResetToDefaults}
           />
+        )}
+
+        {activeTab === 'platform' && (
+          <PlatformConsoleView onClose={() => setActiveTab('dashboard')} />
         )}
       </main>
 
@@ -1025,17 +1026,6 @@ export default function App() {
         isIOS={isIOS}
         isInstallable={isInstallable}
         isStandalone={isStandalone}
-      />
-
-      {/* Supabase Authentication & RLS Session Gate Modal */}
-      <AuthModal
-        isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
-        onAuthSuccess={() => {
-          batchRepository.getBatches().then((fresh) => {
-            if (fresh && fresh.length > 0) setBatches(fresh);
-          });
-        }}
       />
     </div>
   );

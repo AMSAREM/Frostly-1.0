@@ -1,15 +1,54 @@
 import { Session, User } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../utils/supabase';
 
+export type PlanTier = 'starter' | 'standard' | 'enterprise';
+export type SubscriptionStatus = 'trial' | 'active' | 'past_due' | 'canceled' | 'suspended';
+
+export interface TenantOrganization {
+  id: string;
+  name: string;
+  plan_tier: PlanTier;
+  subscription_status: SubscriptionStatus;
+  trial_ends_at: string;
+  current_period_ends_at?: string;
+  max_staff_seats: number;
+}
+
 export interface StaffProfile {
   id: string;
   organization_id: string;
   organization_name?: string;
+  organization?: TenantOrganization;
   email: string;
   full_name: string;
   role: 'admin' | 'ops_staff' | 'sales_staff' | 'dispatch_staff' | 'viewer';
   department?: string;
   is_active: boolean;
+}
+
+/**
+ * Subscription Status Helpers
+ */
+export function isSubscriptionPastDue(org?: TenantOrganization | null): boolean {
+  return org?.subscription_status === 'past_due';
+}
+
+export function isSubscriptionActive(org?: TenantOrganization | null): boolean {
+  if (!org) return false;
+  if (org.subscription_status === 'active') return true;
+  if (org.subscription_status === 'trial') {
+    return new Date(org.trial_ends_at).getTime() > Date.now();
+  }
+  return false;
+}
+
+export function isSubscriptionLockedOut(org?: TenantOrganization | null): boolean {
+  if (!org) return false;
+  if (org.subscription_status === 'suspended' || org.subscription_status === 'canceled') return true;
+  if (org.subscription_status === 'trial') {
+    return new Date(org.trial_ends_at).getTime() <= Date.now();
+  }
+  return false;
 }
 
 let cachedSession: Session | null = null;
@@ -86,7 +125,7 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
   try {
     const { data, error } = await supabase
       .from('staff_profiles')
-      .select('*, organizations(name)')
+      .select('*, organizations(name, plan_tier, subscription_status, trial_ends_at, current_period_ends_at, max_staff_seats)')
       .eq('id', user.id)
       .single();
 
@@ -95,11 +134,25 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       return null;
     }
 
-    const orgName = (data as any)?.organizations?.name;
+    const orgData = (data as any)?.organizations;
+    const orgName = orgData?.name;
+    const organization: TenantOrganization | undefined = orgData
+      ? {
+          id: data.organization_id,
+          name: orgData.name,
+          plan_tier: orgData.plan_tier || 'starter',
+          subscription_status: orgData.subscription_status || 'trial',
+          trial_ends_at: orgData.trial_ends_at,
+          current_period_ends_at: orgData.current_period_ends_at,
+          max_staff_seats: orgData.max_staff_seats || 5,
+        }
+      : undefined;
+
     cachedStaffProfile = {
       id: data.id,
       organization_id: data.organization_id,
       organization_name: orgName,
+      organization,
       email: data.email,
       full_name: data.full_name,
       role: data.role,

@@ -24,9 +24,15 @@ import {
   HardDrive,
   Info,
   Check,
-  RotateCcw
+  RotateCcw,
+  CreditCard,
+  Cloud
 } from 'lucide-react';
 import { AppSettings, InventoryBatch, ClientOrder, Customer, Supplier, RetailWholesaleProduct, RetailTransaction, PurchaseOrderLanding, FinancialLedgerEntry } from '../types';
+import { StaffProfile } from '../data/auth';
+import { SubscriptionBillingPanel } from './SubscriptionBillingPanel';
+import { PlatformConsoleView } from './PlatformConsoleView';
+import { syncManager, SyncState } from '../sync/syncManager';
 
 interface SettingsViewProps {
   settings: AppSettings;
@@ -39,6 +45,8 @@ interface SettingsViewProps {
   retailSales: RetailTransaction[];
   purchaseOrders: PurchaseOrderLanding[];
   financialEntries: FinancialLedgerEntry[];
+  staffProfile?: StaffProfile | null;
+  onRefreshProfile?: () => Promise<void>;
   onRestoreAllData: (importedData: {
     batches?: InventoryBatch[];
     orders?: ClientOrder[];
@@ -64,15 +72,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   retailSales,
   purchaseOrders,
   financialEntries,
+  staffProfile,
+  onRefreshProfile,
   onRestoreAllData,
   onResetToDefaults
 }) => {
-  const [activeCategory, setActiveCategory] = useState<'profile' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data'>('profile');
+  const [activeCategory, setActiveCategory] = useState<'profile' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data' | 'subscription' | 'platform'>('profile');
   const [formData, setFormData] = useState<AppSettings>({ ...settings });
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [resetModalOpen, setResetModalOpen] = useState<boolean>(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<boolean>(false);
+  const [syncState, setSyncState] = useState<SyncState>(() => syncManager.getState());
+  const [isManualSyncing, setIsManualSyncing] = useState<boolean>(false);
+  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    return syncManager.subscribe((state) => {
+      setSyncState(state);
+    });
+  }, []);
+
+  const handleManualSync = async () => {
+    setIsManualSyncing(true);
+    setSyncFeedback(null);
+    try {
+      const res = await syncManager.flushAll();
+      setSyncFeedback(`Sync completed: ${res.totalProcessed} operation(s) processed (${res.totalFailed} failed).`);
+    } catch (err: any) {
+      setSyncFeedback(`Sync failed: ${err?.message || 'Network error'}`);
+    } finally {
+      setIsManualSyncing(false);
+    }
+  };
 
   // Sync state if external settings change
   const handleChange = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
@@ -160,6 +192,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const navCategories = [
     { id: 'profile', label: 'Plant & Profile', icon: Building2, desc: 'Enterprise registration & facility specs' },
+    { id: 'subscription', label: 'Subscription & Licensing', icon: CreditCard, desc: 'Plan tiers, staff seats & Stripe billing' },
+    { id: 'platform', label: 'Platform Console', icon: ShieldCheck, desc: 'Cross-tenant oversight & manual MoMo billing' },
     { id: 'coldchain', label: 'Cold-Chain & HACCP', icon: ThermometerSnowflake, desc: 'Temperature alerts & critical limits' },
     { id: 'units', label: 'Units & Display', icon: Sliders, desc: 'Weight, temperatures & date formats' },
     { id: 'fulfillment', label: 'POS & Fulfillment', icon: ShoppingBag, desc: 'Terms, ice surcharges & QR presets' },
@@ -193,14 +227,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           )}
 
-          <button
-            id="settings-save-top-btn"
-            onClick={handleSave}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition-all cursor-pointer"
-          >
-            <Save className="w-4 h-4" />
-            <span>Save Changes</span>
-          </button>
+          {activeCategory !== 'subscription' && activeCategory !== 'platform' && (
+            <button
+              id="settings-save-top-btn"
+              onClick={handleSave}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition-all cursor-pointer"
+            >
+              <Save className="w-4 h-4" />
+              <span>Save Changes</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -239,30 +275,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             })}
           </div>
 
-          {/* Quick System Diagnostics Widget */}
-          <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white p-5 rounded-3xl border border-slate-800 shadow-xs space-y-3">
+          {/* Quick System Diagnostics Widget - Flat slate-50/white surface, no gradients */}
+          <div className="bg-slate-50 p-5 rounded-3xl border border-slate-200 shadow-xs space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-300">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
                 System Diagnostics
               </span>
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
             </div>
             <div className="space-y-2 text-xs">
-              <div className="flex justify-between text-slate-300">
+              <div className="flex justify-between text-slate-600">
                 <span>Active Fish Lots in Cryo:</span>
-                <span className="font-mono-code font-bold text-white">{batches.length} batches</span>
+                <span className="font-mono-code font-bold text-slate-900">{batches.length} batches</span>
               </div>
-              <div className="flex justify-between text-slate-300">
+              <div className="flex justify-between text-slate-600">
                 <span>Orders in Ledger:</span>
-                <span className="font-mono-code font-bold text-white">{orders.length + retailSales.length} records</span>
+                <span className="font-mono-code font-bold text-slate-900">{orders.length + retailSales.length} records</span>
               </div>
-              <div className="flex justify-between text-slate-300">
+              <div className="flex justify-between text-slate-600">
                 <span>Registered Vessels:</span>
-                <span className="font-mono-code font-bold text-white">{suppliers.length} harvesters</span>
+                <span className="font-mono-code font-bold text-slate-900">{suppliers.length} harvesters</span>
               </div>
-              <div className="flex justify-between text-slate-300">
+              <div className="flex justify-between text-slate-600">
                 <span>PWA Storage Engine:</span>
-                <span className="font-mono-code font-bold text-emerald-300">Local Cache + Indexed</span>
+                <span className="font-mono-code font-bold text-indigo-600">Local Cache + Indexed</span>
               </div>
             </div>
           </div>
@@ -715,8 +751,87 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {activeCategory === 'data' && (
               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-5 animate-in fade-in">
                 <div className="border-b border-slate-100 pb-3">
-                  <h2 className="text-sm font-bold text-slate-900 font-heading">Data Management & Backup / Restore</h2>
-                  <p className="text-xs text-slate-500">Export complete JSON snapshots, restore prior databases, or reset demo data.</p>
+                  <h2 className="text-sm font-bold text-slate-900 font-heading">Data Management & Cloud Synchronization</h2>
+                  <p className="text-xs text-slate-500">Live Supabase synchronization status, pending write buffer, and manual backups.</p>
+                </div>
+
+                {/* Cloud Sync Status & Manual Flush Card (Migrated from AuthModal) */}
+                <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-600 shrink-0">
+                        <Cloud className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-xs font-bold text-slate-900 font-heading">Cloud Sync &amp; Offline Queue</h3>
+                          {syncState.isSyncing ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                              Syncing...
+                            </span>
+                          ) : syncState.pendingCount > 0 ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                              {syncState.pendingCount} queued
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <CheckCircle2 className="w-2.5 h-2.5" />
+                              Synchronized
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Changes recorded while offline are queued locally and automatically drained to Supabase upon reconnection.
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      id="settings-manual-sync-btn"
+                      onClick={handleManualSync}
+                      disabled={isManualSyncing || syncState.isSyncing}
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isManualSyncing || syncState.isSyncing ? 'animate-spin' : ''}`} />
+                      <span>{isManualSyncing ? 'Flushing Queue...' : 'Flush & Sync Now'}</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-3 border-t border-slate-200/80 text-xs">
+                    <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                      <span className="text-[10px] text-slate-400 font-semibold block">PENDING MUTATIONS</span>
+                      <span className="font-mono-code font-bold text-slate-900 text-sm">
+                        {syncState.pendingCount} records
+                      </span>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                      <span className="text-[10px] text-slate-400 font-semibold block">QUEUE DRAIN STATUS</span>
+                      <span className="font-bold text-slate-900 text-xs">
+                        {syncState.isSyncing ? 'Active processing' : syncState.pendingCount === 0 ? 'Clean (0 pending)' : 'Awaiting drain'}
+                      </span>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-xl border border-slate-200 col-span-2 sm:col-span-1">
+                      <span className="text-[10px] text-slate-400 font-semibold block">LAST SYNC EVENT</span>
+                      <span className="font-mono-code text-slate-700 text-xs">
+                        {syncState.lastSyncTime ? new Date(syncState.lastSyncTime).toLocaleTimeString() : 'Recent session'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {syncFeedback && (
+                    <div className="p-3 rounded-xl bg-white border border-slate-200 text-xs text-slate-700 flex items-center justify-between">
+                      <span className="font-medium">{syncFeedback}</span>
+                      <button 
+                        type="button" 
+                        onClick={() => setSyncFeedback(null)}
+                        className="text-slate-400 hover:text-slate-600 text-xs cursor-pointer ml-2"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {importSuccess && (
@@ -803,20 +918,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             )}
 
+            {/* Category: Subscription & Licensing */}
+            {activeCategory === 'subscription' && (
+              <div className="animate-in fade-in space-y-6">
+                <SubscriptionBillingPanel
+                  staffProfile={staffProfile ?? null}
+                  onRefreshProfile={onRefreshProfile}
+                />
+              </div>
+            )}
+
+            {/* Category: Platform Owner Console */}
+            {activeCategory === 'platform' && (
+              <div className="animate-in fade-in space-y-6">
+                <PlatformConsoleView />
+              </div>
+            )}
+
             {/* Bottom Save Action Bar */}
-            <div className="flex items-center justify-between pt-2">
-              <span className="text-xs text-slate-400">
-                All changes take effect immediately across all POS and reporting views.
-              </span>
-              <button
-                type="submit"
-                id="settings-save-bottom-btn"
-                className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition-all cursor-pointer"
-              >
-                <Save className="w-4 h-4" />
-                <span>Save All Settings</span>
-              </button>
-            </div>
+            {activeCategory !== 'subscription' && activeCategory !== 'platform' && (
+              <div className="flex items-center justify-between pt-2">
+                <span className="text-xs text-slate-400">
+                  All changes take effect immediately across all POS and reporting views.
+                </span>
+                <button
+                  type="submit"
+                  id="settings-save-bottom-btn"
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition-all cursor-pointer"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>Save All Settings</span>
+                </button>
+              </div>
+            )}
           </form>
         </div>
       </div>
