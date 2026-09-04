@@ -2,7 +2,15 @@ import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
 
-const connectionString = process.env.SUPABASE_DB_URL || 'postgresql://postgres:july94bab2026@db.xvlocfkkcnjopfzwobmg.supabase.co:5432/postgres';
+const connectionString = process.env.SUPABASE_DB_URL;
+if (!connectionString) {
+  console.error('\n============================================================');
+  console.error('FATAL: Missing SUPABASE_DB_URL environment variable.');
+  console.error('Migration aborted. Pass SUPABASE_DB_URL to connect to Postgres.');
+  console.error('Security Notice: Database passwords must never be committed.');
+  console.error('============================================================\n');
+  process.exit(1);
+}
 
 const client = new pg.Client({
   connectionString,

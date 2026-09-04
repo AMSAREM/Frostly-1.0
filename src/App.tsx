@@ -46,6 +46,8 @@ import {
   DEFAULT_SETTINGS 
 } from './types';
 import { formatCurrency } from './utils/formatters';
+import { batchRepository } from './repositories/batchRepository';
+import { syncManager } from './sync/syncManager';
 
 export default function App() {
   // PWA and Network state
@@ -183,6 +185,19 @@ export default function App() {
   const [isNewBatchModalOpen, setIsNewBatchModalOpen] = useState(false);
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
 
+  // Hydrate batches from repository on mount (with live Supabase sync when online & authenticated)
+  useEffect(() => {
+    let isMounted = true;
+    batchRepository.getBatches(batches).then(fresh => {
+      if (isMounted && fresh && fresh.length > 0) {
+        setBatches(fresh);
+      }
+    }).catch(err => {
+      console.warn('[App] Batch repository load error:', err);
+    });
+    return () => { isMounted = false; };
+  }, []);
+
   // Persistence Effects
   useEffect(() => {
     localStorage.setItem('frostly_batches_v3', JSON.stringify(batches));
@@ -301,6 +316,9 @@ export default function App() {
   // Add Batch Handler
   const handleAddBatch = (newBatch: InventoryBatch) => {
     setBatches(prev => [newBatch, ...prev]);
+    batchRepository.save(newBatch, true).catch(err => {
+      console.warn('[App] batchRepository save error:', err);
+    });
     addNotification({
       type: 'catch_landed',
       title: `Intake Complete: ${newBatch.speciesName}`,
@@ -487,6 +505,9 @@ export default function App() {
         notes: newPO.notes
       };
       setBatches(prev => [newBatch, ...prev]);
+      batchRepository.save(newBatch, true).catch(err => {
+        console.warn('[App] batchRepository save error for landing:', err);
+      });
     }
 
     // Add COGS Financial Ledger Entry
