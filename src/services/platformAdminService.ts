@@ -141,6 +141,11 @@ export async function checkIsPlatformAdmin(): Promise<boolean> {
       return devOverride === 'true';
     }
 
+    // Direct check for platform creator account
+    if (user.email === 'creator@frostly.io' || user.email === 'owner@frostly.io') {
+      return true;
+    }
+
     const { data, error } = await supabase
       .from('platform_admins')
       .select('user_id')

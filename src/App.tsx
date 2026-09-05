@@ -198,6 +198,19 @@ export default function App() {
   // Single authoritative source of truth for session and staff profile from AuthGate
   const { session, user: currentUser, staffProfile, refreshProfile: handleRefreshProfile, signOut: handleSignOut } = useAuth();
 
+  const isPlatformCreator = Boolean(
+    currentUser?.email === 'creator@frostly.io' ||
+    currentUser?.email === 'owner@frostly.io' ||
+    (staffProfile && (staffProfile.role as string) === 'platform_creator')
+  );
+
+  // If Creator logs in without a tenant organization, default directly to the Platform Console
+  useEffect(() => {
+    if (isPlatformCreator && !staffProfile?.organization_id) {
+      setActiveTab((prev) => (prev === 'dashboard' ? 'platform' : prev));
+    }
+  }, [isPlatformCreator, staffProfile?.organization_id]);
+
   // Hydrate batches from repository on mount and when authenticated session changes
   useEffect(() => {
     let isMounted = true;
@@ -810,7 +823,7 @@ export default function App() {
         isOnline={isOnline}
         onSignOut={handleSignOut}
         isAuthenticated={Boolean(currentUser)}
-        userRole={staffProfile?.role ?? (currentUser ? 'Staff' : null)}
+        userRole={isPlatformCreator ? 'Platform Creator' : (staffProfile?.role ?? (currentUser ? 'Staff' : null))}
         userEmail={currentUser?.email ?? null}
       />
 

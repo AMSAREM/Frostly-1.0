@@ -458,6 +458,19 @@ export const Header: React.FC<HeaderProps> = ({
                   <div className="space-y-1">
                     <button
                       type="button"
+                      id="header-menu-platform-console-btn"
+                      onClick={() => {
+                        setActiveTab('platform');
+                        setShowUserMenu(false);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 rounded-xl transition-colors cursor-pointer text-left"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Platform Creator Console</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => {
                         setActiveTab('settings');
                         setShowUserMenu(false);

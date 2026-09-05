@@ -27,7 +27,11 @@ const migrationFiles = [
   '007_storage_policies.sql',
   '008_realtime.sql',
   '009_seed_data.sql',
-  '011_multi_tenant.sql'
+  '011_multi_tenant.sql',
+  '012_subscription_licensing.sql',
+  '013_paystack_dual_billing.sql',
+  '014_platform_admin_console.sql',
+  '015_creator_bootstrap.sql'
 ];
 
 async function runMigrations() {

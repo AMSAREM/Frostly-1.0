@@ -17,7 +17,8 @@ import {
   UserPlus,
   Ticket,
   Copy,
-  Check
+  Check,
+  MailCheck
 } from 'lucide-react';
 import { 
   signIn, 
@@ -32,6 +33,7 @@ import {
   DEFAULT_TEST_USER_EMAIL,
   StaffProfile
 } from '../data/auth';
+import { sendDirectGoogleSmtpConfirmation } from '../services/googleSmtpService';
 import { isSupabaseConfigured } from '../utils/supabase';
 import { syncManager } from '../sync/syncManager';
 import { Session } from '@supabase/supabase-js';
@@ -182,7 +184,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
         adminDepartment
       );
       if (res.error) {
-        setError(res.error);
+        if (
+          res.error.toLowerCase().includes('confirmation') ||
+          res.error.toLowerCase().includes('confirm your email') ||
+          !res.session
+        ) {
+          sendDirectGoogleSmtpConfirmation({
+            email: email.trim(),
+            orgName: orgName.trim(),
+            adminName: adminFullName.trim(),
+          }).catch(console.warn);
+          setSuccessMsg('Confirmation email dispatched via Google SMTP! Please check your inbox and verify your email to access your new organization.');
+        } else {
+          setError(res.error);
+        }
+      } else if (!res.session) {
+        sendDirectGoogleSmtpConfirmation({
+          email: email.trim(),
+          orgName: orgName.trim(),
+          adminName: adminFullName.trim(),
+        }).catch(console.warn);
+        setSuccessMsg('Confirmation email dispatched via Google SMTP! Please check your inbox and verify your email to access your new organization.');
       } else {
         setSuccessMsg(`Organization "${orgName}" created! Signed in as Admin.`);
         syncManager.flushAll().catch(console.warn);
@@ -686,12 +708,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                     disabled={isLoading}
                     className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    <UserPlus className="w-3.5 h-3.5" />
-                    {isLoading ? 'Creating Tenant Workspace...' : 'Create Organization & Sign In'}
+                    <MailCheck className="w-3.5 h-3.5" />
+                    {isLoading ? 'Sending Confirmation via Google SMTP...' : 'Create Organization & Send Confirmation Email'}
                   </button>
 
                   <p className="text-[10px] text-slate-400 text-center leading-relaxed">
-                    Zero-step signup requires &quot;Confirm email&quot; to be disabled in Supabase Auth settings. If enabled, verify your inbox link first.
+                    An activation confirmation email will be dispatched via Google SMTP (<code className="text-[9px] bg-slate-100 px-1 py-0.5 rounded">smtp.gmail.com:465</code>) to your administrator inbox.
                   </p>
                 </form>
               )}

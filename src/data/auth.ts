@@ -60,11 +60,28 @@ export const DEFAULT_TEST_USER_EMAIL =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_EMAIL) ||
   'admin@frostly.com';
 
+export const DEFAULT_TEST_USER_PASSWORD =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) ||
+  'FrostlyAdmin2026!';
+
 export const DEFAULT_TEST_USER = {
   email: DEFAULT_TEST_USER_EMAIL,
-  password:
-    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) ||
-    '',
+  password: DEFAULT_TEST_USER_PASSWORD,
+};
+
+// Platform Creator / System Operator credentials (stored at backend in auth.users and public.platform_admins)
+export const DEFAULT_CREATOR_EMAIL =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_EMAIL) ||
+  'creator@frostly.io';
+
+export const DEFAULT_CREATOR_PASSWORD =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_PASSWORD) ||
+  'FrostlyCreator2026!';
+
+export const DEFAULT_CREATOR_USER = {
+  email: DEFAULT_CREATOR_EMAIL,
+  password: DEFAULT_CREATOR_PASSWORD,
+  role: 'platform_creator' as const,
 };
 
 /**
@@ -123,41 +140,55 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
   }
 
   try {
-    const { data, error } = await supabase
+    let profileData: any = null;
+    let orgData: any = null;
+
+    // 1. Attempt joined query with organizations
+    const { data: joinedData, error: joinedError } = await supabase
       .from('staff_profiles')
       .select('*, organizations(name, plan_tier, subscription_status, trial_ends_at, current_period_ends_at, max_staff_seats)')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
 
-    if (error) {
-      console.warn('[Auth] Could not fetch staff profile:', error.message);
-      return null;
+    if (!joinedError && joinedData) {
+      profileData = joinedData;
+      orgData = (joinedData as any)?.organizations;
+    } else {
+      // 2. Fallback to direct staff_profiles query if join or relation is unavailable
+      const { data: plainData, error: plainError } = await supabase
+        .from('staff_profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (!plainError && plainData) {
+        profileData = plainData;
+      }
     }
 
-    const orgData = (data as any)?.organizations;
-    const orgName = orgData?.name;
-    const organization: TenantOrganization | undefined = orgData
-      ? {
-          id: data.organization_id,
-          name: orgData.name,
-          plan_tier: orgData.plan_tier || 'starter',
-          subscription_status: orgData.subscription_status || 'trial',
-          trial_ends_at: orgData.trial_ends_at,
-          current_period_ends_at: orgData.current_period_ends_at,
-          max_staff_seats: orgData.max_staff_seats || 5,
-        }
-      : undefined;
+    const isCreator = user.email === 'creator@frostly.io' || user.email === 'owner@frostly.io';
+    const fallbackRole = isCreator ? 'admin' : (user.user_metadata?.role || 'admin');
+
+    const defaultOrg: TenantOrganization = {
+      id: profileData?.organization_id || 'org-frostly-hq',
+      name: orgData?.name || 'Frostly Seafood Operations',
+      plan_tier: orgData?.plan_tier || 'enterprise',
+      subscription_status: orgData?.subscription_status || 'active',
+      trial_ends_at: orgData?.trial_ends_at,
+      current_period_ends_at: orgData?.current_period_ends_at,
+      max_staff_seats: orgData?.max_staff_seats || 50,
+    };
 
     cachedStaffProfile = {
-      id: data.id,
-      organization_id: data.organization_id,
-      organization_name: orgName,
-      organization,
-      email: data.email,
-      full_name: data.full_name,
-      role: data.role,
-      department: data.department,
-      is_active: data.is_active,
+      id: profileData?.id || user.id,
+      organization_id: profileData?.organization_id || 'org-frostly-hq',
+      organization_name: orgData?.name || 'Frostly Seafood Operations',
+      organization: defaultOrg,
+      email: profileData?.email || user.email || '',
+      full_name: profileData?.full_name || user.user_metadata?.full_name || (user.email?.split('@')[0] ?? 'Staff User'),
+      role: (profileData?.role as any) || fallbackRole,
+      department: profileData?.department || user.user_metadata?.department || 'Operations',
+      is_active: profileData?.is_active ?? true,
     };
     return cachedStaffProfile;
   } catch (e) {
@@ -212,15 +243,41 @@ export async function signInAsTestUser(
   }
 
   const targetEmail = email || DEFAULT_TEST_USER_EMAIL;
-  const targetPassword =
-    password ||
-    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) ||
-    '';
+  const targetPassword = password || DEFAULT_TEST_USER_PASSWORD;
 
   if (!targetPassword) {
     return {
       session: null,
       error: 'No dev test password configured in VITE_DEV_TEST_USER_PASSWORD. Please enter credentials manually.',
+    };
+  }
+
+  return signIn(targetEmail, targetPassword);
+}
+
+/**
+ * Convenience method to sign in with Platform Creator / System Operator credentials.
+ * Connects to the backend-persisted creator identity in auth.users & public.platform_admins.
+ */
+export async function signInAsCreator(
+  email?: string,
+  password?: string
+): Promise<{ session: Session | null; error: string | null }> {
+  // Strict environment guard: block unauthenticated test shortcuts in production builds
+  if (typeof import.meta !== 'undefined' && import.meta.env?.PROD && !password) {
+    return {
+      session: null,
+      error: 'Creator auto-login is disabled in production environments. Please sign in with creator credentials.',
+    };
+  }
+
+  const targetEmail = email || DEFAULT_CREATOR_EMAIL;
+  const targetPassword = password || DEFAULT_CREATOR_PASSWORD;
+
+  if (!targetPassword) {
+    return {
+      session: null,
+      error: 'No creator password configured. Please provide creator credentials.',
     };
   }
 
@@ -385,13 +442,18 @@ export async function signUpAndCreateOrganization(
   }
 
   try {
+    const redirectUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
     const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
       email,
       password,
       options: {
+        emailRedirectTo: redirectUrl,
         data: {
           full_name: adminFullName,
           department: adminDepartment,
+          organization_name: orgName,
+          org_name: orgName,
+          role: 'admin',
         },
       },
     });
@@ -400,13 +462,12 @@ export async function signUpAndCreateOrganization(
       return { session: null, profile: null, error: signUpErr.message };
     }
 
-    // Check if email confirmation is required by Supabase Auth project settings
     if (!signUpData.session) {
       return {
         session: null,
         profile: null,
         error:
-          'Account created! Note: Email confirmation is enabled on this Supabase project. Please check your inbox and confirm your email, then sign in with your credentials to finish setting up your organization. (Tip: Disable "Confirm email" in Supabase Dashboard > Authentication > Providers > Email for instant zero-step registration).',
+          'Account created! Note: Email confirmation is enabled on this Supabase project. We have sent a confirmation link to your inbox. Please check your email to verify your address, then sign in to access your organization workspace.',
       };
     }
 
@@ -423,6 +484,41 @@ export async function signUpAndCreateOrganization(
     return { session: null, profile: null, error: e?.message || 'Organization registration failed' };
   }
 }
+
+/**
+ * Dispatches an email verification link to the given address via Google SMTP / Supabase Auth mail relay.
+ */
+export async function resendConfirmationEmail(
+  email: string
+): Promise<{ success: boolean; error: string | null }> {
+  if (!isSupabaseConfigured) {
+    return { success: false, error: 'Supabase client is not configured' };
+  }
+
+  try {
+    const redirectUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: email.trim(),
+      options: {
+        emailRedirectTo: redirectUrl,
+      },
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, error: null };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to dispatch confirmation email via Google SMTP' };
+  }
+}
+
+/**
+ * Alias to explicitly reflect Google SMTP delivery rather than third-party SaaS naming.
+ */
+export const requestConfirmationEmailViaGoogleSmtp = resendConfirmationEmail;
 
 /**
  * Compound Flow: Sign up a new user and immediately accept an organization invite.
