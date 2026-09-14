@@ -926,6 +926,9 @@ GRANT EXECUTE ON FUNCTION public.accept_invite(TEXT, TEXT, TEXT) TO authenticate
 GRANT EXECUTE ON FUNCTION public.create_invite(TEXT, public.staff_role, INT) TO authenticated;
 
 -- Update reporting views to respect multi-tenant composite joins
+DROP VIEW IF EXISTS public.view_customer_receivables_summary CASCADE;
+DROP VIEW IF EXISTS public.view_daily_financial_summary CASCADE;
+
 CREATE OR REPLACE VIEW public.view_customer_receivables_summary
 WITH (security_invoker = true) AS
 SELECT 

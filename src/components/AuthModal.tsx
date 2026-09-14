@@ -31,6 +31,7 @@ import {
   signUpAndCreateOrganization,
   signUpAndAcceptInvite,
   DEFAULT_TEST_USER_EMAIL,
+  DEFAULT_TEST_USER_PASSWORD,
   StaffProfile
 } from '../data/auth';
 import { sendDirectGoogleSmtpConfirmation } from '../services/googleSmtpService';
@@ -542,7 +543,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
               {/* TAB 1: EXISTING SIGN IN */}
               {activeTab === 'signin' && (
                 <div className="space-y-3">
-                  {!import.meta.env.PROD && (
+                  {import.meta.env.DEV && DEFAULT_TEST_USER_EMAIL && DEFAULT_TEST_USER_PASSWORD && (
                     <div className="bg-indigo-50/50 rounded-xl p-3.5 border border-indigo-100 space-y-2.5">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 text-xs font-bold text-indigo-900">
@@ -554,19 +555,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-600">
-                        Quickly connect default tenant (<code className="font-mono text-slate-800 bg-white px-1 py-0.5 rounded border">{DEFAULT_TEST_USER_EMAIL}</code>) against live Supabase RLS.
+                        Quickly connect configured dev test tenant (<code className="font-mono text-slate-800 bg-white px-1 py-0.5 rounded border">{DEFAULT_TEST_USER_EMAIL}</code>) against live Supabase RLS.
                       </p>
                       <div className="flex gap-2">
                         <button
                           id="fill-demo-creds-button"
                           type="button"
                           onClick={() => {
-                            setEmail('admin@frostly.com');
-                            setPassword('FrostlyAdmin2026!');
+                            if (!DEFAULT_TEST_USER_EMAIL || !DEFAULT_TEST_USER_PASSWORD) {
+                              setError('Dev credentials are not configured in environment variables.');
+                              return;
+                            }
+                            setEmail(DEFAULT_TEST_USER_EMAIL);
+                            setPassword(DEFAULT_TEST_USER_PASSWORD);
                           }}
                           className="px-2.5 py-1.5 rounded-lg border border-indigo-200 text-indigo-700 bg-white hover:bg-indigo-50 text-[11px] font-semibold transition-colors cursor-pointer"
                         >
-                          Fill Admin Demo
+                          Fill Configured Dev Creds
                         </button>
                         <button
                           id="quick-test-signin-button"
@@ -576,7 +581,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                           className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
                         >
                           <LogIn className="w-3.5 h-3.5" />
-                          {isLoading ? 'Authenticating...' : '1-Click Admin Sign In'}
+                          {isLoading ? 'Authenticating...' : '1-Click Dev Sign In'}
                         </button>
                       </div>
                     </div>

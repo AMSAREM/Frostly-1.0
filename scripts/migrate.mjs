@@ -2,22 +2,45 @@ import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
 
-const connectionString = process.env.SUPABASE_DB_URL;
+const connectionString = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL;
 if (!connectionString) {
   console.error('\n============================================================');
-  console.error('FATAL: Missing SUPABASE_DB_URL environment variable.');
+  console.error('FATAL: Missing SUPABASE_DB_URL (or DATABASE_URL) environment variable.');
   console.error('Migration aborted. Pass SUPABASE_DB_URL to connect to Postgres.');
-  console.error('Security Notice: Database passwords must never be committed.');
+  console.error('Format: postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres');
+  console.error('============================================================\n');
+  process.exit(1);
+}
+
+if (connectionString.startsWith('http://') || connectionString.startsWith('https://')) {
+  console.error('\n============================================================');
+  console.error('CONFIGURATION ERROR: SUPABASE_DB_URL is set to an HTTPS web URL:');
+  console.error(`  ${connectionString}`);
+  console.error('');
+  console.error('To run SQL migrations directly via PostgreSQL wire protocol,');
+  console.error('SUPABASE_DB_URL must be a PostgreSQL connection URI, not an HTTP URL.');
+  console.error('');
+  console.error('Example PostgreSQL URI (from Supabase Dashboard -> Settings -> Database):');
+  console.error('  postgresql://postgres:[PASSWORD]@db.xvlocfkkcnjopfzwobmg.supabase.co:5432/postgres');
+  console.error('  or (Connection Pooler):');
+  console.error('  postgresql://postgres.xvlocfkkcnjopfzwobmg:[PASSWORD]@aws-0-eu-west-1.pooler.supabase.com:6543/postgres');
+  console.error('');
+  console.error('ALTERNATIVE (Recommended & Instant):');
+  console.error('1. Open Supabase Dashboard: https://supabase.com/dashboard/project/xvlocfkkcnjopfzwobmg/sql');
+  console.error('2. Click "New Query"');
+  console.error('3. Paste the contents of supabase/migrations/011_multi_tenant.sql');
+  console.error('4. Click "Run"');
   console.error('============================================================\n');
   process.exit(1);
 }
 
 const client = new pg.Client({
   connectionString,
+  connectionTimeoutMillis: 10000,
   ssl: { rejectUnauthorized: false }
 });
 
-const migrationFiles = [
+const defaultMigrationFiles = [
   '001_extensions_and_types.sql',
   '002_tables.sql',
   '003_indexes.sql',
@@ -33,6 +56,12 @@ const migrationFiles = [
   '014_platform_admin_console.sql',
   '015_creator_bootstrap.sql'
 ];
+
+// Support running a single target migration if specified via CLI argument (e.g. node scripts/migrate.mjs 011_multi_tenant.sql)
+const targetArg = process.argv[2];
+const migrationFiles = targetArg
+  ? [targetArg.replace(/^.*[\\\/]/, '')]
+  : defaultMigrationFiles;
 
 async function runMigrations() {
   try {

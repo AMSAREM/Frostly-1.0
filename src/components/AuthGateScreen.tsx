@@ -121,6 +121,10 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
 
   // Tenant Admin Quick-Login Handler
   const handleDevQuickLogin = async () => {
+    if (!DEFAULT_TEST_USER_EMAIL || !DEFAULT_TEST_USER_PASSWORD) {
+      setErrorMessage('Development test credentials are not configured in environment variables (VITE_DEV_TEST_USER_EMAIL / VITE_DEV_TEST_USER_PASSWORD).');
+      return;
+    }
     setEmail(DEFAULT_TEST_USER_EMAIL);
     setPassword(DEFAULT_TEST_USER_PASSWORD);
     setIsLoading(true);
@@ -142,6 +146,10 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
 
   // Creator Quick-Login Handler (Platform Owner)
   const handleCreatorQuickLogin = async () => {
+    if (!DEFAULT_CREATOR_EMAIL || !DEFAULT_CREATOR_PASSWORD) {
+      setErrorMessage('Platform creator credentials are not configured in environment variables (VITE_DEV_CREATOR_EMAIL / VITE_DEV_CREATOR_PASSWORD).');
+      return;
+    }
     setEmail(DEFAULT_CREATOR_EMAIL);
     setPassword(DEFAULT_CREATOR_PASSWORD);
     setIsLoading(true);
@@ -548,77 +556,85 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
                 )}
               </button>
 
-              {/* Dev-Only Quick Login Buttons & Credentials Box */}
-              {!import.meta.env.PROD && (
+              {/* Dev-Only Quick Login Buttons & Credentials Box (Strictly Local DEV guarded) */}
+              {import.meta.env.DEV && Boolean(DEFAULT_CREATOR_EMAIL || DEFAULT_TEST_USER_EMAIL) && (
                 <div className="mt-3 space-y-2">
-                  <button
-                    id="auth-gate-creator-login-btn"
-                    type="button"
-                    onClick={handleCreatorQuickLogin}
-                    disabled={isLoading}
-                    className="w-full py-2 px-3 border border-dashed border-indigo-300 hover:border-indigo-400 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-700 rounded-xl text-xs font-mono-code transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                    title={`Sign in as Platform Creator (${DEFAULT_CREATOR_EMAIL})`}
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>Quick Sign-In: [CREATOR] Platform Owner</span>
-                  </button>
+                  {DEFAULT_CREATOR_EMAIL && DEFAULT_CREATOR_PASSWORD && (
+                    <button
+                      id="auth-gate-creator-login-btn"
+                      type="button"
+                      onClick={handleCreatorQuickLogin}
+                      disabled={isLoading}
+                      className="w-full py-2 px-3 border border-dashed border-indigo-300 hover:border-indigo-400 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-700 rounded-xl text-xs font-mono-code transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      title={`Sign in as Platform Creator (${DEFAULT_CREATOR_EMAIL})`}
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Quick Sign-In: [CREATOR] Platform Owner</span>
+                    </button>
+                  )}
 
-                  <button
-                    id="auth-gate-dev-login-btn"
-                    type="button"
-                    onClick={handleDevQuickLogin}
-                    disabled={isLoading}
-                    className="w-full py-2 px-3 border border-dashed border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl text-xs font-mono-code transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                    title={`Quick-login as dev tenant admin (${DEFAULT_TEST_USER_EMAIL})`}
-                  >
-                    <KeyRound className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Quick Sign-In: [TENANT] Org Admin</span>
-                  </button>
+                  {DEFAULT_TEST_USER_EMAIL && DEFAULT_TEST_USER_PASSWORD && (
+                    <button
+                      id="auth-gate-dev-login-btn"
+                      type="button"
+                      onClick={handleDevQuickLogin}
+                      disabled={isLoading}
+                      className="w-full py-2 px-3 border border-dashed border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl text-xs font-mono-code transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      title={`Quick-login as dev tenant admin (${DEFAULT_TEST_USER_EMAIL})`}
+                    >
+                      <KeyRound className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Quick Sign-In: [TENANT] Org Admin</span>
+                    </button>
+                  )}
 
                   <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 space-y-2">
                     <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                      Verified Test Credentials (Click to Auto-Fill):
+                      Configured Dev Credentials (Click to Auto-Fill):
                     </div>
                     
                     {/* Account 1: Creator */}
-                    <button
-                      type="button"
-                      id="auth-gate-fill-creator-btn"
-                      onClick={() => {
-                        setEmail(DEFAULT_CREATOR_EMAIL);
-                        setPassword(DEFAULT_CREATOR_PASSWORD);
-                        setErrorMessage(null);
-                      }}
-                      className="w-full text-left p-2 rounded-lg bg-white border border-slate-200/80 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all cursor-pointer group"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-indigo-700 text-xs">Platform Creator</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 font-mono">Fill</span>
-                      </div>
-                      <div className="font-mono text-[10px] text-slate-600 mt-0.5">
-                        {DEFAULT_CREATOR_EMAIL} • <span className="text-slate-800 font-semibold">{DEFAULT_CREATOR_PASSWORD}</span>
-                      </div>
-                    </button>
+                    {DEFAULT_CREATOR_EMAIL && DEFAULT_CREATOR_PASSWORD && (
+                      <button
+                        type="button"
+                        id="auth-gate-fill-creator-btn"
+                        onClick={() => {
+                          setEmail(DEFAULT_CREATOR_EMAIL);
+                          setPassword(DEFAULT_CREATOR_PASSWORD);
+                          setErrorMessage(null);
+                        }}
+                        className="w-full text-left p-2 rounded-lg bg-white border border-slate-200/80 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-indigo-700 text-xs">Platform Creator</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 font-mono">Fill</span>
+                        </div>
+                        <div className="font-mono text-[10px] text-slate-600 mt-0.5">
+                          {DEFAULT_CREATOR_EMAIL} • <span className="text-slate-500">•••••••• (from env)</span>
+                        </div>
+                      </button>
+                    )}
 
                     {/* Account 2: Tenant Admin */}
-                    <button
-                      type="button"
-                      id="auth-gate-fill-admin-btn"
-                      onClick={() => {
-                        setEmail(DEFAULT_TEST_USER_EMAIL);
-                        setPassword(DEFAULT_TEST_USER_PASSWORD);
-                        setErrorMessage(null);
-                      }}
-                      className="w-full text-left p-2 rounded-lg bg-white border border-slate-200/80 hover:border-slate-300 hover:bg-slate-100/50 transition-all cursor-pointer group"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-slate-800 text-xs">Tenant Org Admin</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-mono">Fill</span>
-                      </div>
-                      <div className="font-mono text-[10px] text-slate-600 mt-0.5">
-                        {DEFAULT_TEST_USER_EMAIL} • <span className="text-slate-800 font-semibold">{DEFAULT_TEST_USER_PASSWORD}</span>
-                      </div>
-                    </button>
+                    {DEFAULT_TEST_USER_EMAIL && DEFAULT_TEST_USER_PASSWORD && (
+                      <button
+                        type="button"
+                        id="auth-gate-fill-admin-btn"
+                        onClick={() => {
+                          setEmail(DEFAULT_TEST_USER_EMAIL);
+                          setPassword(DEFAULT_TEST_USER_PASSWORD);
+                          setErrorMessage(null);
+                        }}
+                        className="w-full text-left p-2 rounded-lg bg-white border border-slate-200/80 hover:border-slate-300 hover:bg-slate-100/50 transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-slate-800 text-xs">Tenant Org Admin</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-mono">Fill</span>
+                        </div>
+                        <div className="font-mono text-[10px] text-slate-600 mt-0.5">
+                          {DEFAULT_TEST_USER_EMAIL} • <span className="text-slate-500">•••••••• (from env)</span>
+                        </div>
+                      </button>
+                    )}
                   </div>
                 </div>
               )}

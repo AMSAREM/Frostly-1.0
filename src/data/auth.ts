@@ -55,28 +55,24 @@ let cachedSession: Session | null = null;
 let cachedStaffProfile: StaffProfile | null = null;
 let isInitialized = false;
 
-// Optional development test user email (configurable via env)
+// Development test user credentials (must be configured via environment variables)
 export const DEFAULT_TEST_USER_EMAIL =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_EMAIL) ||
-  'admin@frostly.com';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_EMAIL) || '';
 
 export const DEFAULT_TEST_USER_PASSWORD =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) ||
-  'FrostlyAdmin2026!';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) || '';
 
 export const DEFAULT_TEST_USER = {
   email: DEFAULT_TEST_USER_EMAIL,
   password: DEFAULT_TEST_USER_PASSWORD,
 };
 
-// Platform Creator / System Operator credentials (stored at backend in auth.users and public.platform_admins)
+// Platform Creator credentials (must be configured via environment variables)
 export const DEFAULT_CREATOR_EMAIL =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_EMAIL) ||
-  'creator@frostly.io';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_EMAIL) || '';
 
 export const DEFAULT_CREATOR_PASSWORD =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_PASSWORD) ||
-  'FrostlyCreator2026!';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_PASSWORD) || '';
 
 export const DEFAULT_CREATOR_USER = {
   email: DEFAULT_CREATOR_EMAIL,
@@ -166,7 +162,10 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       }
     }
 
-    const isCreator = user.email === 'creator@frostly.io' || user.email === 'owner@frostly.io';
+    const isCreator = 
+      (DEFAULT_CREATOR_EMAIL && user.email?.toLowerCase() === DEFAULT_CREATOR_EMAIL.toLowerCase()) || 
+      user.user_metadata?.role === 'platform_creator' || 
+      user.app_metadata?.role === 'platform_creator';
     const fallbackRole = isCreator ? 'admin' : (user.user_metadata?.role || 'admin');
 
     const defaultOrg: TenantOrganization = {
@@ -245,10 +244,10 @@ export async function signInAsTestUser(
   const targetEmail = email || DEFAULT_TEST_USER_EMAIL;
   const targetPassword = password || DEFAULT_TEST_USER_PASSWORD;
 
-  if (!targetPassword) {
+  if (!targetEmail || !targetPassword) {
     return {
       session: null,
-      error: 'No dev test password configured in VITE_DEV_TEST_USER_PASSWORD. Please enter credentials manually.',
+      error: 'Development test credentials are not configured. Please set VITE_DEV_TEST_USER_EMAIL and VITE_DEV_TEST_USER_PASSWORD in environment variables.',
     };
   }
 
@@ -274,10 +273,10 @@ export async function signInAsCreator(
   const targetEmail = email || DEFAULT_CREATOR_EMAIL;
   const targetPassword = password || DEFAULT_CREATOR_PASSWORD;
 
-  if (!targetPassword) {
+  if (!targetEmail || !targetPassword) {
     return {
       session: null,
-      error: 'No creator password configured. Please provide creator credentials.',
+      error: 'Platform creator credentials are not configured. Please set VITE_DEV_CREATOR_EMAIL and VITE_DEV_CREATOR_PASSWORD in environment variables.',
     };
   }
 

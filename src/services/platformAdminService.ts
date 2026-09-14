@@ -109,10 +109,12 @@ const INITIAL_DEMO_ORGS: PlatformOrganization[] = [
   },
 ];
 
+const configuredCreatorEmail = typeof import.meta !== 'undefined' ? import.meta.env?.VITE_DEV_CREATOR_EMAIL : undefined;
+
 const INITIAL_DEMO_AUDIT: PlatformAuditLog[] = [
   {
     id: 'aud-001',
-    actor_id: 'owner@frostly.io',
+    actor_id: configuredCreatorEmail || 'platform_admin',
     action: 'manual_subscription_update',
     target_organization_id: '90000000-0000-0000-0000-000000000001',
     previous_state: { subscription_status: 'trial', plan_tier: 'starter' },
@@ -122,7 +124,7 @@ const INITIAL_DEMO_AUDIT: PlatformAuditLog[] = [
   },
   {
     id: 'aud-002',
-    actor_id: 'owner@frostly.io',
+    actor_id: configuredCreatorEmail || 'platform_admin',
     action: 'manual_subscription_update',
     target_organization_id: '70000000-0000-0000-0000-000000000003',
     previous_state: { subscription_status: 'trial', plan_tier: 'standard' },
@@ -141,8 +143,12 @@ export async function checkIsPlatformAdmin(): Promise<boolean> {
       return devOverride === 'true';
     }
 
-    // Direct check for platform creator account
-    if (user.email === 'creator@frostly.io' || user.email === 'owner@frostly.io') {
+    // Direct check for platform creator account via configured env or metadata
+    if (
+      (configuredCreatorEmail && user.email?.toLowerCase() === configuredCreatorEmail.toLowerCase()) ||
+      user.user_metadata?.role === 'platform_creator' ||
+      user.app_metadata?.role === 'platform_creator'
+    ) {
       return true;
     }
 
@@ -269,7 +275,7 @@ export async function updatePlatformOrganizationSubscription(params: {
   const auditLogs = await fetchPlatformAuditLogs();
   const newAudit: PlatformAuditLog = {
     id: 'aud-' + Date.now(),
-    actor_id: 'platform_owner@frostly.io',
+    actor_id: configuredCreatorEmail || 'platform_admin',
     action: 'manual_subscription_update',
     target_organization_id: orgId,
     previous_state: {

@@ -1,6 +1,13 @@
 import { syncQueue } from './queue';
 import { batchRepository } from '../repositories/batchRepository';
 import { customerRepository } from '../repositories/customerRepository';
+import { orderRepository } from '../repositories/orderRepository';
+import { supplierRepository } from '../repositories/supplierRepository';
+import { financialRepository } from '../repositories/financialRepository';
+import { haccpRepository } from '../repositories/haccpRepository';
+import { purchaseOrderRepository } from '../repositories/purchaseOrderRepository';
+import { productRepository, retailTransactionRepository } from '../repositories/retailRepository';
+import { notificationRepository } from '../repositories/notificationRepository';
 import { getSession } from '../data/auth';
 
 type FlushHandler = () => Promise<{ processed: number; failed: number }>;
@@ -26,6 +33,14 @@ class SyncManager {
     // Register core entity flush handlers
     this.registerHandler('inventory_batches', () => batchRepository.flushTableQueue());
     this.registerHandler('customers', () => customerRepository.flushTableQueue());
+    this.registerHandler('client_orders', () => orderRepository.flushTableQueue());
+    this.registerHandler('suppliers', () => supplierRepository.flushTableQueue());
+    this.registerHandler('financial_ledger_entries', () => financialRepository.flushTableQueue());
+    this.registerHandler('haccp_audit_records', () => haccpRepository.flushTableQueue());
+    this.registerHandler('purchase_order_landings', () => purchaseOrderRepository.flushTableQueue());
+    this.registerHandler('retail_wholesale_products', () => productRepository.flushTableQueue());
+    this.registerHandler('retail_transactions', () => retailTransactionRepository.flushTableQueue());
+    this.registerHandler('system_notifications', () => notificationRepository.flushTableQueue());
 
     // Listen for online events to automatically flush all queued changes
     if (typeof window !== 'undefined') {

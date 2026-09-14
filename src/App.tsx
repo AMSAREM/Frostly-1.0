@@ -49,6 +49,13 @@ import {
 import { formatCurrency } from './utils/formatters';
 import { batchRepository } from './repositories/batchRepository';
 import { customerRepository } from './repositories/customerRepository';
+import { orderRepository } from './repositories/orderRepository';
+import { supplierRepository } from './repositories/supplierRepository';
+import { financialRepository } from './repositories/financialRepository';
+import { purchaseOrderRepository } from './repositories/purchaseOrderRepository';
+import { productRepository, retailTransactionRepository } from './repositories/retailRepository';
+import { settingsRepository } from './repositories/settingsRepository';
+import { notificationRepository } from './repositories/notificationRepository';
 import { syncManager } from './sync/syncManager';
 import { useAuth } from './components/AuthGate';
 import { 
@@ -198,9 +205,11 @@ export default function App() {
   // Single authoritative source of truth for session and staff profile from AuthGate
   const { session, user: currentUser, staffProfile, refreshProfile: handleRefreshProfile, signOut: handleSignOut } = useAuth();
 
+  const configuredCreatorEmail = typeof import.meta !== 'undefined' ? import.meta.env?.VITE_DEV_CREATOR_EMAIL : undefined;
   const isPlatformCreator = Boolean(
-    currentUser?.email === 'creator@frostly.io' ||
-    currentUser?.email === 'owner@frostly.io' ||
+    (configuredCreatorEmail && currentUser?.email?.toLowerCase() === configuredCreatorEmail.toLowerCase()) ||
+    currentUser?.user_metadata?.role === 'platform_creator' ||
+    currentUser?.app_metadata?.role === 'platform_creator' ||
     (staffProfile && (staffProfile.role as string) === 'platform_creator')
   );
 
@@ -231,6 +240,71 @@ export default function App() {
       }
     }).catch(err => {
       console.warn('[App] Customer repository load error:', err);
+    });
+
+    orderRepository.getOrders(orders).then(fresh => {
+      if (isMounted && fresh && fresh.length > 0) {
+        setOrders(fresh);
+      }
+    }).catch(err => {
+      console.warn('[App] Order repository load error:', err);
+    });
+
+    supplierRepository.getSuppliers(suppliers).then(fresh => {
+      if (isMounted && fresh && fresh.length > 0) {
+        setSuppliers(fresh);
+      }
+    }).catch(err => {
+      console.warn('[App] Supplier repository load error:', err);
+    });
+
+    financialRepository.getEntries(financialEntries).then(fresh => {
+      if (isMounted && fresh && fresh.length > 0) {
+        setFinancialEntries(fresh);
+      }
+    }).catch(err => {
+      console.warn('[App] Financial repository load error:', err);
+    });
+
+    purchaseOrderRepository.getPurchaseOrders(purchaseOrders).then(fresh => {
+      if (isMounted && fresh && fresh.length > 0) {
+        setPurchaseOrders(fresh);
+      }
+    }).catch(err => {
+      console.warn('[App] Purchase Order repository load error:', err);
+    });
+
+    productRepository.getProducts(products).then(fresh => {
+      if (isMounted && fresh && fresh.length > 0) {
+        setProducts(fresh);
+      }
+    }).catch(err => {
+      console.warn('[App] Product repository load error:', err);
+    });
+
+    retailTransactionRepository.getTransactions(retailSales).then(fresh => {
+      if (isMounted && fresh && fresh.length > 0) {
+        setRetailSales(fresh);
+      }
+    }).catch(err => {
+      console.warn('[App] Retail transaction repository load error:', err);
+    });
+
+    settingsRepository.getSettings(settings).then(fresh => {
+      if (isMounted && fresh) {
+        setSettings(fresh);
+        setUseImperial(fresh.useImperial);
+      }
+    }).catch(err => {
+      console.warn('[App] Settings repository load error:', err);
+    });
+
+    notificationRepository.getNotifications(notifications).then(fresh => {
+      if (isMounted && fresh && fresh.length > 0) {
+        setNotifications(fresh);
+      }
+    }).catch(err => {
+      console.warn('[App] Notification repository load error:', err);
     });
 
     return () => { isMounted = false; };
@@ -272,6 +346,9 @@ export default function App() {
   const handleUpdateSettings = (newSettings: AppSettings) => {
     setSettings(newSettings);
     setUseImperial(newSettings.useImperial);
+    settingsRepository.saveSettings(newSettings).catch(err => {
+      console.warn('[App] settingsRepository save error:', err);
+    });
     addNotification({
       title: 'Settings Updated',
       message: 'Enterprise configuration and telemetry thresholds saved.',
@@ -342,6 +419,9 @@ export default function App() {
   // Notifications handler
   const markNotificationRead = (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    notificationRepository.markAsRead(id).catch(err => {
+      console.warn('[App] notificationRepository markAsRead error:', err);
+    });
   };
 
   const addNotification = (notif: Omit<SystemNotification, 'id' | 'timestamp' | 'read'>) => {
@@ -352,6 +432,9 @@ export default function App() {
       read: false
     };
     setNotifications(prev => [newNotif, ...prev]);
+    notificationRepository.save(newNotif).catch(err => {
+      console.warn('[App] notificationRepository save error:', err);
+    });
   };
 
   // Add Batch Handler
@@ -371,6 +454,9 @@ export default function App() {
   // Add Order Handler
   const handleAddOrder = (newOrder: ClientOrder) => {
     setOrders(prev => [newOrder, ...prev]);
+    orderRepository.saveOrderWithItems(newOrder).catch(err => {
+      console.warn('[App] orderRepository save error:', err);
+    });
     
     // Update customer spend and balance if matched
     setCustomers(prev => prev.map(cust => {
@@ -406,6 +492,9 @@ export default function App() {
       status: 'Pending'
     };
     setFinancialEntries(prev => [newFinEntry, ...prev]);
+    financialRepository.addEntry(newFinEntry).catch(err => {
+      console.warn('[App] financialRepository addEntry error for order:', err);
+    });
 
     // Update inventory batches: allocate weight through batchRepository
     newOrder.items.forEach(item => {
@@ -443,12 +532,16 @@ export default function App() {
   ) => {
     setOrders(prev => prev.map(order => {
       if (order.id !== orderId) return order;
-      return {
+      const updatedOrder: ClientOrder = {
         ...order,
         items: updatedItems,
         adjustedTotalUSD: adjustedTotal,
         status: order.status === 'Pending Confirmation' ? 'Weighing & Grading' : order.status
       };
+      orderRepository.saveOrderWithItems(updatedOrder).catch(err => {
+        console.warn('[App] orderRepository save after weighing error:', err);
+      });
+      return updatedOrder;
     }));
 
     // Calibrate batch allocations based on exact certified scale weight through batchRepository
@@ -484,7 +577,11 @@ export default function App() {
   const handleAdvanceOrderStatus = (orderId: string, nextStatus: OrderStatus) => {
     setOrders(prev => prev.map(o => {
       if (o.id !== orderId) return o;
-      return { ...o, status: nextStatus };
+      const updated = { ...o, status: nextStatus };
+      orderRepository.save(updated).catch(err => {
+        console.warn('[App] orderRepository advance status error:', err);
+      });
+      return updated;
     }));
 
     addNotification({
@@ -497,7 +594,14 @@ export default function App() {
 
   // Payment status update handler
   const handleUpdatePaymentStatus = (orderId: string, status: ClientOrder['paymentStatus']) => {
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, paymentStatus: status } : o));
+    setOrders(prev => prev.map(o => {
+      if (o.id !== orderId) return o;
+      const updated = { ...o, paymentStatus: status };
+      orderRepository.save(updated).catch(err => {
+        console.warn('[App] orderRepository update payment status error:', err);
+      });
+      return updated;
+    }));
     addNotification({
       type: 'order_update',
       title: `Payment Updated: ${orderId}`,
@@ -534,6 +638,9 @@ export default function App() {
   // Supplier Management Handlers
   const handleAddSupplier = (newSup: Supplier) => {
     setSuppliers(prev => [newSup, ...prev]);
+    supplierRepository.save(newSup, true).catch(err => {
+      console.warn('[App] supplierRepository save error:', err);
+    });
     addNotification({
       type: 'order_update',
       title: `New Harvester Supplier Added`,
@@ -544,17 +651,24 @@ export default function App() {
 
   const handleAddPurchaseOrder = (newPO: PurchaseOrderLanding) => {
     setPurchaseOrders(prev => [newPO, ...prev]);
+    purchaseOrderRepository.savePurchaseOrderWithItems(newPO).catch(err => {
+      console.warn('[App] purchaseOrderRepository save error:', err);
+    });
 
     // Update Supplier totals
     setSuppliers(prev => prev.map(sup => {
       if (sup.id === newPO.supplierId) {
         const item = newPO.speciesItems[0];
-        return {
+        const updatedSup: Supplier = {
           ...sup,
           totalPurchasedUSD: sup.totalPurchasedUSD + newPO.totalCostUSD,
           outstandingPayableUSD: sup.outstandingPayableUSD + newPO.totalCostUSD,
           totalWeightSuppliedKg: sup.totalWeightSuppliedKg + (item ? item.weightKg : 0)
         };
+        supplierRepository.save(updatedSup, false).catch(err => {
+          console.warn('[App] supplierRepository update totals error:', err);
+        });
+        return updatedSup;
       }
       return sup;
     }));
@@ -618,6 +732,9 @@ export default function App() {
       status: 'Pending'
     };
     setFinancialEntries(prev => [newFinEntry, ...prev]);
+    financialRepository.addEntry(newFinEntry).catch(err => {
+      console.warn('[App] financialRepository addEntry error for purchase order:', err);
+    });
 
     addNotification({
       type: 'catch_landed',
@@ -630,15 +747,22 @@ export default function App() {
   // Retail POS Handlers
   const handleCompleteRetailSale = (sale: RetailTransaction) => {
     setRetailSales(prev => [sale, ...prev]);
+    retailTransactionRepository.recordSaleWithItems(sale).catch(err => {
+      console.warn('[App] retailTransactionRepository recordSale error:', err);
+    });
 
-    // Deduct stock from products
+    // Deduct stock from products & persist to Supabase
     setProducts(prev => prev.map(prod => {
       const soldItem = sale.items.find(i => i.productId === prod.id);
       if (soldItem) {
-        return {
+        const updatedProd = {
           ...prod,
           stockKg: Math.max(0, parseFloat((prod.stockKg - (prod.unit === 'pack' ? soldItem.quantity * 0.5 : soldItem.quantity)).toFixed(1)))
         };
+        productRepository.save(updatedProd, false).catch(err => {
+          console.warn('[App] productRepository update stock error:', err);
+        });
+        return updatedProd;
       }
       return prod;
     }));
@@ -657,6 +781,9 @@ export default function App() {
       status: 'Settled'
     };
     setFinancialEntries(prev => [newFinEntry, ...prev]);
+    financialRepository.addEntry(newFinEntry).catch(err => {
+      console.warn('[App] financialRepository addEntry error for retail sale:', err);
+    });
 
     addNotification({
       type: 'order_update',
@@ -669,11 +796,15 @@ export default function App() {
   const handleUpdateProductPricing = (productId: string, wholesalePrice: number, retailPrice: number) => {
     setProducts(prev => prev.map(p => {
       if (p.id === productId) {
-        return {
+        const updatedProd = {
           ...p,
           wholesalePricePerUnit: wholesalePrice,
           retailPricePerUnit: retailPrice
         };
+        productRepository.save(updatedProd, false).catch(err => {
+          console.warn('[App] productRepository update pricing error:', err);
+        });
+        return updatedProd;
       }
       return p;
     }));
@@ -707,7 +838,11 @@ export default function App() {
       // Update Order payment status if order ID passed
       setOrders(prev => prev.map(o => {
         if (o.id === refId || o.clientName.toLowerCase().includes(entityId.toLowerCase())) {
-          return { ...o, paymentStatus: 'Paid' };
+          const updated = { ...o, paymentStatus: 'Paid' as const };
+          orderRepository.save(updated).catch(err => {
+            console.warn('[App] orderRepository save on AR payment failed:', err);
+          });
+          return updated;
         }
         return o;
       }));
@@ -727,6 +862,9 @@ export default function App() {
         status: 'Settled'
       };
       setFinancialEntries(prev => [newEntry, ...prev]);
+      financialRepository.addEntry(newEntry).catch(err => {
+        console.warn('[App] financialRepository addEntry error for AR settlement:', err);
+      });
 
       addNotification({
         type: 'order_update',
@@ -738,10 +876,14 @@ export default function App() {
       // Settle AP Supplier Bill
       setSuppliers(prev => prev.map(sup => {
         if (sup.id === entityId) {
-          return {
+          const updatedSup: Supplier = {
             ...sup,
             outstandingPayableUSD: Math.max(0, sup.outstandingPayableUSD - amount)
           };
+          supplierRepository.save(updatedSup, false).catch(err => {
+            console.warn('[App] supplierRepository save on AP settlement failed:', err);
+          });
+          return updatedSup;
         }
         return sup;
       }));
@@ -768,6 +910,9 @@ export default function App() {
         status: 'Settled'
       };
       setFinancialEntries(prev => [newEntry, ...prev]);
+      financialRepository.addEntry(newEntry).catch(err => {
+        console.warn('[App] financialRepository addEntry error for AP settlement:', err);
+      });
 
       addNotification({
         type: 'order_update',
@@ -785,6 +930,9 @@ export default function App() {
       id: `EXP-${Date.now().toString().slice(-4)}`
     };
     setFinancialEntries(prev => [newEntry, ...prev]);
+    financialRepository.addEntry(newEntry).catch(err => {
+      console.warn('[App] financialRepository addEntry error for expense:', err);
+    });
     addNotification({
       type: 'order_update',
       title: `Expense Logged: ${formatAppCurrency(expense.amount)}`,
