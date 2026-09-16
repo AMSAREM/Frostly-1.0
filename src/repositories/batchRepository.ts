@@ -10,6 +10,7 @@ export class BatchRepository extends BaseRepository<InventoryBatch, DatabaseInve
       toDomain: batchMapper.toDomain,
       toDatabase: batchMapper.toDatabase,
       getId: (batch) => batch.id,
+      onConflict: 'organization_id,id',
     });
   }
 

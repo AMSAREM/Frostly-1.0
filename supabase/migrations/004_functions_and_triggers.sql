@@ -121,12 +121,14 @@ AS $$
 BEGIN
     IF (OLD.role IS DISTINCT FROM NEW.role) THEN
         INSERT INTO public.staff_role_audit_logs (
+            organization_id,
             target_staff_id,
             previous_role,
             new_role,
             changed_by,
             reason
         ) VALUES (
+            NEW.organization_id,
             NEW.id,
             OLD.role,
             NEW.role,

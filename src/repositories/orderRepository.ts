@@ -11,6 +11,7 @@ export class OrderRepository extends BaseRepository<ClientOrder, DatabaseOrderRo
       toDomain: orderMapper.toDomain,
       toDatabase: orderMapper.toDatabase,
       getId: (order) => order.id,
+      onConflict: 'organization_id,id',
     });
   }
 

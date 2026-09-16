@@ -131,8 +131,8 @@ describe('BatchRepository & Data Flow Tests', () => {
     expect(queueItem.payload.allocated_weight_kg).toBe(150);
   });
 
-  it('resetCache cleanly replaces the local cache', () => {
-    batchRepository.save(sampleBatch, true);
+  it('resetCache cleanly replaces the local cache', async () => {
+    await batchRepository.save(sampleBatch, true);
     expect(batchRepository.getLocalCache()).toHaveLength(1);
 
     batchRepository.resetCache([]);

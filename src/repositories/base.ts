@@ -1,7 +1,8 @@
 import { supabase, isSupabaseConfigured } from '../utils/supabase';
-import { getSession } from '../data/auth';
+import { getSession, getStaffProfile, getCurrentOrganizationId } from '../data/auth';
 import { syncQueue } from '../sync/queue';
 import { SyncOperationType } from '../sync/types';
+import { ensureValidUuid } from '../mappers/notificationMapper';
 
 export interface RepositoryOptions<TDomain, TDatabaseRow> {
   tableName: string;
@@ -9,6 +10,7 @@ export interface RepositoryOptions<TDomain, TDatabaseRow> {
   toDomain: (row: TDatabaseRow) => TDomain;
   toDatabase: (entity: TDomain) => Record<string, any>;
   getId: (entity: TDomain) => string;
+  onConflict?: string;
 }
 
 export class BaseRepository<TDomain, TDatabaseRow> {
@@ -17,6 +19,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   protected toDomain: (row: TDatabaseRow) => TDomain;
   protected toDatabase: (entity: TDomain) => Record<string, any>;
   protected getId: (entity: TDomain) => string;
+  protected onConflict: string;
 
   constructor(options: RepositoryOptions<TDomain, TDatabaseRow>) {
     this.tableName = options.tableName;
@@ -24,6 +27,22 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     this.toDomain = options.toDomain;
     this.toDatabase = options.toDatabase;
     this.getId = options.getId;
+    this.onConflict = options.onConflict || 'organization_id,id';
+  }
+
+  /**
+   * Helper to retrieve active tenant organization ID
+   */
+  public async getOrganizationId(): Promise<string> {
+    try {
+      const profile = await getStaffProfile();
+      if (profile?.organization_id && profile.organization_id !== 'org-frostly-hq') {
+        return profile.organization_id;
+      }
+    } catch {
+      // ignore
+    }
+    return getCurrentOrganizationId();
   }
 
   /**
@@ -122,11 +141,24 @@ export class BaseRepository<TDomain, TDatabaseRow> {
 
     if (canQuery) {
       try {
-        const { data, error } = await supabase
+        let lookupId = id;
+        if (this.tableName === 'system_notifications') {
+          lookupId = ensureValidUuid(id);
+        }
+
+        let query = supabase
           .from(this.tableName)
           .select('*')
-          .eq('id', id)
-          .single();
+          .eq('id', lookupId);
+
+        if (this.onConflict.includes('organization_id')) {
+          const orgId = await this.getOrganizationId();
+          if (orgId) {
+            query = query.eq('organization_id', orgId);
+          }
+        }
+
+        const { data, error } = await query.maybeSingle();
 
         if (!error && data) {
           return this.toDomain(data as unknown as TDatabaseRow);
@@ -148,7 +180,24 @@ export class BaseRepository<TDomain, TDatabaseRow> {
    */
   public async save(entity: TDomain, isInsert = false): Promise<TDomain> {
     const id = this.getId(entity);
-    const dbPayload = this.toDatabase(entity);
+    const rawPayload = this.toDatabase(entity);
+    const dbPayload: Record<string, any> = { ...rawPayload };
+
+    // Sanitize special types for Postgres compliance
+    if (this.tableName === 'system_notifications') {
+      if (dbPayload.id) {
+        dbPayload.id = ensureValidUuid(dbPayload.id);
+      }
+      if (!dbPayload.created_at || isNaN(Date.parse(dbPayload.created_at))) {
+        dbPayload.created_at = new Date().toISOString();
+      }
+    }
+
+    // Populate organization_id for multi-tenant composite key
+    if ((!dbPayload.organization_id || dbPayload.organization_id === 'org-frostly-hq') && this.onConflict.includes('organization_id')) {
+      const orgId = await this.getOrganizationId();
+      dbPayload.organization_id = orgId || getCurrentOrganizationId() || '00000000-0000-0000-0000-000000000001';
+    }
 
     // 1. Optimistic Local Cache Update
     const current = this.getLocalCache();
@@ -167,9 +216,24 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     const canQuery = await this.canAccessSupabase();
     if (canQuery) {
       try {
-        const { error } = await supabase
+        let conflictTarget = this.onConflict;
+        let { error } = await supabase
           .from(this.tableName)
-          .upsert(dbPayload, { onConflict: 'id' });
+          .upsert(dbPayload, { onConflict: conflictTarget });
+
+        // Adaptive fallback if ON CONFLICT specification did not match table constraint
+        if (error && error.message?.includes('there is no unique or exclusion constraint matching the ON CONFLICT specification')) {
+          const alternateTarget = conflictTarget.includes('organization_id') ? 'id' : 'organization_id,id';
+          console.warn(`[BaseRepository:${this.tableName}] Retrying upsert with alternate onConflict target: ${alternateTarget}`);
+          const retryRes = await supabase
+            .from(this.tableName)
+            .upsert(dbPayload, { onConflict: alternateTarget });
+          if (!retryRes.error) {
+            this.onConflict = alternateTarget;
+            return entity;
+          }
+          error = retryRes.error;
+        }
 
         if (!error) {
           return entity;
@@ -205,10 +269,24 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     const canQuery = await this.canAccessSupabase();
     if (canQuery) {
       try {
-        const { error } = await supabase
+        let lookupId = id;
+        if (this.tableName === 'system_notifications') {
+          lookupId = ensureValidUuid(id);
+        }
+
+        let query = supabase
           .from(this.tableName)
           .delete()
-          .eq('id', id);
+          .eq('id', lookupId);
+
+        if (this.onConflict.includes('organization_id')) {
+          const orgId = await this.getOrganizationId();
+          if (orgId) {
+            query = query.eq('organization_id', orgId);
+          }
+        }
+
+        const { error } = await query;
 
         if (!error) {
           return;
@@ -263,15 +341,63 @@ export class BaseRepository<TDomain, TDatabaseRow> {
         let error: any = null;
 
         if (item.operation === 'INSERT' || item.operation === 'UPDATE') {
-          const res = await supabase
+          const payload = { ...item.payload };
+
+          // Sanitize special types for Postgres compliance
+          if (this.tableName === 'system_notifications') {
+            if (payload.id) {
+              payload.id = ensureValidUuid(payload.id);
+            }
+            if (!payload.created_at || isNaN(Date.parse(payload.created_at))) {
+              payload.created_at = new Date().toISOString();
+            }
+          }
+
+          // Populate organization_id for multi-tenant composite key
+          if ((!payload.organization_id || payload.organization_id === 'org-frostly-hq') && this.onConflict.includes('organization_id')) {
+            const orgId = await this.getOrganizationId();
+            payload.organization_id = orgId || getCurrentOrganizationId() || '00000000-0000-0000-0000-000000000001';
+          }
+
+          let conflictTarget = this.onConflict;
+          let res = await supabase
             .from(this.tableName)
-            .upsert(item.payload, { onConflict: 'id' });
+            .upsert(payload, { onConflict: conflictTarget });
           error = res.error;
+
+          // Adaptive fallback if ON CONFLICT specification did not match table constraint
+          if (error && error.message?.includes('there is no unique or exclusion constraint matching the ON CONFLICT specification')) {
+            const alternateTarget = conflictTarget.includes('organization_id') ? 'id' : 'organization_id,id';
+            console.warn(`[BaseRepository:${this.tableName}] Retrying flush with alternate onConflict target: ${alternateTarget}`);
+            const retryRes = await supabase
+              .from(this.tableName)
+              .upsert(payload, { onConflict: alternateTarget });
+            if (!retryRes.error) {
+              this.onConflict = alternateTarget;
+              error = null;
+            } else {
+              error = retryRes.error;
+            }
+          }
         } else if (item.operation === 'DELETE') {
-          const res = await supabase
+          let lookupId = item.recordId;
+          if (this.tableName === 'system_notifications') {
+            lookupId = ensureValidUuid(item.recordId);
+          }
+
+          let query = supabase
             .from(this.tableName)
             .delete()
-            .eq('id', item.recordId);
+            .eq('id', lookupId);
+
+          if (this.onConflict.includes('organization_id')) {
+            const orgId = await this.getOrganizationId();
+            if (orgId) {
+              query = query.eq('organization_id', orgId);
+            }
+          }
+
+          const res = await query;
           error = res.error;
         }
 
@@ -281,6 +407,10 @@ export class BaseRepository<TDomain, TDatabaseRow> {
         } else {
           console.warn(`[BaseRepository:${this.tableName}] Sync error for ${item.recordId}:`, error.message);
           failed++;
+          syncQueue.updateItem(item.id, {
+            retryCount: (item.retryCount || 0) + 1,
+            lastError: error.message,
+          });
         }
       } catch (err) {
         console.error(`[BaseRepository:${this.tableName}] Sync exception:`, err);

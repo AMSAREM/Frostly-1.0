@@ -54,7 +54,8 @@ const defaultMigrationFiles = [
   '012_subscription_licensing.sql',
   '013_paystack_dual_billing.sql',
   '014_platform_admin_console.sql',
-  '015_creator_bootstrap.sql'
+  '015_creator_bootstrap.sql',
+  '016_revoke_delete_tenant.sql'
 ];
 
 // Support running a single target migration if specified via CLI argument (e.g. node scripts/migrate.mjs 011_multi_tenant.sql)

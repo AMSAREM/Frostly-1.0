@@ -10,6 +10,7 @@ export class CustomerRepository extends BaseRepository<Customer, DatabaseCustome
       toDomain: customerMapper.toDomain,
       toDatabase: customerMapper.toDatabase,
       getId: (customer) => customer.id,
+      onConflict: 'organization_id,id',
     });
   }
 

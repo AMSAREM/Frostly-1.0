@@ -427,7 +427,7 @@ export default function App() {
   const addNotification = (notif: Omit<SystemNotification, 'id' | 'timestamp' | 'read'>) => {
     const newNotif: SystemNotification = {
       ...notif,
-      id: 'notif-' + Date.now(),
+      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'notif-' + Date.now(),
       timestamp: 'Just now',
       read: false
     };
@@ -448,6 +448,20 @@ export default function App() {
       title: `Intake Complete: ${newBatch.speciesName}`,
       message: `Lot ${newBatch.id} (${newBatch.availableWeightKg} kg) placed in ${newBatch.storageZone}.`,
       urgency: 'medium'
+    });
+  };
+
+  // Update Batch Handler (Stock Adjustment / Audit / Calibration)
+  const handleUpdateBatch = (updatedBatch: InventoryBatch) => {
+    setBatches(prev => prev.map(b => b.id === updatedBatch.id ? updatedBatch : b));
+    batchRepository.save(updatedBatch, false).catch(err => {
+      console.warn('[App] batchRepository save error on update:', err);
+    });
+    addNotification({
+      type: 'system',
+      title: `Stock Calibrated: Lot ${updatedBatch.id}`,
+      message: `Available stock updated to ${updatedBatch.availableWeightKg} kg for ${updatedBatch.speciesName}.`,
+      urgency: 'low'
     });
   };
 
@@ -1146,6 +1160,8 @@ export default function App() {
             batches={batches}
             onOpenPassport={(b) => setPassportBatch(b)}
             onOpenNewBatch={() => setIsNewBatchModalOpen(true)}
+            onUpdateBatch={handleUpdateBatch}
+            onNavigateToRetail={() => setActiveTab('retail_wholesale')}
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
             useImperial={useImperial}

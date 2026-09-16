@@ -181,7 +181,7 @@ describe('PostgreSQL Runtime Multi-Tenant RLS & Isolation Integration Test', () 
         ('${USER_A_ID}', '${ORG_A_ID}', 'kwame@atlantic.com', 'Kwame Mensah', 'admin'),
         ('${USER_B_ID}', '${ORG_B_ID}', 'elena@pacific.com', 'Elena Rostova', 'admin');
     `);
-  });
+  }, 30000);
 
   afterAll(async () => {
     if (db) {

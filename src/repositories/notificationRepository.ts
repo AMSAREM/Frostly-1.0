@@ -1,6 +1,6 @@
 import { BaseRepository } from './base';
 import { SystemNotification } from '../types';
-import { notificationMapper, DatabaseNotificationRow } from '../mappers/notificationMapper';
+import { notificationMapper, DatabaseNotificationRow, ensureValidUuid } from '../mappers/notificationMapper';
 import { supabase } from '../utils/supabase';
 
 export class NotificationRepository extends BaseRepository<SystemNotification, DatabaseNotificationRow> {
@@ -11,6 +11,7 @@ export class NotificationRepository extends BaseRepository<SystemNotification, D
       toDomain: notificationMapper.toDomain,
       toDatabase: notificationMapper.toDatabase,
       getId: (n) => n.id,
+      onConflict: 'organization_id,id',
     });
   }
 
@@ -18,11 +19,18 @@ export class NotificationRepository extends BaseRepository<SystemNotification, D
     const canQuery = await this.canAccessSupabase();
     if (canQuery) {
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from('system_notifications')
           .select('*')
           .order('created_at', { ascending: false })
           .limit(50);
+
+        const orgId = await this.getOrganizationId();
+        if (orgId) {
+          query = query.eq('organization_id', orgId);
+        }
+
+        const { data, error } = await query;
 
         if (!error && data && data.length > 0) {
           const domainItems = data.map((row: any) => this.toDomain(row));
@@ -44,10 +52,18 @@ export class NotificationRepository extends BaseRepository<SystemNotification, D
     const canQuery = await this.canAccessSupabase();
     if (canQuery) {
       try {
-        await supabase
+        const uuid = ensureValidUuid(notificationId);
+        let query = supabase
           .from('system_notifications')
           .update({ read: true })
-          .eq('id', notificationId);
+          .eq('id', uuid);
+
+        const orgId = await this.getOrganizationId();
+        if (orgId) {
+          query = query.eq('organization_id', orgId);
+        }
+
+        await query;
       } catch (e) {
         console.warn('[NotificationRepository] Error updating read state on Supabase:', e);
       }

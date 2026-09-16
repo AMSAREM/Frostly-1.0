@@ -3,18 +3,19 @@ import path from 'path';
 
 const migrationsDir = path.join(process.cwd(), 'supabase', 'migrations');
 
-// 1. Upgrade Bundle (011 -> 015)
+// 1. Upgrade Bundle (011 -> 016)
 const upgradeFiles = [
   '011_multi_tenant.sql',
   '012_subscription_licensing.sql',
   '013_paystack_dual_billing.sql',
   '014_platform_admin_console.sql',
-  '015_creator_bootstrap.sql'
+  '015_creator_bootstrap.sql',
+  '016_revoke_delete_tenant.sql'
 ];
 
 let upgradeContent = `-- ============================================================================
 -- FROSTLY SEAFOOD COLD-CHAIN ERP
--- MULTI-TENANT & PLATFORM UPGRADE BUNDLE (Migrations 011 to 015)
+-- MULTI-TENANT & PLATFORM UPGRADE BUNDLE (Migrations 011 to 016)
 -- Run this in Supabase SQL Editor: https://supabase.com/dashboard/project/xvlocfkkcnjopfzwobmg/sql
 -- ============================================================================
 
@@ -34,7 +35,7 @@ for (const file of upgradeFiles) {
 fs.writeFileSync(path.join(process.cwd(), 'supabase', 'RUN_MULTI_TENANT_UPGRADE.sql'), upgradeContent, 'utf-8');
 console.log('✓ Created supabase/RUN_MULTI_TENANT_UPGRADE.sql');
 
-// 2. Full System Bundle (001 -> 015)
+// 2. Full System Bundle (001 -> 016)
 const allFiles = [
   '001_extensions_and_types.sql',
   '002_tables.sql',
@@ -49,12 +50,13 @@ const allFiles = [
   '012_subscription_licensing.sql',
   '013_paystack_dual_billing.sql',
   '014_platform_admin_console.sql',
-  '015_creator_bootstrap.sql'
+  '015_creator_bootstrap.sql',
+  '016_revoke_delete_tenant.sql'
 ];
 
 let fullContent = `-- ============================================================================
 -- FROSTLY SEAFOOD COLD-CHAIN ERP
--- COMPLETE ALL-IN-ONE SYSTEM SCHEMA (Migrations 001 to 015)
+-- COMPLETE ALL-IN-ONE SYSTEM SCHEMA (Migrations 001 to 016)
 -- Run this in Supabase SQL Editor for fresh database initialization
 -- ============================================================================
 

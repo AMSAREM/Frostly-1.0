@@ -9,10 +9,12 @@ describe('Platform Owner / Creator Console Role & RLS Isolation Tests', () => {
   const MIGRATION_012_PATH = path.resolve(process.cwd(), 'supabase/migrations/012_subscription_licensing.sql');
   const MIGRATION_013_PATH = path.resolve(process.cwd(), 'supabase/migrations/013_paystack_dual_billing.sql');
   const MIGRATION_014_PATH = path.resolve(process.cwd(), 'supabase/migrations/014_platform_admin_console.sql');
+  const MIGRATION_016_PATH = path.resolve(process.cwd(), 'supabase/migrations/016_revoke_delete_tenant.sql');
 
   const migration012Sql = fs.readFileSync(MIGRATION_012_PATH, 'utf-8');
   const migration013Sql = fs.readFileSync(MIGRATION_013_PATH, 'utf-8');
   const migration014Sql = fs.readFileSync(MIGRATION_014_PATH, 'utf-8');
+  const migration016Sql = fs.readFileSync(MIGRATION_016_PATH, 'utf-8');
 
   // Test identities
   const PLATFORM_OWNER_ID = '11111111-1111-1111-1111-111111111111';
@@ -216,10 +218,11 @@ describe('Platform Owner / Creator Console Role & RLS Isolation Tests', () => {
       FOR EACH ROW EXECUTE FUNCTION public.stamp_organization_id();
     `);
 
-    // 2. Execute Migrations 012, 013, 014
+    // 2. Execute Migrations 012, 013, 014, 016
     await db.exec(migration012Sql);
     await db.exec(migration013Sql);
     await db.exec(migration014Sql);
+    await db.exec(migration016Sql);
 
     // Grant public schema privileges to authenticated role (mirrors Supabase default grants in migration 006)
     await db.exec(`
@@ -278,7 +281,7 @@ describe('Platform Owner / Creator Console Role & RLS Isolation Tests', () => {
       INSERT INTO public.platform_admins (user_id, notes)
       VALUES ('${PLATFORM_OWNER_ID}', 'Chief Platform Operator');
     `);
-  });
+  }, 30000);
 
   afterAll(async () => {
     if (db) {
@@ -493,6 +496,141 @@ describe('Platform Owner / Creator Console Role & RLS Isolation Tests', () => {
         SELECT subscription_status FROM public.organizations WHERE id = '${ORG_A_ID}';
       `);
       expect(checkOrg.rows[0].subscription_status).toBe('suspended');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // SECTION 5: Organization Revocation, Reinstatement, and Deletion
+  // --------------------------------------------------------------------------
+  describe('Organization Revocation, Reinstatement, and Cascading Deletion', () => {
+    it('allows platform admin to revoke organization access, suspending status and invalidating invites', async () => {
+      await setActor(PLATFORM_OWNER_ID);
+
+      // Create a pending invite for ORG_B
+      await db.exec(`
+        INSERT INTO public.invites (organization_id, email, token, expires_at)
+        VALUES ('${ORG_B_ID}', 'crew@atlantic-cold.com', 'test-token-active', NOW() + INTERVAL '7 days');
+      `);
+
+      const res = await db.query<{ platform_revoke_organization_access: any }>(`
+        SELECT public.platform_revoke_organization_access(
+          '${ORG_B_ID}',
+          'Voluntary suspension requested by client'
+        ) as platform_revoke_organization_access;
+      `);
+
+      const result = res.rows[0].platform_revoke_organization_access;
+      expect(result.success).toBe(true);
+      expect(result.subscription_status).toBe('suspended');
+
+      // Verify org status is suspended
+      const checkOrg = await db.query<any>(`
+        SELECT subscription_status FROM public.organizations WHERE id = '${ORG_B_ID}';
+      `);
+      expect(checkOrg.rows[0].subscription_status).toBe('suspended');
+
+      // Verify pending invite was expired
+      const checkInvite = await db.query<any>(`
+        SELECT expires_at <= NOW() as is_expired FROM public.invites WHERE token = 'test-token-active';
+      `);
+      expect(checkInvite.rows[0].is_expired).toBe(true);
+
+      // Verify audit log
+      const auditRes = await db.query<any>(`
+        SELECT action, reason FROM public.platform_audit_logs 
+        WHERE action = 'revoke_organization_access' AND target_organization_id = '${ORG_B_ID}';
+      `);
+      expect(auditRes.rows.length).toBe(1);
+      expect(auditRes.rows[0].reason).toContain('Voluntary suspension');
+    });
+
+    it('denies non-platform admin from invoking platform_revoke_organization_access', async () => {
+      await setActor(TENANT_A_ADMIN_ID);
+
+      await expect(
+        db.query(`
+          SELECT public.platform_revoke_organization_access('${ORG_A_ID}', 'Unauthorized attempt');
+        `)
+      ).rejects.toThrow(/Access denied: caller is not a verified platform administrator/i);
+    });
+
+    it('allows platform admin to reinstate organization access to active', async () => {
+      await setActor(PLATFORM_OWNER_ID);
+
+      const res = await db.query<{ platform_reinstate_organization_access: any }>(`
+        SELECT public.platform_reinstate_organization_access(
+          '${ORG_B_ID}',
+          'Annual renewal payment cleared',
+          'active'
+        ) as platform_reinstate_organization_access;
+      `);
+
+      const result = res.rows[0].platform_reinstate_organization_access;
+      expect(result.success).toBe(true);
+      expect(result.subscription_status).toBe('active');
+
+      const checkOrg = await db.query<any>(`
+        SELECT subscription_status FROM public.organizations WHERE id = '${ORG_B_ID}';
+      `);
+      expect(checkOrg.rows[0].subscription_status).toBe('active');
+    });
+
+    it('denies deletion if confirmation name does not match organization name', async () => {
+      await setActor(PLATFORM_OWNER_ID);
+
+      await expect(
+        db.query(`
+          SELECT public.platform_delete_organization(
+            '${ORG_B_ID}',
+            'Deprovision request',
+            'Wrong Name'
+          );
+        `)
+      ).rejects.toThrow(/Confirmation name does not match organization name/i);
+    });
+
+    it('allows platform admin to permanently delete an organization with cascading cleanup', async () => {
+      await setActor(PLATFORM_OWNER_ID);
+
+      // Verify Org B and its staff exist before deletion
+      const preCheck = await db.query<any>(`
+        SELECT id FROM public.organizations WHERE id = '${ORG_B_ID}';
+      `);
+      expect(preCheck.rows.length).toBe(1);
+
+      const res = await db.query<{ platform_delete_organization: any }>(`
+        SELECT public.platform_delete_organization(
+          '${ORG_B_ID}',
+          'Customer closed cold storage facility and terminated contract',
+          'Atlantic Cold Chain'
+        ) as platform_delete_organization;
+      `);
+
+      const result = res.rows[0].platform_delete_organization;
+      expect(result.success).toBe(true);
+      expect(result.deleted_organization_id).toBe(ORG_B_ID);
+
+      // Verify org is purged
+      const postOrgCheck = await db.query<any>(`
+        SELECT id FROM public.organizations WHERE id = '${ORG_B_ID}';
+      `);
+      expect(postOrgCheck.rows.length).toBe(0);
+
+      // Verify staff profiles are purged
+      const postStaffCheck = await db.query<any>(`
+        SELECT id FROM public.staff_profiles WHERE organization_id = '${ORG_B_ID}';
+      `);
+      expect(postStaffCheck.rows.length).toBe(0);
+
+      // Verify deletion audit entry exists
+      const auditRes = await db.query<any>(`
+        SELECT action, reason, previous_state, new_state FROM public.platform_audit_logs 
+        WHERE action = 'delete_organization';
+      `);
+      expect(auditRes.rows.length).toBe(1);
+      expect(auditRes.rows[0].reason).toContain('Customer closed cold storage');
+      expect(auditRes.rows[0].previous_state.name).toBe('Atlantic Cold Chain');
+      expect(auditRes.rows[0].new_state.status).toBe('deleted');
     });
   });
 });

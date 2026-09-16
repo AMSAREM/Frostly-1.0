@@ -10,6 +10,7 @@ export class SupplierRepository extends BaseRepository<Supplier, DatabaseSupplie
       toDomain: supplierMapper.toDomain,
       toDatabase: supplierMapper.toDatabase,
       getId: (supplier) => supplier.id,
+      onConflict: 'organization_id,id',
     });
   }
 

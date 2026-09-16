@@ -192,8 +192,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
             email: email.trim(),
             orgName: orgName.trim(),
             adminName: adminFullName.trim(),
+            websiteUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
+            confirmationUrl: typeof window !== 'undefined' ? `${window.location.origin}?activated=true&email=${encodeURIComponent(email.trim())}` : undefined,
           }).catch(console.warn);
-          setSuccessMsg('Confirmation email dispatched via Google SMTP! Please check your inbox and verify your email to access your new organization.');
+          setSuccessMsg('Activation message for this website dispatched via Google SMTP! Please check your inbox to activate your account.');
         } else {
           setError(res.error);
         }
@@ -202,8 +204,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
           email: email.trim(),
           orgName: orgName.trim(),
           adminName: adminFullName.trim(),
+          websiteUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
+          confirmationUrl: typeof window !== 'undefined' ? `${window.location.origin}?activated=true&email=${encodeURIComponent(email.trim())}` : undefined,
         }).catch(console.warn);
-        setSuccessMsg('Confirmation email dispatched via Google SMTP! Please check your inbox and verify your email to access your new organization.');
+        setSuccessMsg('Activation message for this website dispatched via Google SMTP! Please check your inbox to activate your account.');
       } else {
         setSuccessMsg(`Organization "${orgName}" created! Signed in as Admin.`);
         syncManager.flushAll().catch(console.warn);

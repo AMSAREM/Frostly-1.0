@@ -207,6 +207,8 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
             email: email.trim(),
             orgName: orgName.trim(),
             adminName: adminFullName.trim(),
+            websiteUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
+            confirmationUrl: typeof window !== 'undefined' ? `${window.location.origin}?activated=true&email=${encodeURIComponent(email.trim())}` : undefined,
           }).catch(console.warn);
         } else {
           setErrorMessage(res.error);
@@ -218,6 +220,8 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
           email: email.trim(),
           orgName: orgName.trim(),
           adminName: adminFullName.trim(),
+          websiteUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
+          confirmationUrl: typeof window !== 'undefined' ? `${window.location.origin}?activated=true&email=${encodeURIComponent(email.trim())}` : undefined,
         }).catch(console.warn);
       } else {
         if (onAuthSuccess) onAuthSuccess();
@@ -240,17 +244,19 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
       // Trigger Supabase email resend
       const res = await resendConfirmationEmail(pendingEmail);
       
-      // Also invoke server-side Google SMTP dispatch
+      // Also invoke server-side Google SMTP dispatch with explicit website activation target
       sendDirectGoogleSmtpConfirmation({
         email: pendingEmail,
         orgName: orgName || 'Your Organization',
         adminName: adminFullName || pendingEmail.split('@')[0],
+        websiteUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
+        confirmationUrl: typeof window !== 'undefined' ? `${window.location.origin}?activated=true&email=${encodeURIComponent(pendingEmail)}` : undefined,
       }).catch(console.warn);
 
       if (res.error) {
         setResendErrorMessage(res.error);
       } else {
-        setResendSuccessMessage('A fresh verification link has been dispatched via Google SMTP to your inbox.');
+        setResendSuccessMessage('A fresh link for the activation of this website has been dispatched via Google SMTP to your inbox.');
       }
     } catch (err: any) {
       setResendErrorMessage(err?.message || 'Failed to send verification email via Google SMTP.');
@@ -403,16 +409,19 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
                     <span>Dispatched via Google SMTP</span>
                   </div>
                   <h2 className="text-base font-bold font-heading text-slate-900">
-                    Confirm your administrator email
+                    Activation of this Website Required
                   </h2>
                   <p className="text-xs text-slate-600 mt-1.5 leading-relaxed max-w-sm mx-auto">
-                    We sent an activation link to:
+                    The activation message has been dispatched to your inbox. It contains the direct link for the activation of this website:
                   </p>
                   <div className="mt-2 inline-block px-3 py-1.5 bg-slate-100 rounded-lg text-xs font-mono font-semibold text-slate-900 border border-slate-200">
                     {pendingEmail}
                   </div>
+                  <div className="mt-2 text-[11px] text-indigo-700 bg-indigo-50/70 p-2 rounded-xl border border-indigo-100/80 font-medium">
+                    Website: <span className="font-mono">{typeof window !== 'undefined' ? window.location.origin : 'this website'}</span>
+                  </div>
                   <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-                    Please click the link in your email to verify your address and launch your organization workspace.
+                    Open your email and click <strong>&quot;Complete Activation of this Website&quot;</strong> to activate your organization workspace.
                   </p>
                 </div>
 

@@ -11,6 +11,7 @@ export class ProductRepository extends BaseRepository<RetailWholesaleProduct, Da
       toDomain: productMapper.toDomain,
       toDatabase: productMapper.toDatabase,
       getId: (prod) => prod.id,
+      onConflict: 'organization_id,id',
     });
   }
 
@@ -27,6 +28,7 @@ export class RetailTransactionRepository extends BaseRepository<RetailTransactio
       toDomain: retailTransactionMapper.toDomain,
       toDatabase: retailTransactionMapper.toDatabase,
       getId: (tx) => tx.id,
+      onConflict: 'organization_id,id',
     });
   }
 

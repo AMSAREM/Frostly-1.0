@@ -94,18 +94,29 @@ export async function testGoogleSmtpConnection(toEmail: string): Promise<GoogleS
 
 /**
  * Triggers direct confirmation email delivery via Google SMTP if configured.
+ * Guarantees that the activation of this website is explicitly included in the email payload.
  */
 export async function sendDirectGoogleSmtpConfirmation(params: {
   email: string;
   orgName: string;
   adminName: string;
   confirmationUrl?: string;
+  websiteUrl?: string;
 }): Promise<{ sentDirectly: boolean; message: string }> {
   try {
+    const websiteUrl = params.websiteUrl || (typeof window !== 'undefined' ? window.location.origin : undefined);
+    const confirmationUrl = params.confirmationUrl || (typeof window !== 'undefined' ? `${window.location.origin}?activated=true&email=${encodeURIComponent(params.email)}` : undefined);
+
+    const payload = {
+      ...params,
+      ...(websiteUrl ? { websiteUrl } : {}),
+      ...(confirmationUrl ? { confirmationUrl } : {}),
+    };
+
     const res = await fetch('/api/smtp/send-confirmation', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
+      body: JSON.stringify(payload),
     });
     if (res.ok) {
       return await res.json();

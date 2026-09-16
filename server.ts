@@ -98,14 +98,27 @@ async function startServer() {
       // Verify SMTP transport connection
       await transporter.verify();
 
+      const originHeader = typeof req.headers.origin === 'string' ? req.headers.origin : '';
+      const refererHeader = typeof req.headers.referer === 'string' ? req.headers.referer : '';
+      let detectedOrigin = originHeader;
+      if (!detectedOrigin && refererHeader) {
+        try {
+          detectedOrigin = new URL(refererHeader).origin;
+        } catch {}
+      }
+      if (!detectedOrigin && req.headers.host) {
+        detectedOrigin = `${req.protocol || 'https'}://${req.headers.host}`;
+      }
+      const targetWebsite = detectedOrigin || 'https://frostly.io';
+
       const fromUser = process.env.GOOGLE_SMTP_FROM_EMAIL || process.env.GOOGLE_SMTP_USER;
       const fromName = process.env.GOOGLE_SMTP_FROM_NAME || 'Frostly Seafood Platform';
 
       const info = await transporter.sendMail({
         from: `"${fromName}" <${fromUser}>`,
         to: toEmail.trim(),
-        subject: '❄️ Frostly Cold-Chain Platform - Google SMTP Connection Test',
-        text: `Hello,\n\nThis is an automated confirmation verifying that Google SMTP (smtp.gmail.com:465) is successfully connected and operational for Frostly.\n\nTimestamp: ${new Date().toISOString()}`,
+        subject: `❄️ Frostly - Google SMTP Test (Activation of this website: ${targetWebsite})`,
+        text: `Hello,\n\nThis is an automated confirmation verifying that Google SMTP (smtp.gmail.com:465) is successfully connected and operational for the activation of this website:\n${targetWebsite}\n\nTimestamp: ${new Date().toISOString()}`,
         html: `
           <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
             <div style="display: flex; align-items: center; margin-bottom: 20px;">
@@ -115,11 +128,15 @@ async function startServer() {
             <div style="padding: 16px; background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; margin-bottom: 16px;">
               <h3 style="color: #166534; margin: 0 0 8px 0; font-size: 15px;">Google SMTP Connected Successfully</h3>
               <p style="color: #15803d; margin: 0; font-size: 13px; line-height: 1.5;">
-                This test email confirms that transactional email delivery through <strong>smtp.gmail.com:465 (SSL)</strong> is fully functional.
+                This test email confirms that transactional email delivery through <strong>smtp.gmail.com:465 (SSL)</strong> is fully functional for the <strong>activation of this website</strong>.
               </p>
             </div>
+            <div style="padding: 14px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 16px;">
+              <div style="font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px;">Website Target:</div>
+              <div style="font-family: monospace; font-size: 13px; color: #4338ca; word-break: break-all;">${targetWebsite}</div>
+            </div>
             <p style="font-size: 13px; color: #475569; line-height: 1.6;">
-              All future tenant creation confirmation emails and cold-chain alert notifications will route directly through Google SMTP.
+              All future tenant creation confirmation emails and cold-chain alert notifications for this website will route directly through Google SMTP.
             </p>
             <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; margin-top: 20px; font-size: 11px; color: #94a3b8;">
               Dispatched by Frostly Cold-Chain Platform via Google SMTP at ${new Date().toUTCString()}
@@ -147,7 +164,7 @@ async function startServer() {
 
   // Google SMTP Direct Confirmation Email Endpoint
   app.post('/api/smtp/send-confirmation', async (req, res) => {
-    const { email, orgName, adminName, confirmationUrl } = req.body;
+    const { email, orgName, adminName, confirmationUrl, websiteUrl } = req.body;
     if (!email) {
       res.status(400).json({ error: 'Recipient email is required' });
       return;
@@ -168,39 +185,87 @@ async function startServer() {
       const fromName = process.env.GOOGLE_SMTP_FROM_NAME || 'Frostly Seafood Platform';
       const targetOrg = orgName || 'Your Organization';
       const recipientName = adminName || email.split('@')[0];
-      const targetLink = confirmationUrl || 'https://frostly.io';
+
+      // Automatically determine the exact website origin from request headers if not explicitly supplied
+      const originHeader = typeof req.headers.origin === 'string' ? req.headers.origin : '';
+      const refererHeader = typeof req.headers.referer === 'string' ? req.headers.referer : '';
+      let detectedOrigin = originHeader;
+      if (!detectedOrigin && refererHeader) {
+        try {
+          detectedOrigin = new URL(refererHeader).origin;
+        } catch {}
+      }
+      if (!detectedOrigin && req.headers.host) {
+        detectedOrigin = `${req.protocol || 'https'}://${req.headers.host}`;
+      }
+
+      const targetWebsite = websiteUrl || detectedOrigin || 'https://frostly.io';
+      const targetLink = confirmationUrl || (targetWebsite ? `${targetWebsite}?activated=true&email=${encodeURIComponent(email.trim())}` : 'https://frostly.io');
 
       await transporter.sendMail({
         from: `"${fromName}" <${fromUser}>`,
         to: email.trim(),
-        subject: `❄️ Confirm your ${targetOrg} Administrator Account - Frostly`,
-        text: `Hello ${recipientName},\n\nPlease confirm your administrator email for ${targetOrg} on the Frostly Cold-Chain Platform.\n\nVerify Address: ${targetLink}\n\nIf you did not request this, you can ignore this email.`,
+        subject: `❄️ Activation of this website: Confirm your ${targetOrg} Account - Frostly`,
+        text: `Hello ${recipientName},\n\nActivation of this website (${targetWebsite}) is required to complete registration for your organization: ${targetOrg}.\n\nPlease click the link below to complete the activation of this website:\n${targetLink}\n\nWebsite to activate: ${targetWebsite}\nOrganization: ${targetOrg}\nAdministrator: ${recipientName} (${email})\n\nIf you did not request the activation of this website, you can safely ignore this email.`,
         html: `
-          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
-            <div style="margin-bottom: 24px;">
-              <span style="font-size: 24px; vertical-align: middle;">❄️</span>
-              <strong style="font-size: 20px; color: #0f172a; margin-left: 8px; vertical-align: middle;">Frostly Cold-Chain Platform</strong>
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 580px; margin: 0 auto; padding: 32px 24px; border: 1px solid #e2e8f0; border-radius: 20px; background-color: #ffffff; color: #0f172a;">
+            <div style="display: flex; align-items: center; margin-bottom: 24px;">
+              <span style="font-size: 26px; margin-right: 10px;">❄️</span>
+              <strong style="font-size: 20px; color: #0f172a; letter-spacing: -0.02em;">Frostly Seafood Platform</strong>
             </div>
-            <h2 style="font-size: 18px; color: #0f172a; margin: 0 0 12px 0;">
-              Confirm your Administrator Account
-            </h2>
-            <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 16px 0;">
+
+            {/* Prominent Website Activation Banner */}
+            <div style="background-color: #eef2ff; border: 1px solid #c7d2fe; border-radius: 14px; padding: 18px 20px; margin-bottom: 24px;">
+              <div style="display: inline-block; background-color: #4f46e5; color: #ffffff; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 6px; margin-bottom: 8px;">
+                Action Required
+              </div>
+              <h2 style="font-size: 17px; color: #1e1b4b; font-weight: 700; margin: 0 0 6px 0; line-height: 1.3;">
+                Activation of this website is requested
+              </h2>
+              <p style="font-size: 13px; color: #3730a3; margin: 0; line-height: 1.5;">
+                Please complete the activation of this website to authorize your administrator account for <strong>${targetOrg}</strong>.
+              </p>
+            </div>
+
+            <p style="font-size: 14px; color: #334155; line-height: 1.6; margin: 0 0 16px 0;">
               Hello <strong>${recipientName}</strong>,
             </p>
-            <p style="font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 20px 0;">
-              Your cold-chain tenant organization <strong>${targetOrg}</strong> has been created. Click the button below to confirm your administrator email address and launch your workspace.
+
+            <p style="font-size: 14px; color: #334155; line-height: 1.6; margin: 0 0 20px 0;">
+              Your tenant workspace for <strong>${targetOrg}</strong> has been provisioned. Click the button below to complete the activation of this website and access your cold-chain operations console.
             </p>
-            <div style="margin: 24px 0;">
-              <a href="${targetLink}" style="background-color: #4f46e5; color: #ffffff; text-decoration: none; font-weight: 600; font-size: 14px; padding: 12px 24px; border-radius: 10px; display: inline-block;">
-                Confirm Email &amp; Launch Workspace
+
+            {/* Big Primary Action Button */}
+            <div style="margin: 28px 0; text-align: left;">
+              <a href="${targetLink}" style="background-color: #4f46e5; color: #ffffff; text-decoration: none; font-weight: 700; font-size: 14px; padding: 14px 28px; border-radius: 12px; display: inline-block; box-shadow: 0 2px 4px rgba(79, 70, 229, 0.2);">
+                Complete Activation of this Website
               </a>
             </div>
-            <p style="font-size: 12px; color: #64748b; line-height: 1.5;">
-              Or copy and paste this verification URL into your browser:<br/>
-              <span style="color: #4f46e5; word-break: break-all;">${targetLink}</span>
+
+            {/* Explicit Target Website Details Block */}
+            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin: 24px 0;">
+              <div style="font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">
+                Website Activation Details
+              </div>
+              <div style="font-size: 12px; color: #475569; margin-bottom: 6px;">
+                <strong>Website:</strong> <span style="font-family: monospace; color: #4338ca;">${targetWebsite}</span>
+              </div>
+              <div style="font-size: 12px; color: #475569; margin-bottom: 6px;">
+                <strong>Organization:</strong> ${targetOrg}
+              </div>
+              <div style="font-size: 12px; color: #475569;">
+                <strong>Administrator Email:</strong> ${email}
+              </div>
+            </div>
+
+            <p style="font-size: 12px; color: #64748b; line-height: 1.5; margin: 16px 0 0 0;">
+              If the button above does not work, copy and paste this direct website activation URL into your browser:<br/>
+              <span style="color: #4f46e5; word-break: break-all; font-family: monospace; font-size: 11px;">${targetLink}</span>
             </p>
-            <div style="border-top: 1px solid #e2e8f0; padding-top: 16px; margin-top: 24px; font-size: 11px; color: #94a3b8;">
-              Dispatched via Google SMTP (smtp.gmail.com) • Frostly Cold-Chain Platform
+
+            <div style="border-top: 1px solid #e2e8f0; padding-top: 18px; margin-top: 28px; font-size: 11px; color: #94a3b8; line-height: 1.5;">
+              Dispatched via Google SMTP (smtp.gmail.com:465) for the activation of this website.<br/>
+              If you did not initiate this activation, no further action is required.
             </div>
           </div>
         `,

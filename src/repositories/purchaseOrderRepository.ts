@@ -11,6 +11,7 @@ export class PurchaseOrderRepository extends BaseRepository<PurchaseOrderLanding
       toDomain: purchaseOrderMapper.toDomain,
       toDatabase: purchaseOrderMapper.toDatabase,
       getId: (po) => po.id,
+      onConflict: 'organization_id,id',
     });
   }
 

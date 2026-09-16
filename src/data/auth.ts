@@ -189,11 +189,32 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       department: profileData?.department || user.user_metadata?.department || 'Operations',
       is_active: profileData?.is_active ?? true,
     };
+
+    if (cachedStaffProfile.organization_id && cachedStaffProfile.organization_id !== 'org-frostly-hq') {
+      try {
+        localStorage.setItem('frostly_active_org_id', cachedStaffProfile.organization_id);
+      } catch {}
+    }
+
     return cachedStaffProfile;
   } catch (e) {
     console.warn('[Auth] Exception fetching staff profile:', e);
     return null;
   }
+}
+
+/**
+ * Get current active organization ID
+ */
+export function getCurrentOrganizationId(): string {
+  if (cachedStaffProfile?.organization_id && cachedStaffProfile.organization_id !== 'org-frostly-hq') {
+    return cachedStaffProfile.organization_id;
+  }
+  try {
+    const stored = localStorage.getItem('frostly_active_org_id');
+    if (stored) return stored;
+  } catch {}
+  return '00000000-0000-0000-0000-000000000001';
 }
 
 /**

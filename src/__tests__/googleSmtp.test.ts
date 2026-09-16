@@ -98,4 +98,35 @@ describe('Google SMTP Service', () => {
     }));
     expect(result.sentDirectly).toBe(true);
   });
+
+  it('includes websiteUrl in activation message payload when specified or detected', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        sentDirectly: true,
+        message: 'Confirmation email dispatched directly through Google SMTP (smtp.gmail.com:465).',
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await sendDirectGoogleSmtpConfirmation({
+      email: 'owner@atlanticcatch.com',
+      orgName: 'Atlantic Catch Co',
+      adminName: 'Sarah Jenkins',
+      websiteUrl: 'https://seafood-app.run.app',
+      confirmationUrl: 'https://seafood-app.run.app?activated=true&email=owner%40atlanticcatch.com',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/smtp/send-confirmation', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'owner@atlanticcatch.com',
+        orgName: 'Atlantic Catch Co',
+        adminName: 'Sarah Jenkins',
+        websiteUrl: 'https://seafood-app.run.app',
+        confirmationUrl: 'https://seafood-app.run.app?activated=true&email=owner%40atlanticcatch.com',
+      }),
+    }));
+    expect(result.sentDirectly).toBe(true);
+  });
 });

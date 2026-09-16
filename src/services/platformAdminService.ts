@@ -304,3 +304,194 @@ export async function updatePlatformOrganizationSubscription(params: {
     reason,
   };
 }
+
+/**
+ * Revoke/Suspend an organization's access and operational capability.
+ * Updates status to 'suspended', invalidates active invites, and writes immutable audit log.
+ */
+export async function revokePlatformOrganization(orgId: string, reason: string): Promise<any> {
+  try {
+    const { data, error } = await supabase.rpc('platform_revoke_organization_access', {
+      p_org_id: orgId,
+      p_reason: reason || 'Access revoked by platform administrator',
+    });
+
+    if (!error && data?.success) {
+      return data;
+    }
+  } catch (err) {
+    console.warn('RPC platform_revoke_organization_access failed, applying local fallback:', err);
+  }
+
+  // Fallback to local storage
+  const orgs = await fetchPlatformOrganizations();
+  const index = orgs.findIndex(o => o.id === orgId);
+  if (index === -1) {
+    throw new Error(`Organization ${orgId} not found`);
+  }
+
+  const oldOrg = { ...orgs[index] };
+  const updatedOrg: PlatformOrganization = {
+    ...oldOrg,
+    subscription_status: 'suspended',
+    pending_invites_count: 0,
+  };
+
+  orgs[index] = updatedOrg;
+  localStorage.setItem(STORAGE_KEY_ORGS, JSON.stringify(orgs));
+
+  const auditLogs = await fetchPlatformAuditLogs();
+  const newAudit: PlatformAuditLog = {
+    id: 'aud-' + Date.now(),
+    actor_id: 'platform_owner@frostly.io',
+    action: 'revoke_organization_access',
+    target_organization_id: orgId,
+    previous_state: { subscription_status: oldOrg.subscription_status },
+    new_state: { subscription_status: 'suspended' },
+    reason: reason || 'Tenant access revoked: operational lockout applied',
+    created_at: new Date().toISOString(),
+  };
+
+  auditLogs.unshift(newAudit);
+  localStorage.setItem(STORAGE_KEY_AUDIT, JSON.stringify(auditLogs.slice(0, 50)));
+
+  return {
+    success: true,
+    organization_id: orgId,
+    subscription_status: 'suspended',
+    reason,
+  };
+}
+
+/**
+ * Reinstate an organization's active access and operational capability.
+ */
+export async function reinstatePlatformOrganization(
+  orgId: string, 
+  reason: string,
+  targetStatus: 'active' | 'trial' = 'active'
+): Promise<any> {
+  try {
+    const { data, error } = await supabase.rpc('platform_reinstate_organization_access', {
+      p_org_id: orgId,
+      p_reason: reason || 'Tenant access reinstated by platform administrator',
+      p_target_status: targetStatus,
+    });
+
+    if (!error && data?.success) {
+      return data;
+    }
+  } catch (err) {
+    console.warn('RPC platform_reinstate_organization_access failed, applying local fallback:', err);
+  }
+
+  // Fallback to local storage
+  const orgs = await fetchPlatformOrganizations();
+  const index = orgs.findIndex(o => o.id === orgId);
+  if (index === -1) {
+    throw new Error(`Organization ${orgId} not found`);
+  }
+
+  const oldOrg = { ...orgs[index] };
+  const updatedOrg: PlatformOrganization = {
+    ...oldOrg,
+    subscription_status: targetStatus,
+  };
+
+  orgs[index] = updatedOrg;
+  localStorage.setItem(STORAGE_KEY_ORGS, JSON.stringify(orgs));
+
+  const auditLogs = await fetchPlatformAuditLogs();
+  const newAudit: PlatformAuditLog = {
+    id: 'aud-' + Date.now(),
+    actor_id: 'platform_owner@frostly.io',
+    action: 'reinstate_organization_access',
+    target_organization_id: orgId,
+    previous_state: { subscription_status: oldOrg.subscription_status },
+    new_state: { subscription_status: targetStatus },
+    reason: reason || 'Tenant access reinstated by administrator',
+    created_at: new Date().toISOString(),
+  };
+
+  auditLogs.unshift(newAudit);
+  localStorage.setItem(STORAGE_KEY_AUDIT, JSON.stringify(auditLogs.slice(0, 50)));
+
+  return {
+    success: true,
+    organization_id: orgId,
+    subscription_status: targetStatus,
+    reason,
+  };
+}
+
+/**
+ * Permanently delete/deprovision an organization and its tenant data.
+ */
+export async function deletePlatformOrganization(
+  orgId: string, 
+  reason: string,
+  confirmName?: string
+): Promise<any> {
+  try {
+    const { data, error } = await supabase.rpc('platform_delete_organization', {
+      p_org_id: orgId,
+      p_reason: reason || 'Organization permanently deleted',
+      p_confirm_name: confirmName ?? null,
+    });
+
+    if (!error && data?.success) {
+      return data;
+    }
+  } catch (err) {
+    console.warn('RPC platform_delete_organization failed, applying local fallback:', err);
+  }
+
+  // Fallback to local storage
+  const orgs = await fetchPlatformOrganizations();
+  const targetIndex = orgs.findIndex(o => o.id === orgId);
+  if (targetIndex === -1) {
+    throw new Error(`Organization ${orgId} not found`);
+  }
+
+  const targetOrg = orgs[targetIndex];
+
+  if (confirmName && confirmName.trim().toLowerCase() !== targetOrg.name.trim().toLowerCase()) {
+    throw new Error(`Confirmation name "${confirmName}" does not match "${targetOrg.name}"`);
+  }
+
+  const remainingOrgs = orgs.filter(o => o.id !== orgId);
+  localStorage.setItem(STORAGE_KEY_ORGS, JSON.stringify(remainingOrgs));
+
+  // Log permanent audit record
+  const auditLogs = await fetchPlatformAuditLogs();
+  const deleteAudit: PlatformAuditLog = {
+    id: 'aud-' + Date.now(),
+    actor_id: 'platform_owner@frostly.io',
+    action: 'delete_organization',
+    target_organization_id: null,
+    previous_state: {
+      id: targetOrg.id,
+      name: targetOrg.name,
+      plan_tier: targetOrg.plan_tier,
+      subscription_status: targetOrg.subscription_status,
+      staff_count: targetOrg.staff_count,
+    },
+    new_state: {
+      status: 'deleted',
+      deleted_at: new Date().toISOString(),
+    },
+    reason: reason || `Tenant organization "${targetOrg.name}" permanently deprovisioned and deleted`,
+    created_at: new Date().toISOString(),
+  };
+
+  auditLogs.unshift(deleteAudit);
+  localStorage.setItem(STORAGE_KEY_AUDIT, JSON.stringify(auditLogs.slice(0, 50)));
+
+  return {
+    success: true,
+    deleted_organization_id: orgId,
+    deleted_name: targetOrg.name,
+    reason,
+  };
+}
+

@@ -1,16 +1,31 @@
 import { AppSettings } from '../types';
 import { settingsMapper, DatabaseAppSettingsRow } from '../mappers/settingsMapper';
 import { supabase, isSupabaseConfigured } from '../utils/supabase';
+import { getStaffProfile, getCurrentOrganizationId } from '../data/auth';
 
 const STORAGE_KEY = 'frostly_settings_v3';
 
 export class SettingsRepository {
+  private async getOrganizationId(): Promise<string> {
+    try {
+      const profile = await getStaffProfile();
+      if (profile?.organization_id && profile.organization_id !== 'org-frostly-hq') {
+        return profile.organization_id;
+      }
+    } catch {
+      // ignore
+    }
+    return getCurrentOrganizationId();
+  }
+
   public async getSettings(fallback: AppSettings): Promise<AppSettings> {
     if (isSupabaseConfigured) {
       try {
+        const orgId = await this.getOrganizationId();
         const { data, error } = await supabase
           .from('app_settings')
           .select('*')
+          .eq('organization_id', orgId)
           .limit(1)
           .maybeSingle();
 
@@ -33,10 +48,15 @@ export class SettingsRepository {
 
     if (isSupabaseConfigured) {
       try {
-        const dbPayload = settingsMapper.toDatabase(settings);
+        const orgId = await this.getOrganizationId();
+        const dbPayload: Record<string, any> = { ...settingsMapper.toDatabase(settings) };
+        if (!dbPayload.organization_id) {
+          dbPayload.organization_id = orgId;
+        }
+
         const { error } = await supabase
           .from('app_settings')
-          .upsert(dbPayload, { onConflict: 'id' });
+          .upsert(dbPayload, { onConflict: 'organization_id,id' });
 
         if (error) {
           console.warn('[SettingsRepository] Error upserting app_settings:', error);

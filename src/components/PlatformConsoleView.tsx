@@ -21,7 +21,11 @@ import {
   ExternalLink,
   ChevronRight,
   Mail,
-  Server
+  Server,
+  Trash2,
+  RotateCcw,
+  AlertOctagon,
+  ShieldAlert
 } from 'lucide-react';
 import { GoogleSmtpModal } from './GoogleSmtpModal';
 import { 
@@ -29,7 +33,10 @@ import {
   PlatformAuditLog, 
   fetchPlatformOrganizations, 
   fetchPlatformAuditLogs, 
-  updatePlatformOrganizationSubscription 
+  updatePlatformOrganizationSubscription,
+  revokePlatformOrganization,
+  reinstatePlatformOrganization,
+  deletePlatformOrganization
 } from '../services/platformAdminService';
 
 interface PlatformConsoleViewProps {
@@ -56,6 +63,21 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
   const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
   const [actionErrorMessage, setActionErrorMessage] = useState<string | null>(null);
   const [showSmtpModal, setShowSmtpModal] = useState(false);
+
+  // Revoke / Reinstate Modal State
+  const [revokeTargetOrg, setRevokeTargetOrg] = useState<PlatformOrganization | null>(null);
+  const [revokeActionType, setRevokeActionType] = useState<'revoke' | 'reinstate'>('revoke');
+  const [revokeReason, setRevokeReason] = useState<string>('');
+  const [reinstateStatus, setReinstateStatus] = useState<'active' | 'trial'>('active');
+  const [isRevoking, setIsRevoking] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+
+  // Delete Modal State
+  const [deleteTargetOrg, setDeleteTargetOrg] = useState<PlatformOrganization | null>(null);
+  const [deleteConfirmName, setDeleteConfirmName] = useState<string>('');
+  const [deleteReason, setDeleteReason] = useState<string>('');
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const loadData = async () => {
     try {
@@ -129,6 +151,90 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
       setActionErrorMessage(err.message || 'Failed to update organization');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleOpenRevokeModal = (org: PlatformOrganization) => {
+    setRevokeTargetOrg(org);
+    setRevokeActionType('revoke');
+    setRevokeReason('');
+    setRevokeError(null);
+  };
+
+  const handleOpenReinstateModal = (org: PlatformOrganization) => {
+    setRevokeTargetOrg(org);
+    setRevokeActionType('reinstate');
+    setReinstateStatus('active');
+    setRevokeReason('');
+    setRevokeError(null);
+  };
+
+  const handleConfirmRevokeReinstate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!revokeTargetOrg) return;
+
+    if (!revokeReason.trim()) {
+      setRevokeError('A mandatory compliance audit reason is required.');
+      return;
+    }
+
+    setIsRevoking(true);
+    setRevokeError(null);
+
+    try {
+      if (revokeActionType === 'revoke') {
+        await revokePlatformOrganization(revokeTargetOrg.id, revokeReason.trim());
+        setActionSuccessMessage(`Access revoked for ${revokeTargetOrg.name}. Tenant is now suspended.`);
+      } else {
+        await reinstatePlatformOrganization(revokeTargetOrg.id, revokeReason.trim(), reinstateStatus);
+        setActionSuccessMessage(`Access reinstated for ${revokeTargetOrg.name}. Status restored to ${reinstateStatus}.`);
+      }
+
+      setRevokeTargetOrg(null);
+      await loadData();
+      setTimeout(() => setActionSuccessMessage(null), 4000);
+    } catch (err: any) {
+      setRevokeError(err.message || 'Action failed');
+    } finally {
+      setIsRevoking(false);
+    }
+  };
+
+  const handleOpenDeleteModal = (org: PlatformOrganization) => {
+    setDeleteTargetOrg(org);
+    setDeleteConfirmName('');
+    setDeleteReason('');
+    setDeleteError(null);
+  };
+
+  const handleConfirmDelete = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deleteTargetOrg) return;
+
+    if (deleteConfirmName.trim().toLowerCase() !== deleteTargetOrg.name.trim().toLowerCase()) {
+      setDeleteError(`Please type "${deleteTargetOrg.name}" exactly to confirm deletion.`);
+      return;
+    }
+
+    if (!deleteReason.trim()) {
+      setDeleteError('A mandatory audit reason is required for tenant deprovisioning.');
+      return;
+    }
+
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    try {
+      const orgName = deleteTargetOrg.name;
+      await deletePlatformOrganization(deleteTargetOrg.id, deleteReason.trim(), deleteConfirmName.trim());
+      setActionSuccessMessage(`Organization "${orgName}" was permanently deleted and deprovisioned.`);
+      setDeleteTargetOrg(null);
+      await loadData();
+      setTimeout(() => setActionSuccessMessage(null), 4000);
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to delete organization');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -388,14 +494,48 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
                             </div>
                           </td>
                           <td className="py-3.5 px-4 text-right">
-                            <button
-                              id={`btn-manage-org-${org.id.substring(0, 8)}`}
-                              onClick={() => handleOpenEditModal(org)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition-all border border-indigo-200/70 cursor-pointer"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                              <span>Manage</span>
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                id={`btn-manage-org-${org.id.substring(0, 8)}`}
+                                onClick={() => handleOpenEditModal(org)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold transition-all border border-indigo-200/70 cursor-pointer"
+                                title="Manage Subscription & Quotas"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                                <span>Manage</span>
+                              </button>
+
+                              {org.subscription_status === 'suspended' ? (
+                                <button
+                                  id={`btn-reinstate-org-${org.id.substring(0, 8)}`}
+                                  onClick={() => handleOpenReinstateModal(org)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-bold transition-all border border-emerald-200 cursor-pointer"
+                                  title="Reinstate Operational Access"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  <span>Reinstate</span>
+                                </button>
+                              ) : (
+                                <button
+                                  id={`btn-revoke-org-${org.id.substring(0, 8)}`}
+                                  onClick={() => handleOpenRevokeModal(org)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition-all border border-rose-200 cursor-pointer"
+                                  title="Revoke / Suspend Access"
+                                >
+                                  <Ban className="w-3.5 h-3.5" />
+                                  <span>Revoke</span>
+                                </button>
+                              )}
+
+                              <button
+                                id={`btn-delete-org-${org.id.substring(0, 8)}`}
+                                onClick={() => handleOpenDeleteModal(org)}
+                                className="inline-flex items-center gap-1 px-2 py-1.5 rounded-xl bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-700 text-xs font-bold transition-all border border-slate-200 hover:border-rose-200 cursor-pointer"
+                                title="Delete / Deprovision Organization"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -702,21 +842,285 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
               </div>
 
               {/* Action Buttons */}
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const org = selectedOrg;
+                      setSelectedOrg(null);
+                      handleOpenRevokeModal(org);
+                    }}
+                    className="text-[11px] font-bold text-rose-600 hover:text-rose-700 hover:underline cursor-pointer"
+                  >
+                    {selectedOrg.subscription_status === 'suspended' ? 'Reinstate Access...' : 'Revoke Access...'}
+                  </button>
+                  <span className="text-slate-300">|</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const org = selectedOrg;
+                      setSelectedOrg(null);
+                      handleOpenDeleteModal(org);
+                    }}
+                    className="text-[11px] font-bold text-slate-500 hover:text-rose-600 hover:underline cursor-pointer"
+                  >
+                    Delete Organization...
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedOrg(null)}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    id="btn-confirm-subscription-update"
+                    type="submit"
+                    disabled={submitting || !editReason.trim()}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all shadow-md shadow-indigo-200 cursor-pointer disabled:opacity-50"
+                  >
+                    {submitting ? 'Applying...' : 'Apply & Commit Audit'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* REVOKE / REINSTATE TENANT ACCESS MODAL */}
+      {revokeTargetOrg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden">
+            <div className={`p-5 border-b flex items-center justify-between ${
+              revokeActionType === 'revoke' ? 'bg-rose-50/70 border-rose-100' : 'bg-emerald-50/70 border-emerald-100'
+            }`}>
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+                  revokeActionType === 'revoke' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'
+                }`}>
+                  {revokeActionType === 'revoke' ? <Ban className="w-5 h-5" /> : <RotateCcw className="w-5 h-5" />}
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {revokeActionType === 'revoke' ? 'Revoke Tenant Access' : 'Reinstate Tenant Access'}
+                  </h3>
+                  <p className="text-xs text-slate-500">{revokeTargetOrg.name}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRevokeTargetOrg(null)}
+                className="p-1.5 rounded-xl hover:bg-slate-200 text-slate-500 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmRevokeReinstate} className="p-5 space-y-4">
+              {revokeError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium">
+                  {revokeError}
+                </div>
+              )}
+
+              {revokeActionType === 'revoke' ? (
+                <div className="p-4 rounded-2xl bg-rose-50/60 border border-rose-200/80 text-rose-900 text-xs space-y-2">
+                  <div className="flex items-center gap-1.5 font-bold text-rose-800">
+                    <AlertTriangle className="w-4 h-4 text-rose-600" />
+                    <span>Operational Lockout Warning</span>
+                  </div>
+                  <p className="leading-relaxed text-rose-700">
+                    Revoking tenant access will immediately switch subscription status to <strong>Suspended</strong>. All active staff member accounts for <strong>{revokeTargetOrg.name}</strong> will be locked out from write operations, pending invites will be invalidated, and POS/order entry will be paused.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80 text-emerald-900 text-xs space-y-2">
+                  <div className="flex items-center gap-1.5 font-bold text-emerald-800">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Restore Operational Capabilities</span>
+                  </div>
+                  <p className="leading-relaxed text-emerald-700">
+                    Reinstating access will unlock staff login and restore full operational capabilities for <strong>{revokeTargetOrg.name}</strong>.
+                  </p>
+                </div>
+              )}
+
+              {/* Status Option for Reinstate */}
+              {revokeActionType === 'reinstate' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    Target Subscription Status
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['active', 'trial'] as const).map((status) => (
+                      <button
+                        type="button"
+                        key={status}
+                        onClick={() => setReinstateStatus(status)}
+                        className={`p-2.5 rounded-xl text-xs font-bold text-left border transition-all cursor-pointer ${
+                          reinstateStatus === status
+                            ? 'border-emerald-600 bg-emerald-50 text-emerald-900 shadow-2xs'
+                            : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        {status === 'active' ? 'Active (Verified Subscription)' : 'Trial (Evaluation Mode)'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Mandatory Audit Reason */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Compliance Audit Reason <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  id="input-revoke-reason"
+                  required
+                  rows={2}
+                  placeholder={revokeActionType === 'revoke' 
+                    ? 'e.g. Terms of Service violation, non-payment after grace period, or customer account deactivation request'
+                    : 'e.g. Account settlement confirmed via bank transfer; access restored'}
+                  value={revokeReason}
+                  onChange={(e) => setRevokeReason(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:outline-none placeholder:text-slate-400"
+                />
+              </div>
+
+              {/* Action Buttons */}
               <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setSelectedOrg(null)}
+                  onClick={() => setRevokeTargetOrg(null)}
                   className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
-                  id="btn-confirm-subscription-update"
+                  id="btn-confirm-revoke-reinstate"
                   type="submit"
-                  disabled={submitting || !editReason.trim()}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all shadow-md shadow-indigo-200 cursor-pointer disabled:opacity-50"
+                  disabled={isRevoking || !revokeReason.trim()}
+                  className={`px-4 py-2 rounded-xl text-white text-xs font-bold transition-all shadow-md cursor-pointer disabled:opacity-50 ${
+                    revokeActionType === 'revoke'
+                      ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-200'
+                      : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
+                  }`}
                 >
-                  {submitting ? 'Applying...' : 'Apply & Commit Audit'}
+                  {isRevoking ? 'Processing...' : revokeActionType === 'revoke' ? 'Revoke Tenant Access' : 'Reinstate Tenant Access'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE / DEPROVISION ORGANIZATION MODAL */}
+      {deleteTargetOrg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden">
+            <div className="p-5 border-b border-rose-100 bg-rose-50/80 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                  <AlertOctagon className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-rose-950">
+                    Permanently Delete Organization
+                  </h3>
+                  <p className="text-xs text-rose-700">{deleteTargetOrg.name}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setDeleteTargetOrg(null)}
+                className="p-1.5 rounded-xl hover:bg-rose-100 text-rose-600 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmDelete} className="p-5 space-y-4">
+              {deleteError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium">
+                  {deleteError}
+                </div>
+              )}
+
+              <div className="p-4 rounded-2xl bg-rose-50/60 border border-rose-200/80 text-rose-900 text-xs space-y-2">
+                <div className="font-bold text-rose-800 flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-600" />
+                  <span>Irreversible Deprovisioning</span>
+                </div>
+                <p className="leading-relaxed text-rose-700">
+                  This action is <strong>permanent and cannot be undone</strong>. Deleting <strong>{deleteTargetOrg.name}</strong> will purge:
+                </p>
+                <ul className="list-disc list-inside space-y-1 text-rose-800 font-medium pl-1">
+                  <li>Organization tenant master record (<code className="text-[10px] font-mono-code">{deleteTargetOrg.id}</code>)</li>
+                  <li>All associated staff profiles ({deleteTargetOrg.staff_count} registered users)</li>
+                  <li>Pending invitations ({deleteTargetOrg.pending_invites_count} invites)</li>
+                  <li>Organization settings and business parameters</li>
+                </ul>
+                <p className="text-[11px] text-rose-600 pt-1">
+                  A permanent audit log entry will be created recording who authorized this deletion and why.
+                </p>
+              </div>
+
+              {/* Confirmation Input */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Type <span className="text-rose-600 font-mono-code select-all">"{deleteTargetOrg.name}"</span> to confirm:
+                </label>
+                <input
+                  id="input-confirm-org-name"
+                  type="text"
+                  required
+                  placeholder={deleteTargetOrg.name}
+                  value={deleteConfirmName}
+                  onChange={(e) => setDeleteConfirmName(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:ring-2 focus:ring-rose-500 focus:outline-none placeholder:text-slate-300 font-medium"
+                />
+              </div>
+
+              {/* Mandatory Audit Reason */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Deprovisioning Reason <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  id="input-delete-reason"
+                  required
+                  rows={2}
+                  placeholder="e.g. Formal written contract termination received from tenant ownership"
+                  value={deleteReason}
+                  onChange={(e) => setDeleteReason(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:ring-2 focus:ring-rose-500 focus:outline-none placeholder:text-slate-400"
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteTargetOrg(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  id="btn-confirm-delete-org"
+                  type="submit"
+                  disabled={
+                    isDeleting || 
+                    !deleteReason.trim() || 
+                    deleteConfirmName.trim().toLowerCase() !== deleteTargetOrg.name.trim().toLowerCase()
+                  }
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-md shadow-rose-200 cursor-pointer disabled:opacity-40"
+                >
+                  {isDeleting ? 'Deleting...' : 'Permanently Delete Organization'}
                 </button>
               </div>
             </form>
