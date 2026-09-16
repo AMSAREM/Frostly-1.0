@@ -817,6 +817,52 @@ export default function App() {
     });
   };
 
+  const handleSaveProduct = async (product: RetailWholesaleProduct) => {
+    try {
+      await productRepository.save(product);
+      setProducts(prev => {
+        const index = prev.findIndex(p => p.id === product.id);
+        if (index >= 0) {
+          const updated = [...prev];
+          updated[index] = product;
+          return updated;
+        }
+        return [product, ...prev];
+      });
+
+      addNotification({
+        type: 'order_update',
+        title: `Product Saved: ${product.name}`,
+        message: `${product.name} (${product.sku}) updated in retail/wholesale catalog with photo.`,
+        urgency: 'low'
+      });
+    } catch (err) {
+      console.error('[App] Failed to save product:', err);
+      addNotification({
+        type: 'system',
+        title: 'Product Save Failed',
+        message: 'Could not synchronize product to catalog database.',
+        urgency: 'high'
+      });
+      throw err;
+    }
+  };
+
+  const handleDeleteProduct = async (productId: string) => {
+    try {
+      await productRepository.delete(productId);
+      setProducts(prev => prev.filter(p => p.id !== productId));
+      addNotification({
+        type: 'order_update',
+        title: 'Product Removed',
+        message: 'Product removed from retail and wholesale price books.',
+        urgency: 'low'
+      });
+    } catch (err) {
+      console.error('[App] Failed to delete product:', err);
+    }
+  };
+
   // Universal Payment & Settle Ledger Handler (AR / AP)
   const handleRecordPayment = (type: 'AR' | 'AP', entityId: string, amount: number, refId: string) => {
     if (type === 'AR') {
@@ -1046,11 +1092,14 @@ export default function App() {
             retailSales={retailSales}
             wholesaleOrders={orders}
             customers={customers}
+            batches={batches}
             onCompleteRetailSale={handleCompleteRetailSale}
             onOpenNewWholesaleOrder={() => setIsNewOrderModalOpen(true)}
             onOpenWeigher={(o) => setWeigherOrder(o)}
             onOpenInvoice={(o) => setInvoiceOrder(o)}
             onUpdateProductPricing={handleUpdateProductPricing}
+            onSaveProduct={handleSaveProduct}
+            onDeleteProduct={handleDeleteProduct}
             formatCurrency={formatAppCurrency}
           />
         )}

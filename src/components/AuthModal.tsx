@@ -111,8 +111,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
     };
   }, [isOpen]);
 
-  if (!isOpen) return null;
-
   const handleTestSignIn = async () => {
     setIsLoading(true);
     setError(null);
@@ -307,6 +305,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
       setIsSyncing(false);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div 

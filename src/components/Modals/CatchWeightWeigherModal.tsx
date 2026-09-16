@@ -22,7 +22,15 @@ interface CatchWeightWeigherModalProps {
   useImperial: boolean;
 }
 
-export const CatchWeightWeigherModal: React.FC<CatchWeightWeigherModalProps> = ({
+interface CatchWeightWeigherContentProps {
+  order: ClientOrder;
+  batches: InventoryBatch[];
+  onClose: () => void;
+  onSaveWeighedItems: (orderId: string, updatedItems: ClientOrder['items'], adjustedTotal: number) => void;
+  useImperial: boolean;
+}
+
+const CatchWeightWeigherContent: React.FC<CatchWeightWeigherContentProps> = ({
   order,
   batches,
   onClose,
@@ -31,7 +39,7 @@ export const CatchWeightWeigherModal: React.FC<CatchWeightWeigherModalProps> = (
 }) => {
   // Local state for line items being weighed
   const [items, setItems] = useState(() => 
-    (order?.items || []).map(item => ({
+    (order.items || []).map(item => ({
       ...item,
       actualWeighedKg: item.actualWeighedKg ?? item.requestedWeightKg
     }))
@@ -40,10 +48,8 @@ export const CatchWeightWeigherModal: React.FC<CatchWeightWeigherModalProps> = (
   const [activeItemIndex, setActiveItemIndex] = useState(0);
   const [tareWeightKg, setTareWeightKg] = useState(0.8); // standard insulated carton + gel pack tare
   const [grossScaleReadingKg, setGrossScaleReadingKg] = useState<number>(
-    ((order?.items || [])[0]?.actualWeighedKg ?? (order?.items || [])[0]?.requestedWeightKg ?? 10) + 0.8
+    ((order.items || [])[0]?.actualWeighedKg ?? (order.items || [])[0]?.requestedWeightKg ?? 10) + 0.8
   );
-
-  if (!order) return null;
 
   const currentItem = items[activeItemIndex];
 
@@ -315,4 +321,11 @@ export const CatchWeightWeigherModal: React.FC<CatchWeightWeigherModalProps> = (
       </div>
     </div>
   );
+};
+
+export const CatchWeightWeigherModal: React.FC<CatchWeightWeigherModalProps> = (props) => {
+  if (!props.order) {
+    return null;
+  }
+  return <CatchWeightWeigherContent {...props} order={props.order} key={props.order.id} />;
 };

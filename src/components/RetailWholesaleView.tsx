@@ -20,7 +20,9 @@ import {
   TrendingUp,
   UserCheck,
   Sparkles,
-  ChevronRight
+  ChevronRight,
+  Edit2,
+  Image as ImageIcon
 } from 'lucide-react';
 import { 
   RetailWholesaleProduct, 
@@ -28,19 +30,24 @@ import {
   ClientOrder, 
   Customer, 
   RetailSaleItem, 
-  QualityGrade 
+  QualityGrade,
+  InventoryBatch 
 } from '../types';
+import { ProductModal } from './Modals/ProductModal';
 
 interface RetailWholesaleViewProps {
   products: RetailWholesaleProduct[];
   retailSales: RetailTransaction[];
   wholesaleOrders: ClientOrder[];
   customers: Customer[];
+  batches?: InventoryBatch[];
   onCompleteRetailSale: (sale: RetailTransaction) => void;
   onOpenNewWholesaleOrder: () => void;
   onOpenWeigher: (order: ClientOrder) => void;
   onOpenInvoice: (order: ClientOrder) => void;
   onUpdateProductPricing: (productId: string, wholesalePrice: number, retailPrice: number) => void;
+  onSaveProduct?: (product: RetailWholesaleProduct) => Promise<void> | void;
+  onDeleteProduct?: (productId: string) => Promise<void> | void;
   formatCurrency: (amount: number) => string;
 }
 
@@ -49,14 +56,21 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   retailSales = [],
   wholesaleOrders = [],
   customers = [],
+  batches = [],
   onCompleteRetailSale,
   onOpenNewWholesaleOrder,
   onOpenWeigher,
   onOpenInvoice,
   onUpdateProductPricing,
+  onSaveProduct,
+  onDeleteProduct,
   formatCurrency
 }) => {
   const [activeChannelTab, setActiveChannelTab] = useState<'retail_pos' | 'wholesale_orders' | 'price_matrix'>('retail_pos');
+  
+  // Product & Image Management Modal State
+  const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<RetailWholesaleProduct | null>(null);
   
   // POS State
   const [posSearch, setPosSearch] = useState('');
@@ -268,9 +282,10 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                 >
                   <div className="flex items-start gap-3">
                     <img 
-                      src={prod.imageUrl} 
+                      src={prod.imageUrl || 'https://images.unsplash.com/photo-1534483509719-3feaee7c30da?auto=format&fit=crop&q=80&w=200'} 
                       alt={prod.name} 
-                      className="w-16 h-16 rounded-2xl object-cover border border-slate-200 shrink-0"
+                      className="w-16 h-16 rounded-2xl object-cover border border-slate-200 shrink-0 bg-slate-100"
+                      referrerPolicy="no-referrer"
                     />
                     <div>
                       <div className="font-bold text-slate-900 text-xs leading-snug group-hover:text-emerald-700 transition-colors">
@@ -647,9 +662,21 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
       {/* 3. DUAL PRICE LIST & CATALOG MATRIX */}
       {activeChannelTab === 'price_matrix' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-4">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900">Dual Wholesale vs Retail Pricing Catalog</h2>
-            <p className="text-xs text-slate-500">Live price matrix, minimum order quantities (MOQ), and margin spreads by cut.</p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Dual Wholesale vs Retail Pricing Catalog</h2>
+              <p className="text-xs text-slate-500">Live price matrix, minimum order quantities (MOQ), product images, and margin spreads by cut.</p>
+            </div>
+            <button
+              onClick={() => {
+                setEditingProduct(null);
+                setIsProductModalOpen(true);
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer shrink-0"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Add Retail Product</span>
+            </button>
           </div>
 
           {/* Mobile Price Matrix Cards */}
@@ -662,13 +689,33 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
               return (
                 <div key={prod.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
                   <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
-                      <div className="text-[11px] text-slate-500">{prod.cutType} • {prod.sku}</div>
+                    <div className="flex items-center gap-2.5">
+                      <img
+                        src={prod.imageUrl || 'https://images.unsplash.com/photo-1534483509719-3feaee7c30da?auto=format&fit=crop&q=80&w=200'}
+                        alt={prod.name}
+                        className="w-11 h-11 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div>
+                        <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
+                        <div className="text-[11px] text-slate-500">{prod.cutType} • {prod.sku}</div>
+                      </div>
                     </div>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 shrink-0">
-                      {prod.grade}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 shrink-0">
+                        {prod.grade}
+                      </span>
+                      <button
+                        onClick={() => {
+                          setEditingProduct(prod);
+                          setIsProductModalOpen(true);
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-200 transition-colors cursor-pointer"
+                        title="Edit Product & Image"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 text-xs bg-white p-2.5 rounded-xl border border-slate-200/70">
@@ -768,8 +815,18 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                   return (
                     <tr key={prod.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3.5 px-4">
-                        <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
-                        <div className="text-slate-400 text-[11px]">{prod.cutType} • {prod.sku}</div>
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={prod.imageUrl || 'https://images.unsplash.com/photo-1534483509719-3feaee7c30da?auto=format&fit=crop&q=80&w=200'}
+                            alt={prod.name}
+                            className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div>
+                            <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
+                            <div className="text-slate-400 text-[11px]">{prod.cutType} • {prod.sku}</div>
+                          </div>
+                        </div>
                       </td>
 
                       <td className="py-3.5 px-4">
@@ -824,25 +881,39 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4 text-right">
-                        {isEditing ? (
-                          <button
-                            onClick={() => handleSavePriceEdit(prod.id)}
-                            className="px-3 py-1 bg-emerald-600 text-white rounded-lg font-bold text-xs cursor-pointer"
-                          >
-                            Save
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              setEditingPriceId(prod.id);
-                              setEditWholesalePrice(prod.wholesalePricePerUnit.toString());
-                              setEditRetailPrice(prod.retailPricePerUnit.toString());
-                            }}
-                            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold text-xs cursor-pointer"
-                          >
-                            Edit
-                          </button>
-                        )}
+                        <div className="flex items-center justify-end gap-1.5">
+                          {isEditing ? (
+                            <button
+                              onClick={() => handleSavePriceEdit(prod.id)}
+                              className="px-3 py-1 bg-emerald-600 text-white rounded-lg font-bold text-xs cursor-pointer"
+                            >
+                              Save
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => {
+                                  setEditingPriceId(prod.id);
+                                  setEditWholesalePrice(prod.wholesalePricePerUnit.toString());
+                                  setEditRetailPrice(prod.retailPricePerUnit.toString());
+                                }}
+                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold text-xs cursor-pointer"
+                              >
+                                Edit Prices
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setEditingProduct(prod);
+                                  setIsProductModalOpen(true);
+                                }}
+                                className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                                title="Edit Product Details & Image"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -910,6 +981,22 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Product & Image Management Modal */}
+      <ProductModal
+        isOpen={isProductModalOpen}
+        onClose={() => {
+          setIsProductModalOpen(false);
+          setEditingProduct(null);
+        }}
+        onSaveProduct={async (prod) => {
+          if (onSaveProduct) {
+            await onSaveProduct(prod);
+          }
+        }}
+        productToEdit={editingProduct}
+        inventoryBatches={batches}
+      />
     </div>
   );
 };

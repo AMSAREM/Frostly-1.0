@@ -21,15 +21,20 @@ interface InvoiceModalProps {
   onUpdatePaymentStatus: (orderId: string, status: ClientOrder['paymentStatus']) => void;
 }
 
-export const InvoiceModal: React.FC<InvoiceModalProps> = ({
+interface InvoiceModalContentProps {
+  order: ClientOrder;
+  onClose: () => void;
+  useImperial: boolean;
+  onUpdatePaymentStatus: (orderId: string, status: ClientOrder['paymentStatus']) => void;
+}
+
+const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
   order,
   onClose,
   useImperial,
   onUpdatePaymentStatus
 }) => {
   const [copied, setCopied] = useState(false);
-
-  if (!order) return null;
 
   const handlePrint = () => {
     window.print();
@@ -270,4 +275,11 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
       </div>
     </div>
   );
+};
+
+export const InvoiceModal: React.FC<InvoiceModalProps> = (props) => {
+  if (!props.order) {
+    return null;
+  }
+  return <InvoiceModalContent {...props} order={props.order} key={props.order.id} />;
 };
