@@ -51,6 +51,7 @@ export const orderMapper = {
 
     return {
       id: row.id,
+      customerId: row.customer_id || undefined,
       clientName: row.client_name,
       clientCategory: (row.client_category as any) || 'Michelin Restaurant',
       contactPerson: row.contact_person || '',
@@ -77,7 +78,7 @@ export const orderMapper = {
   toDatabase(order: ClientOrder): Record<string, any> {
     return {
       id: order.id,
-      customer_id: 'CUST-101', // Fallback or linked customer
+      customer_id: order.customerId || 'CUST-101', // Fallback or linked customer
       client_name: order.clientName,
       client_category: order.clientCategory,
       contact_person: order.contactPerson,

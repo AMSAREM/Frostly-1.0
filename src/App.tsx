@@ -204,6 +204,7 @@ export default function App() {
   const [invoiceOrder, setInvoiceOrder] = useState<ClientOrder | null>(null);
   const [isNewBatchModalOpen, setIsNewBatchModalOpen] = useState(false);
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
+  const [preselectedCustomerId, setPreselectedCustomerId] = useState<string | null>(null);
 
   // Single authoritative source of truth for session and staff profile from AuthGate
   const { session, user: currentUser, staffProfile, refreshProfile: handleRefreshProfile, signOut: handleSignOut } = useAuth();
@@ -582,12 +583,19 @@ export default function App() {
     });
     
     // Update customer spend and balance if matched
+    const isCreditOrder = newOrder.paymentStatus !== 'Paid';
+    const orderVal = newOrder.adjustedTotalUSD || newOrder.quotedTotalUSD;
+
     setCustomers(prev => prev.map(cust => {
-      if (cust.name.toLowerCase() === newOrder.clientName.toLowerCase() || cust.companyName.toLowerCase() === newOrder.clientName.toLowerCase()) {
-        const orderVal = newOrder.quotedTotalUSD;
+      const isMatch = (newOrder.customerId && cust.id === newOrder.customerId) ||
+        cust.name.toLowerCase() === newOrder.clientName.toLowerCase() ||
+        cust.companyName.toLowerCase() === newOrder.clientName.toLowerCase();
+
+      if (isMatch) {
         const newTotalCount = cust.totalOrdersCount + 1;
         const newTotalSpend = cust.totalSpendUSD + orderVal;
-        const newBalance = cust.outstandingBalanceUSD + orderVal;
+        const newBalance = isCreditOrder ? cust.outstandingBalanceUSD + orderVal : cust.outstandingBalanceUSD;
+
         customerRepository.updateFinancials(cust.id, newBalance, newTotalSpend, newTotalCount).catch(err => {
           console.warn('[App] customerRepository updateFinancials on order failed:', err);
         });
@@ -607,12 +615,14 @@ export default function App() {
       date: newOrder.orderDate,
       type: 'Income',
       category: 'Revenue (Wholesale)',
-      description: `Wholesale Order Placed - ${newOrder.clientName} (${newOrder.id})`,
+      description: isCreditOrder
+        ? `Wholesale Credit Order (${newOrder.paymentTerms || 'Net Terms'}) - ${newOrder.clientName} (${newOrder.id})`
+        : `Wholesale Order Placed (Immediate) - ${newOrder.clientName} (${newOrder.id})`,
       referenceId: newOrder.id,
       entityName: newOrder.clientName,
-      amount: newOrder.quotedTotalUSD,
-      paymentMethod: 'Invoiced Net Terms',
-      status: 'Pending'
+      amount: orderVal,
+      paymentMethod: isCreditOrder ? `Credit Sale (${newOrder.paymentTerms || 'Net-30'})` : 'Paid on Order',
+      status: isCreditOrder ? 'Pending' : 'Settled'
     };
     setFinancialEntries(prev => [newFinEntry, ...prev]);
     financialRepository.addEntry(newFinEntry).catch(err => {
@@ -717,14 +727,51 @@ export default function App() {
 
   // Payment status update handler
   const handleUpdatePaymentStatus = (orderId: string, status: ClientOrder['paymentStatus']) => {
+    let orderToUpdate: ClientOrder | undefined;
+
     setOrders(prev => prev.map(o => {
       if (o.id !== orderId) return o;
+      orderToUpdate = o;
       const updated = { ...o, paymentStatus: status };
       orderRepository.save(updated).catch(err => {
         console.warn('[App] orderRepository update payment status error:', err);
       });
       return updated;
     }));
+
+    // If marked Paid and previously had a pending credit balance, adjust customer's balance
+    if (status === 'Paid' && orderToUpdate && orderToUpdate.paymentStatus !== 'Paid') {
+      const orderAmount = orderToUpdate.adjustedTotalUSD || orderToUpdate.quotedTotalUSD;
+      const targetClientId = orderToUpdate.customerId;
+      const targetClientName = orderToUpdate.clientName;
+
+      setCustomers(prev => prev.map(cust => {
+        const isMatch = (targetClientId && cust.id === targetClientId) ||
+          cust.name.toLowerCase() === targetClientName.toLowerCase() ||
+          cust.companyName.toLowerCase() === targetClientName.toLowerCase();
+
+        if (isMatch) {
+          const newBal = Math.max(0, cust.outstandingBalanceUSD - orderAmount);
+          customerRepository.updateFinancials(cust.id, newBal, cust.totalSpendUSD, cust.totalOrdersCount).catch(err => {
+            console.warn('[App] customerRepository updateFinancials on order mark-paid failed:', err);
+          });
+          return {
+            ...cust,
+            outstandingBalanceUSD: newBal
+          };
+        }
+        return cust;
+      }));
+
+      // Update matching financial entry to Settled
+      setFinancialEntries(prev => prev.map(entry => {
+        if (entry.referenceId === orderId && entry.status === 'Pending') {
+          return { ...entry, status: 'Settled' as const };
+        }
+        return entry;
+      }));
+    }
+
     addNotification({
       type: 'order_update',
       title: `Payment Updated: ${orderId}`,
@@ -755,6 +802,7 @@ export default function App() {
   };
 
   const handleSelectCustomerForOrder = (customer: Customer) => {
+    setPreselectedCustomerId(customer.id);
     setIsNewOrderModalOpen(true);
   };
 
@@ -913,18 +961,46 @@ export default function App() {
       return batch;
     }));
 
+    // If billed to Customer Credit Account, update customer ledger and outstanding balance
+    const isCreditAccountSale = sale.paymentMethod === 'Customer Credit Account';
+    if (isCreditAccountSale) {
+      setCustomers(prev => prev.map(cust => {
+        const isMatch = (sale.customerId && cust.id === sale.customerId) ||
+          cust.name.toLowerCase() === sale.customerName.toLowerCase() ||
+          cust.companyName.toLowerCase() === sale.customerName.toLowerCase();
+
+        if (isMatch) {
+          const newBal = cust.outstandingBalanceUSD + sale.totalAmount;
+          const newSpend = cust.totalSpendUSD + sale.totalAmount;
+          const newCount = cust.totalOrdersCount + 1;
+          customerRepository.updateFinancials(cust.id, newBal, newSpend, newCount).catch(err => {
+            console.warn('[App] customerRepository updateFinancials on POS credit sale failed:', err);
+          });
+          return {
+            ...cust,
+            outstandingBalanceUSD: newBal,
+            totalSpendUSD: newSpend,
+            totalOrdersCount: newCount
+          };
+        }
+        return cust;
+      }));
+    }
+
     // Add Income ledger entry
     const newFinEntry: FinancialLedgerEntry = {
       id: `FIN-${Date.now().toString().slice(-4)}`,
       date: sale.date.split(' ')[0],
       type: 'Income',
       category: 'Revenue (Retail POS)',
-      description: `Retail Counter Sale - ${sale.receiptNumber} (${sale.customerName})`,
+      description: isCreditAccountSale 
+        ? `Retail Credit Sale (On Account) - ${sale.receiptNumber} (${sale.customerName})`
+        : `Retail Counter Sale - ${sale.receiptNumber} (${sale.customerName})`,
       referenceId: sale.id,
       entityName: sale.customerName,
       amount: sale.totalAmount,
       paymentMethod: sale.paymentMethod,
-      status: 'Settled'
+      status: isCreditAccountSale ? 'Pending' : 'Settled'
     };
     setFinancialEntries(prev => [newFinEntry, ...prev]);
     financialRepository.addEntry(newFinEntry).catch(err => {
@@ -933,8 +1009,10 @@ export default function App() {
 
     addNotification({
       type: 'order_update',
-      title: `Retail POS Sale: $${sale.totalAmount.toFixed(2)}`,
-      message: `Receipt ${sale.receiptNumber} processed via ${sale.paymentMethod}.`,
+      title: isCreditAccountSale ? `Credit Sale Logged: $${sale.totalAmount.toFixed(2)}` : `Retail POS Sale: $${sale.totalAmount.toFixed(2)}`,
+      message: isCreditAccountSale 
+        ? `Receipt ${sale.receiptNumber} billed to ${sale.customerName}'s credit facility.`
+        : `Receipt ${sale.receiptNumber} processed via ${sale.paymentMethod}.`,
       urgency: 'low'
     });
   };
@@ -1513,9 +1591,11 @@ export default function App() {
       {invoiceOrder && (
         <InvoiceModal
           order={invoiceOrder}
+          customers={customers}
           onClose={() => setInvoiceOrder(null)}
           useImperial={useImperial}
           onUpdatePaymentStatus={handleUpdatePaymentStatus}
+          onRecordPayment={handleRecordPayment}
         />
       )}
 
@@ -1530,7 +1610,12 @@ export default function App() {
       {isNewOrderModalOpen && (
         <NewOrderModal
           batches={batches}
-          onClose={() => setIsNewOrderModalOpen(false)}
+          customers={customers}
+          preselectedCustomerId={preselectedCustomerId}
+          onClose={() => {
+            setIsNewOrderModalOpen(false);
+            setPreselectedCustomerId(null);
+          }}
           onAddOrder={handleAddOrder}
           useImperial={useImperial}
         />

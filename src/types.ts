@@ -82,6 +82,7 @@ export interface OrderLineItem {
 
 export interface ClientOrder {
   id: string; // "ORD-9421"
+  customerId?: string;
   clientName: string;
   clientCategory: 'Michelin Restaurant' | 'Luxury Hotel Group' | 'Seafood Wholesaler' | 'Supermarket Chain' | 'Gourmet Fishmonger';
   contactPerson: string;
@@ -98,7 +99,12 @@ export interface ClientOrder {
   adjustedTotalUSD: number;
   assignedReeferId?: string;
   assignedDriver?: string;
-  paymentStatus: 'Paid' | 'Pending Net-30' | 'Invoiced' | 'Overdue';
+  saleType?: 'Credit Sale (On Account)' | 'Immediate Settlement' | 'Prepaid / COD';
+  paymentTerms?: PaymentTerms;
+  paymentDueDate?: string;
+  creditAuthorizedBy?: string;
+  creditOverrideNote?: string;
+  paymentStatus: 'Paid' | 'Pending Net-30' | 'Pending Net-15' | 'Pending Net-60' | 'Invoiced' | 'Overdue';
   packagingRequirement: 'Dry Ice & Insulated Wax Carton' | 'Slush Ice Gel Packed' | 'Live Oxygenated Tank Container' | 'Standard Cryo-Box';
   specialInstructions?: string;
   packingSlipGenerated: boolean;
@@ -201,7 +207,8 @@ export interface SystemNotification {
 
 export type CustomerType = 'Wholesale Restaurant' | 'Hotel & Resort' | 'Supermarket / Retailer' | 'Fishmonger / Distributor' | 'Direct Retail VIP';
 export type PricingTier = 'Tier 1 (VIP Wholesale -15%)' | 'Tier 2 (Standard Wholesale)' | 'Retail Standard' | 'Contract Custom';
-export type PaymentTerms = 'Net-30' | 'Net-15' | 'Cash on Delivery (COD)' | 'Prepaid / Due on Receipt' | 'Instant Card/Cash';
+export type PaymentTerms = 'Net-30' | 'Net-15' | 'Cash on Delivery (COD)' | 'Prepaid / Due on Receipt' | 'Instant Card/Cash' | 'Net-7' | 'Net-60' | 'Due on Receipt';
+export type CustomerStatus = 'Active' | 'Credit Hold' | 'Pending Review' | 'Inactive';
 
 export interface Customer {
   id: string; // e.g. "CUST-101"
@@ -219,7 +226,7 @@ export interface Customer {
   paymentTerms: PaymentTerms;
   totalOrdersCount: number;
   totalSpendUSD: number;
-  status: 'Active' | 'Credit Hold' | 'Pending Review';
+  status: CustomerStatus;
   taxId?: string;
   notes?: string;
   joinedDate: string;
@@ -296,6 +303,11 @@ export interface RetailTransaction {
   receiptNumber: string;
   date: string;
   customerName: string;
+  customerId?: string;
+  saleType?: 'Direct Payment' | 'Credit Sale (On Account)';
+  creditTerms?: string;
+  creditAuthorizedBy?: string;
+  creditOverrideNote?: string;
   customerPhone?: string;
   items: RetailSaleItem[];
   subtotal: number;
@@ -304,7 +316,7 @@ export interface RetailTransaction {
   totalAmount: number;
   costTotal: number;
   grossMargin: number;
-  paymentMethod: 'Cash' | 'Credit Card' | 'Apple Pay / Contactless' | 'Store Credit';
+  paymentMethod: 'Cash' | 'Credit Card' | 'Apple Pay / Contactless' | 'Store Credit' | 'Customer Credit Account';
   cashierName: string;
   status: 'Completed' | 'Refunded';
 }

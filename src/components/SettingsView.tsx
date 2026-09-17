@@ -111,8 +111,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setFormData(prev => ({ ...prev, [key]: value }));
   };
 
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSave = (e?: React.FormEvent | React.MouseEvent) => {
+    if (e && 'preventDefault' in e) {
+      e.preventDefault();
+    }
     onUpdateSettings(formData);
     setSaveSuccess(true);
     setTimeout(() => {
@@ -306,7 +308,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         {/* Form Body Area */}
         <div className="lg:col-span-8">
-          <form onSubmit={handleSave} className="space-y-6">
+          <div className="space-y-6">
             {/* Category 1: Plant & Enterprise Profile */}
             {activeCategory === 'profile' && (
               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-5 animate-in fade-in">
@@ -942,7 +944,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   All changes take effect immediately across all POS and reporting views.
                 </span>
                 <button
-                  type="submit"
+                  type="button"
+                  onClick={handleSave}
                   id="settings-save-bottom-btn"
                   className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition-all cursor-pointer"
                 >
@@ -951,7 +954,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </button>
               </div>
             )}
-          </form>
+          </div>
         </div>
       </div>
 

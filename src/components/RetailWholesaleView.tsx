@@ -23,6 +23,9 @@ import {
   ChevronRight,
   Edit2,
   AlertCircle,
+  ShieldAlert,
+  Clock,
+  AlertTriangle,
   Image as ImageIcon
 } from 'lucide-react';
 import { 
@@ -81,8 +84,18 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   const [posCart, setPosCart] = useState<{ product: RetailWholesaleProduct; quantity: number }[]>([]);
   const [posCustomerName, setPosCustomerName] = useState('Walk-in Customer');
   const [posDiscountPct, setPosDiscountPct] = useState<number>(0);
-  const [posPaymentMethod, setPosPaymentMethod] = useState<'Credit Card' | 'Cash' | 'Apple Pay / Contactless' | 'Store Credit'>('Credit Card');
+  const [posPaymentMethod, setPosPaymentMethod] = useState<'Credit Card' | 'Cash' | 'Apple Pay / Contactless' | 'Store Credit' | 'Customer Credit Account'>('Credit Card');
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
+  const [overrideAuthorizedBy, setOverrideAuthorizedBy] = useState<string>('');
+  const [overrideReason, setOverrideReason] = useState<string>('');
+  const [isOverrideAcknowledged, setIsOverrideAcknowledged] = useState<boolean>(false);
+  const [wholesaleFilter, setWholesaleFilter] = useState<'all' | 'credit' | 'paid'>('all');
   const [completedReceiptModal, setCompletedReceiptModal] = useState<RetailTransaction | null>(null);
+
+  // Selected customer for credit accounts
+  const selectedCreditCustomer = customers.find(c => c.id === selectedCustomerId);
+  const creditAvailable = selectedCreditCustomer ? Math.max(0, selectedCreditCustomer.creditLimitUSD - selectedCreditCustomer.outstandingBalanceUSD) : 0;
+  const isCustomerCreditHold = selectedCreditCustomer?.status === 'Credit Hold';
 
   // Price Matrix Edit State
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
@@ -96,6 +109,16 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   const taxAmount = taxableAmount * 0.0875; // 8.75% local sales tax
   const cartGrandTotal = taxableAmount + taxAmount;
   const cartCostTotal = posCart.reduce((sum, item) => sum + (item.product.costPricePerUnit * item.quantity), 0);
+
+  // Credit check logic
+  const isCreditAccountSale = posPaymentMethod === 'Customer Credit Account';
+  const exceedsCreditLimit = isCreditAccountSale && selectedCreditCustomer 
+    ? (selectedCreditCustomer.outstandingBalanceUSD + cartGrandTotal > selectedCreditCustomer.creditLimitUSD)
+    : false;
+  const requiresCreditOverride = isCreditAccountSale && (isCustomerCreditHold || exceedsCreditLimit);
+  const canSubmitCreditSale = !isCreditAccountSale || (
+    selectedCreditCustomer && (!requiresCreditOverride || (isOverrideAcknowledged && overrideAuthorizedBy.trim().length > 0))
+  );
 
   // Add Item to POS Cart
   const handleAddToCart = (product: RetailWholesaleProduct) => {
@@ -128,10 +151,15 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
     setPosCart([]);
     setPosDiscountPct(0);
     setPosCustomerName('Walk-in Customer');
+    setSelectedCustomerId('');
+    setOverrideAuthorizedBy('');
+    setOverrideReason('');
+    setIsOverrideAcknowledged(false);
   };
 
   const handleCheckoutSubmit = () => {
     if (posCart.length === 0) return;
+    if (isCreditAccountSale && !canSubmitCreditSale) return;
 
     const saleItems: RetailSaleItem[] = posCart.map(item => ({
       productId: item.product.id,
@@ -144,11 +172,20 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
       lineTotal: parseFloat((item.product.retailPricePerUnit * item.quantity).toFixed(2))
     }));
 
+    const finalCustName = isCreditAccountSale && selectedCreditCustomer 
+      ? `${selectedCreditCustomer.name} (${selectedCreditCustomer.companyName})` 
+      : (posCustomerName.trim() || 'Counter Walk-in');
+
     const newSale: RetailTransaction = {
       id: `REC-${(5020 + retailSales.length + 1).toString()}`,
       receiptNumber: `POS-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
       date: new Date().toISOString().replace('T', ' ').slice(0, 16),
-      customerName: posCustomerName.trim() || 'Counter Walk-in',
+      customerId: isCreditAccountSale && selectedCreditCustomer ? selectedCreditCustomer.id : undefined,
+      customerName: finalCustName,
+      saleType: isCreditAccountSale ? 'Credit Sale (On Account)' : 'Direct Payment',
+      creditTerms: isCreditAccountSale && selectedCreditCustomer ? selectedCreditCustomer.paymentTerms : undefined,
+      creditAuthorizedBy: isCreditAccountSale && requiresCreditOverride ? overrideAuthorizedBy.trim() : undefined,
+      creditOverrideNote: isCreditAccountSale && requiresCreditOverride ? overrideReason.trim() : undefined,
       items: saleItems,
       subtotal: cartSubtotal,
       discountAmount: discountAmount,
@@ -450,29 +487,162 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                 {/* Payment Method Selector */}
                 <div className="pt-2">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Payment Method</label>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {(['Credit Card', 'Cash', 'Apple Pay / Contactless', 'Store Credit'] as const).map(method => (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                    {(['Credit Card', 'Cash', 'Apple Pay / Contactless', 'Store Credit', 'Customer Credit Account'] as const).map(method => (
                       <button
                         key={method}
                         onClick={() => setPosPaymentMethod(method)}
-                        className={`py-1.5 px-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                        className={`py-1.5 px-2 rounded-xl text-[10px] sm:text-[11px] font-bold transition-all cursor-pointer truncate ${
                           posPaymentMethod === method
-                            ? 'bg-slate-900 text-white'
+                            ? 'bg-slate-900 text-white shadow-xs'
                             : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                        }`}
+                        } ${method === 'Customer Credit Account' ? 'col-span-2 sm:col-span-2 border border-indigo-200 text-indigo-900' : ''}`}
                       >
-                        {method}
+                        {method === 'Customer Credit Account' ? '🏛️ Customer Credit Account' : method}
                       </button>
                     ))}
                   </div>
                 </div>
 
+                {/* Customer Account Credit Facility Panel */}
+                {isCreditAccountSale && (
+                  <div className="p-3 bg-indigo-50/70 rounded-2xl border border-indigo-100 space-y-3 animate-in fade-in duration-150">
+                    <div>
+                      <label className="block text-[10px] font-bold text-indigo-900 uppercase mb-1">
+                        Select Commercial Credit Account
+                      </label>
+                      <select
+                        value={selectedCustomerId}
+                        onChange={(e) => {
+                          setSelectedCustomerId(e.target.value);
+                          setIsOverrideAcknowledged(false);
+                          setOverrideAuthorizedBy('');
+                          setOverrideReason('');
+                        }}
+                        className="w-full px-3 py-2 text-xs bg-white border border-indigo-200 rounded-xl text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="">-- Choose Customer Facility --</option>
+                        {customers.map(cust => (
+                          <option key={cust.id} value={cust.id}>
+                            {cust.name} ({cust.companyName}) • Terms: {cust.paymentTerms}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {selectedCreditCustomer ? (
+                      <div className="space-y-2 text-xs">
+                        <div className="p-2.5 bg-white rounded-xl border border-indigo-100 space-y-1.5">
+                          <div className="flex justify-between items-center text-[11px]">
+                            <span className="text-slate-500">Facility Terms:</span>
+                            <span className="font-bold text-indigo-700">{selectedCreditCustomer.paymentTerms}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-[11px]">
+                            <span className="text-slate-500">Credit Limit:</span>
+                            <span className="font-mono-code font-bold text-slate-800">{formatCurrency(selectedCreditCustomer.creditLimitUSD)}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-[11px]">
+                            <span className="text-slate-500">Current Balance Due:</span>
+                            <span className="font-mono-code font-bold text-rose-600">{formatCurrency(selectedCreditCustomer.outstandingBalanceUSD)}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-[11px] pt-1 border-t border-slate-100">
+                            <span className="text-slate-600 font-semibold">Available Credit:</span>
+                            <span className={`font-mono-code font-bold ${creditAvailable >= cartGrandTotal ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {formatCurrency(creditAvailable)}
+                            </span>
+                          </div>
+
+                          {/* Credit bar */}
+                          <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden mt-1">
+                            <div 
+                              className={`h-full rounded-full ${
+                                (selectedCreditCustomer.outstandingBalanceUSD + cartGrandTotal) > selectedCreditCustomer.creditLimitUSD
+                                  ? 'bg-rose-500'
+                                  : 'bg-indigo-600'
+                              }`}
+                              style={{
+                                width: `${Math.min(100, ((selectedCreditCustomer.outstandingBalanceUSD + cartGrandTotal) / (selectedCreditCustomer.creditLimitUSD || 1)) * 100)}%`
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Credit Hold or Limit Exceeded Warning */}
+                        {requiresCreditOverride && (
+                          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-2 text-rose-900 text-xs">
+                            <div className="flex items-center gap-1.5 font-bold text-rose-800">
+                              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                              <span>
+                                {isCustomerCreditHold ? 'Customer is on Credit Hold' : 'Charge Exceeds Approved Credit Limit'}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-rose-700 leading-snug">
+                              {isCustomerCreditHold 
+                                ? 'Account has administrative hold. Manager authorization is required to post this credit sale.'
+                                : `Adding ${formatCurrency(cartGrandTotal)} exceeds credit line by ${formatCurrency((selectedCreditCustomer.outstandingBalanceUSD + cartGrandTotal) - selectedCreditCustomer.creditLimitUSD)}.`
+                              }
+                            </p>
+
+                            <div className="pt-2 border-t border-rose-200/80 space-y-2">
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={isOverrideAcknowledged}
+                                  onChange={(e) => setIsOverrideAcknowledged(e.target.checked)}
+                                  className="rounded text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
+                                />
+                                <span className="text-[11px] font-bold text-slate-800">
+                                  Authorize Manager Credit Override
+                                </span>
+                              </label>
+
+                              {isOverrideAcknowledged && (
+                                <div className="space-y-1.5 pt-1">
+                                  <input
+                                    type="text"
+                                    placeholder="Manager Name / PIN (Required)"
+                                    value={overrideAuthorizedBy}
+                                    onChange={(e) => setOverrideAuthorizedBy(e.target.value)}
+                                    className="w-full px-2.5 py-1.5 bg-white border border-rose-300 rounded-lg text-xs text-slate-900 placeholder:text-slate-400 focus:ring-1 focus:ring-rose-500"
+                                  />
+                                  <input
+                                    type="text"
+                                    placeholder="Override reason / authorization memo"
+                                    value={overrideReason}
+                                    onChange={(e) => setOverrideReason(e.target.value)}
+                                    className="w-full px-2.5 py-1.5 bg-white border border-rose-300 rounded-lg text-xs text-slate-900 placeholder:text-slate-400 focus:ring-1 focus:ring-rose-500"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-indigo-600">
+                        Select a registered customer account above to bill against their approved payment terms.
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 <button
                   onClick={handleCheckoutSubmit}
-                  className="w-full mt-3 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
+                  disabled={isCreditAccountSale && !canSubmitCreditSale}
+                  className={`w-full mt-3 py-3 rounded-2xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 ${
+                    isCreditAccountSale && !canSubmitCreditSale
+                      ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none'
+                      : isCreditAccountSale
+                      ? 'bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer'
+                  }`}
                 >
                   <CheckCircle2 className="w-5 h-5" />
-                  <span>Charge & Complete Sale ({formatCurrency(cartGrandTotal)})</span>
+                  <span>
+                    {isCreditAccountSale
+                      ? `Bill to Credit Account (${formatCurrency(cartGrandTotal)})`
+                      : `Charge & Complete Sale (${formatCurrency(cartGrandTotal)})`}
+                  </span>
                 </button>
               </div>
             )}
@@ -505,162 +675,292 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
       )}
 
       {/* 2. WHOLESALE BULK ORDERS VIEW */}
-      {activeChannelTab === 'wholesale_orders' && (
-        <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">Wholesale B2B Catch-Weight Orders</h2>
-              <p className="text-xs text-slate-500">Commercial restaurant and distributor purchase orders, yield tolerances, and invoices.</p>
+      {activeChannelTab === 'wholesale_orders' && (() => {
+        const totalWholesaleVol = wholesaleOrders.reduce((sum, o) => sum + (o.adjustedTotalUSD || o.quotedTotalUSD), 0);
+        const creditOrders = wholesaleOrders.filter(o => o.saleType === 'Credit Sale (On Account)' || o.paymentTerms);
+        const pendingCreditReceivables = wholesaleOrders
+          .filter(o => (o.saleType === 'Credit Sale (On Account)' || o.paymentTerms) && o.paymentStatus !== 'Paid')
+          .reduce((sum, o) => sum + (o.adjustedTotalUSD || o.quotedTotalUSD), 0);
+        const paidWholesaleVol = wholesaleOrders
+          .filter(o => o.paymentStatus === 'Paid')
+          .reduce((sum, o) => sum + (o.adjustedTotalUSD || o.quotedTotalUSD), 0);
+
+        const filteredOrders = wholesaleOrders.filter(order => {
+          if (wholesaleFilter === 'credit') {
+            return (order.saleType === 'Credit Sale (On Account)' || order.paymentTerms) && order.paymentStatus !== 'Paid';
+          }
+          if (wholesaleFilter === 'paid') {
+            return order.paymentStatus === 'Paid';
+          }
+          return true;
+        });
+
+        return (
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Wholesale B2B Catch-Weight Orders</h2>
+                <p className="text-xs text-slate-500">Commercial restaurant and distributor purchase orders, credit terms, and invoices.</p>
+              </div>
+
+              <button
+                onClick={onOpenNewWholesaleOrder}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer w-full sm:w-auto"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Create Wholesale Order</span>
+              </button>
             </div>
 
-            <button
-              onClick={onOpenNewWholesaleOrder}
-              className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer w-full sm:w-auto"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Create Wholesale Order</span>
-            </button>
-          </div>
+            {/* Wholesale Credit & Receivables Overview Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                <div className="text-[10px] text-slate-400 font-bold uppercase">Total Wholesale Volume</div>
+                <div className="text-lg font-black font-mono-code text-slate-900 mt-1">{formatCurrency(totalWholesaleVol)}</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">{wholesaleOrders.length} commercial orders logged</div>
+              </div>
 
-          {/* Mobile Wholesale Orders Card View */}
-          <div className="space-y-3 md:hidden">
-            {wholesaleOrders.map(order => {
-              const finalVal = order.adjustedTotalUSD || order.quotedTotalUSD;
-              return (
-                <div key={order.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="font-bold text-slate-900 text-sm">{order.clientName}</div>
-                      <div className="text-[11px] text-slate-500">{order.clientCategory} • {order.destinationCity}</div>
-                    </div>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
-                      order.status === 'Delivered'
-                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                        : order.status === 'Weighing & Grading'
-                        ? 'bg-blue-50 text-blue-800 border border-blue-200'
-                        : 'bg-amber-50 text-amber-800 border border-amber-200'
-                    }`}>
-                      {order.status}
-                    </span>
-                  </div>
-
-                  <div className="text-xs text-slate-700 bg-white p-2.5 rounded-xl border border-slate-200/70">
-                    <div className="font-medium text-slate-900">
-                      {order.items.map(i => `${i.speciesName} (${i.requestedWeightKg}kg)`).join(', ')}
-                    </div>
-                    <div className="text-[10px] text-indigo-600 font-bold mt-0.5">{order.packagingRequirement}</div>
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200/60">
-                    <div>
-                      <span className="text-slate-400 text-[10px] uppercase font-bold block">Delivery</span>
-                      <span className="font-mono-code text-slate-700 font-medium">{order.requiredDeliveryDate}</span>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-slate-400 text-[10px] uppercase font-bold block">Order Total</span>
-                      <span className="font-mono-code font-black text-slate-900 text-sm">{formatCurrency(finalVal)}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 pt-1">
-                    {order.status === 'Weighing & Grading' && (
-                      <button
-                        onClick={() => onOpenWeigher(order)}
-                        className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold text-center cursor-pointer"
-                      >
-                        Weigh Scale
-                      </button>
-                    )}
-                    <button
-                      onClick={() => onOpenInvoice(order)}
-                      className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold text-center cursor-pointer"
-                    >
-                      Invoice
-                    </button>
-                  </div>
+              <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-200">
+                <div className="text-[10px] text-indigo-700 font-bold uppercase flex items-center justify-between">
+                  <span>Credit Sales Receivables</span>
+                  <span className="text-[9px] px-1.5 py-0.5 bg-indigo-200/80 rounded font-semibold text-indigo-900">On Account</span>
                 </div>
-              );
-            })}
-          </div>
+                <div className="text-lg font-black font-mono-code text-indigo-900 mt-1">{formatCurrency(pendingCreditReceivables)}</div>
+                <div className="text-[11px] text-indigo-700 mt-0.5">Pending collection under Net Terms</div>
+              </div>
 
-          <div className="overflow-x-auto hidden md:block">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-y border-slate-200">
-                <tr>
-                  <th className="py-3.5 px-4">Order ID</th>
-                  <th className="py-3.5 px-4">Client / Restaurant</th>
-                  <th className="py-3.5 px-4">Species & Quoted Qty</th>
-                  <th className="py-3.5 px-4">Delivery Date</th>
-                  <th className="py-3.5 px-4 text-right">Order Value</th>
-                  <th className="py-3.5 px-4 text-center">Fulfillment Status</th>
-                  <th className="py-3.5 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {wholesaleOrders.map(order => {
+              <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200">
+                <div className="text-[10px] text-emerald-800 font-bold uppercase">Settled / Collected</div>
+                <div className="text-lg font-black font-mono-code text-emerald-900 mt-1">{formatCurrency(paidWholesaleVol)}</div>
+                <div className="text-[11px] text-emerald-700 mt-0.5">Fully paid & reconciled</div>
+              </div>
+            </div>
+
+            {/* Filter Pills */}
+            <div className="flex items-center gap-2 pt-1 border-b border-slate-100 pb-3">
+              <button
+                onClick={() => setWholesaleFilter('all')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                  wholesaleFilter === 'all'
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                All Orders ({wholesaleOrders.length})
+              </button>
+              <button
+                onClick={() => setWholesaleFilter('credit')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  wholesaleFilter === 'credit'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                }`}
+              >
+                <span>Credit Receivables (Net Terms)</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/20">
+                  {wholesaleOrders.filter(o => (o.saleType === 'Credit Sale (On Account)' || o.paymentTerms) && o.paymentStatus !== 'Paid').length}
+                </span>
+              </button>
+              <button
+                onClick={() => setWholesaleFilter('paid')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                  wholesaleFilter === 'paid'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                }`}
+              >
+                Settled / Paid ({wholesaleOrders.filter(o => o.paymentStatus === 'Paid').length})
+              </button>
+            </div>
+
+            {/* Mobile Wholesale Orders Card View */}
+            <div className="space-y-3 md:hidden">
+              {filteredOrders.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-xs bg-slate-50 rounded-2xl">
+                  No orders match the selected filter.
+                </div>
+              ) : (
+                filteredOrders.map(order => {
                   const finalVal = order.adjustedTotalUSD || order.quotedTotalUSD;
+                  const isCredit = order.saleType === 'Credit Sale (On Account)' || order.paymentTerms;
                   return (
-                    <tr key={order.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-4 px-4 font-mono-code font-bold text-slate-900 text-sm">
-                        {order.id}
-                      </td>
+                    <div key={order.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-slate-900 text-sm">{order.clientName}</div>
+                          <div className="text-[11px] text-slate-500">{order.clientCategory} • {order.destinationCity}</div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                            order.status === 'Delivered'
+                              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                              : order.status === 'Weighing & Grading'
+                              ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                              : 'bg-amber-50 text-amber-800 border border-amber-200'
+                          }`}>
+                            {order.status}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                            order.paymentStatus === 'Paid'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {order.paymentStatus === 'Paid' ? 'Paid' : `Credit: ${order.paymentTerms || 'Net-30'}`}
+                          </span>
+                        </div>
+                      </div>
 
-                      <td className="py-4 px-4">
-                        <div className="font-bold text-slate-900 text-sm">{order.clientName}</div>
-                        <div className="text-slate-500 text-[11px]">{order.clientCategory} • {order.destinationCity}</div>
-                      </td>
-
-                      <td className="py-4 px-4">
-                        <div className="font-medium text-slate-800">
+                      <div className="text-xs text-slate-700 bg-white p-2.5 rounded-xl border border-slate-200/70">
+                        <div className="font-medium text-slate-900">
                           {order.items.map(i => `${i.speciesName} (${i.requestedWeightKg}kg)`).join(', ')}
                         </div>
-                        <div className="text-[10px] text-indigo-600 font-bold">{order.packagingRequirement}</div>
-                      </td>
+                        <div className="text-[10px] text-indigo-600 font-bold mt-0.5">{order.packagingRequirement}</div>
+                        {order.creditAuthorizedBy && (
+                          <div className="mt-1 text-[10px] text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                            Authorized by {order.creditAuthorizedBy}
+                          </div>
+                        )}
+                      </div>
 
-                      <td className="py-4 px-4 font-mono-code text-slate-600">
-                        {order.requiredDeliveryDate}
-                      </td>
+                      <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200/60">
+                        <div>
+                          <span className="text-slate-400 text-[10px] uppercase font-bold block">Delivery</span>
+                          <span className="font-mono-code text-slate-700 font-medium">{order.requiredDeliveryDate}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-slate-400 text-[10px] uppercase font-bold block">Order Total</span>
+                          <span className="font-mono-code font-black text-slate-900 text-sm">{formatCurrency(finalVal)}</span>
+                        </div>
+                      </div>
 
-                      <td className="py-4 px-4 text-right font-mono-code font-black text-sm text-slate-900">
-                        {formatCurrency(finalVal)}
-                      </td>
-
-                      <td className="py-4 px-4 text-center">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                          order.status === 'Delivered'
-                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                            : order.status === 'Weighing & Grading'
-                            ? 'bg-blue-50 text-blue-800 border border-blue-200'
-                            : 'bg-amber-50 text-amber-800 border border-amber-200'
-                        }`}>
-                          {order.status}
-                        </span>
-                      </td>
-
-                      <td className="py-4 px-4 text-right space-x-2">
+                      <div className="flex items-center gap-2 pt-1">
                         {order.status === 'Weighing & Grading' && (
                           <button
                             onClick={() => onOpenWeigher(order)}
-                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                            className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold text-center cursor-pointer"
                           >
                             Weigh Scale
                           </button>
                         )}
                         <button
                           onClick={() => onOpenInvoice(order)}
-                          className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold cursor-pointer"
+                          className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold text-center cursor-pointer"
                         >
-                          Invoice
+                          Invoice & Pay
                         </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="overflow-x-auto hidden md:block">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-y border-slate-200">
+                  <tr>
+                    <th className="py-3.5 px-4">Order ID</th>
+                    <th className="py-3.5 px-4">Client / Restaurant</th>
+                    <th className="py-3.5 px-4">Species & Quoted Qty</th>
+                    <th className="py-3.5 px-4">Terms & Payment</th>
+                    <th className="py-3.5 px-4 text-right">Order Value</th>
+                    <th className="py-3.5 px-4 text-center">Fulfillment Status</th>
+                    <th className="py-3.5 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredOrders.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-slate-400 text-xs">
+                        No orders match the selected filter.
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  ) : (
+                    filteredOrders.map(order => {
+                      const finalVal = order.adjustedTotalUSD || order.quotedTotalUSD;
+                      const isCredit = order.saleType === 'Credit Sale (On Account)' || order.paymentTerms;
+                      return (
+                        <tr key={order.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-4 px-4 font-mono-code font-bold text-slate-900 text-sm">
+                            {order.id}
+                          </td>
+
+                          <td className="py-4 px-4">
+                            <div className="font-bold text-slate-900 text-sm">{order.clientName}</div>
+                            <div className="text-slate-500 text-[11px]">{order.clientCategory} • {order.destinationCity}</div>
+                          </td>
+
+                          <td className="py-4 px-4">
+                            <div className="font-medium text-slate-800">
+                              {order.items.map(i => `${i.speciesName} (${i.requestedWeightKg}kg)`).join(', ')}
+                            </div>
+                            <div className="text-[10px] text-indigo-600 font-bold">{order.packagingRequirement}</div>
+                          </td>
+
+                          <td className="py-4 px-4">
+                            <div className="flex flex-col gap-1">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold w-fit ${
+                                order.paymentStatus === 'Paid'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}>
+                                {order.paymentStatus === 'Paid' ? '✓ Paid' : `Credit: ${order.paymentTerms || 'Net-30'}`}
+                              </span>
+                              {order.paymentDueDate && order.paymentStatus !== 'Paid' && (
+                                <span className="text-[10px] text-slate-400 font-mono-code">
+                                  Due: {order.paymentDueDate}
+                                </span>
+                              )}
+                              {order.creditAuthorizedBy && (
+                                <span className="text-[9px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 font-semibold w-fit">
+                                  Override: {order.creditAuthorizedBy}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          <td className="py-4 px-4 text-right font-mono-code font-black text-sm text-slate-900">
+                            {formatCurrency(finalVal)}
+                          </td>
+
+                          <td className="py-4 px-4 text-center">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                              order.status === 'Delivered'
+                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                : order.status === 'Weighing & Grading'
+                                ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                                : 'bg-amber-50 text-amber-800 border border-amber-200'
+                            }`}>
+                              {order.status}
+                            </span>
+                          </td>
+
+                          <td className="py-4 px-4 text-right space-x-2">
+                            {order.status === 'Weighing & Grading' && (
+                              <button
+                                onClick={() => onOpenWeigher(order)}
+                                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                              >
+                                Weigh Scale
+                              </button>
+                            )}
+                            <button
+                              onClick={() => onOpenInvoice(order)}
+                              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold cursor-pointer"
+                            >
+                              Invoice & Pay
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* 3. DUAL PRICE LIST & CATALOG MATRIX */}
       {activeChannelTab === 'price_matrix' && (
@@ -1051,9 +1351,33 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                 <span className="font-mono-code">{formatCurrency(completedReceiptModal.taxAmount)}</span>
               </div>
               <div className="flex justify-between text-base font-black text-slate-900 pt-2 border-t border-slate-200">
-                <span>Paid via {completedReceiptModal.paymentMethod}:</span>
+                <span>
+                  {completedReceiptModal.paymentMethod === 'Customer Credit Account'
+                    ? 'Billed to Credit Account:'
+                    : `Paid via ${completedReceiptModal.paymentMethod}:`}
+                </span>
                 <span className="font-mono-code text-emerald-700">{formatCurrency(completedReceiptModal.totalAmount)}</span>
               </div>
+
+              {completedReceiptModal.paymentMethod === 'Customer Credit Account' && (
+                <div className="mt-2 p-2.5 bg-indigo-50 rounded-xl border border-indigo-100 text-indigo-950 space-y-1">
+                  <div className="font-bold flex items-center justify-between">
+                    <span>Account: {completedReceiptModal.customerName}</span>
+                    <span className="text-[10px] px-2 py-0.5 bg-indigo-200/80 rounded font-semibold text-indigo-800">
+                      {completedReceiptModal.creditTerms || 'Net-30'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-indigo-700">
+                    Added to client's outstanding accounts receivable ledger.
+                  </div>
+                  {completedReceiptModal.creditAuthorizedBy && (
+                    <div className="text-[10px] text-amber-800 bg-amber-100/70 p-1.5 rounded border border-amber-200 mt-1">
+                      Manager Override: {completedReceiptModal.creditAuthorizedBy}
+                      {completedReceiptModal.creditOverrideNote && ` • ${completedReceiptModal.creditOverrideNote}`}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <button
