@@ -14,6 +14,10 @@ export interface RepositoryOptions<TDomain, TDatabaseRow> {
 }
 
 export class BaseRepository<TDomain, TDatabaseRow> {
+  protected static unknownColumnsByTable: Map<string, Set<string>> = new Map([
+    ['inventory_batches', new Set(['is_retail_cut_lot', 'linked_product_id', 'product_sku'])],
+  ]);
+
   protected tableName: string;
   protected storageKey: string;
   protected toDomain: (row: TDatabaseRow) => TDomain;
@@ -110,10 +114,19 @@ export class BaseRepository<TDomain, TDatabaseRow> {
 
     if (canQuery) {
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from(this.tableName)
           .select('*')
           .order('created_at', { ascending: false });
+
+        if (this.onConflict.includes('organization_id')) {
+          const orgId = await this.getOrganizationId();
+          if (orgId) {
+            query = query.eq('organization_id', orgId);
+          }
+        }
+
+        const { data, error } = await query;
 
         if (error) {
           console.warn(`[BaseRepository:${this.tableName}] Live query error:`, error.message);
@@ -216,25 +229,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     const canQuery = await this.canAccessSupabase();
     if (canQuery) {
       try {
-        let conflictTarget = this.onConflict;
-        let { error } = await supabase
-          .from(this.tableName)
-          .upsert(dbPayload, { onConflict: conflictTarget });
-
-        // Adaptive fallback if ON CONFLICT specification did not match table constraint
-        if (error && error.message?.includes('there is no unique or exclusion constraint matching the ON CONFLICT specification')) {
-          const alternateTarget = conflictTarget.includes('organization_id') ? 'id' : 'organization_id,id';
-          console.warn(`[BaseRepository:${this.tableName}] Retrying upsert with alternate onConflict target: ${alternateTarget}`);
-          const retryRes = await supabase
-            .from(this.tableName)
-            .upsert(dbPayload, { onConflict: alternateTarget });
-          if (!retryRes.error) {
-            this.onConflict = alternateTarget;
-            return entity;
-          }
-          error = retryRes.error;
-        }
-
+        const { error } = await this.executeUpsertWithRecovery(dbPayload, this.onConflict);
         if (!error) {
           return entity;
         }
@@ -324,6 +319,67 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   }
 
   /**
+   * Helper to perform an upsert with resilient fallback for schema differences and ON CONFLICT targets
+   */
+  private async executeUpsertWithRecovery(
+    payload: Record<string, any>,
+    initialConflictTarget: string
+  ): Promise<{ error: any; cleanPayload: Record<string, any> }> {
+    let conflictTarget = initialConflictTarget;
+    const cleanPayload = { ...payload };
+
+    // 1. Prune known missing schema cache columns before sending
+    const knownMissing = BaseRepository.unknownColumnsByTable.get(this.tableName);
+    if (knownMissing && knownMissing.size > 0) {
+      for (const col of knownMissing) {
+        delete cleanPayload[col];
+      }
+    }
+
+    let res = await supabase
+      .from(this.tableName)
+      .upsert(cleanPayload, { onConflict: conflictTarget });
+    let error = res.error;
+
+    // Retry loop for any missing columns or constraint mismatches (up to 5 iterations)
+    for (let attempt = 0; attempt < 5 && error; attempt++) {
+      let recovered = false;
+
+      // Handle missing schema cache columns
+      if (error.message?.includes('in the schema cache') && error.message?.includes("Could not find the '")) {
+        const match = error.message.match(/Could not find the '([^']+)' column of/);
+        if (match && match[1]) {
+          const missingCol = match[1];
+          let set = BaseRepository.unknownColumnsByTable.get(this.tableName);
+          if (!set) {
+            set = new Set<string>();
+            BaseRepository.unknownColumnsByTable.set(this.tableName, set);
+          }
+          set.add(missingCol);
+          delete cleanPayload[missingCol];
+          recovered = true;
+        }
+      }
+
+      // Handle ON CONFLICT specification mismatch
+      if (error.message?.includes('there is no unique or exclusion constraint matching the ON CONFLICT specification')) {
+        conflictTarget = conflictTarget.includes('organization_id') ? 'id' : 'organization_id,id';
+        this.onConflict = conflictTarget;
+        recovered = true;
+      }
+
+      if (!recovered) break;
+
+      const retryRes = await supabase
+        .from(this.tableName)
+        .upsert(cleanPayload, { onConflict: conflictTarget });
+      error = retryRes.error;
+    }
+
+    return { error, cleanPayload };
+  }
+
+  /**
    * Flush pending queued items for this table to Supabase
    */
   public async flushTableQueue(): Promise<{ processed: number; failed: number }> {
@@ -359,25 +415,11 @@ export class BaseRepository<TDomain, TDatabaseRow> {
             payload.organization_id = orgId || getCurrentOrganizationId() || '00000000-0000-0000-0000-000000000001';
           }
 
-          let conflictTarget = this.onConflict;
-          let res = await supabase
-            .from(this.tableName)
-            .upsert(payload, { onConflict: conflictTarget });
-          error = res.error;
+          const upsertResult = await this.executeUpsertWithRecovery(payload, this.onConflict);
+          error = upsertResult.error;
 
-          // Adaptive fallback if ON CONFLICT specification did not match table constraint
-          if (error && error.message?.includes('there is no unique or exclusion constraint matching the ON CONFLICT specification')) {
-            const alternateTarget = conflictTarget.includes('organization_id') ? 'id' : 'organization_id,id';
-            console.warn(`[BaseRepository:${this.tableName}] Retrying flush with alternate onConflict target: ${alternateTarget}`);
-            const retryRes = await supabase
-              .from(this.tableName)
-              .upsert(payload, { onConflict: alternateTarget });
-            if (!retryRes.error) {
-              this.onConflict = alternateTarget;
-              error = null;
-            } else {
-              error = retryRes.error;
-            }
+          if (upsertResult.cleanPayload) {
+            syncQueue.updateItem(item.id, { payload: upsertResult.cleanPayload });
           }
         } else if (item.operation === 'DELETE') {
           let lookupId = item.recordId;

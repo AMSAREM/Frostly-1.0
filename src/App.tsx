@@ -49,6 +49,7 @@ import {
   StorageZone
 } from './types';
 import { formatCurrency } from './utils/formatters';
+import { getSpeciesIdFromName, getSpeciesTaxonomy } from './utils/speciesHelper';
 import { batchRepository } from './repositories/batchRepository';
 import { customerRepository } from './repositories/customerRepository';
 import { orderRepository } from './repositories/orderRepository';
@@ -798,12 +799,14 @@ export default function App() {
     // Add to Inventory Batches
     const item = newPO.speciesItems[0];
     if (item) {
+      const resolvedSpeciesId = getSpeciesIdFromName(item.speciesName);
+      const taxonomy = getSpeciesTaxonomy(resolvedSpeciesId);
       const newBatch: InventoryBatch = {
         id: newPO.lotAssignedId,
-        speciesId: 'spec-landed',
+        speciesId: resolvedSpeciesId,
         speciesName: item.speciesName,
-        scientificName: 'Harvest Catch Provenance',
-        category: item.speciesName.includes('Salmon') ? 'Salmonid' : item.speciesName.includes('Crab') || item.speciesName.includes('Lobster') || item.speciesName.includes('Prawn') ? 'Crustacean' : item.speciesName.includes('Scallop') ? 'Mollusk' : 'Pelagic',
+        scientificName: taxonomy.scientificName,
+        category: taxonomy.category,
         harvestDate: newPO.orderDate,
         landingPort: newPO.portLocation,
         vesselName: newPO.vesselName,

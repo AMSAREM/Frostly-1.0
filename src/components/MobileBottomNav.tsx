@@ -35,7 +35,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
 
   const moreItems: { id: ActiveTab; label: string; description: string; icon: React.ReactNode }[] = [
     { id: 'customers', label: 'Customer Directory & CRM', description: 'Restaurant accounts, credit limits & aging AR', icon: <Users className="w-5 h-5 text-indigo-600" /> },
-    { id: 'suppliers', label: 'Suppliers & Catch Landings', description: 'Harvester fleet co-ops, dock receipts & AP', icon: <Ship className="w-5 h-5 text-blue-600" /> },
+    { id: 'suppliers', label: 'Suppliers & Purchase Orders (POs)', description: 'Harvester fleet co-ops, dock receipts & AP', icon: <Ship className="w-5 h-5 text-blue-600" /> },
     { id: 'settings', label: 'System Settings & HACCP', description: 'Cold-chain thresholds, facility profile & data backups', icon: <Settings className="w-5 h-5 text-slate-700" /> },
   ];
 

@@ -1,4 +1,5 @@
 import { SyncQueueItem, SyncQueueListener, SyncOperationType } from './types';
+import { getSpeciesIdFromName } from '../utils/speciesHelper';
 
 const QUEUE_STORAGE_KEY = 'frostly_sync_queue_v1';
 const MAX_RETRIES = 5;
@@ -12,6 +13,27 @@ class SyncQueue {
     this.loadFromStorage();
   }
 
+  private sanitizePayload(tableName: string, payload: Record<string, any> | undefined): Record<string, any> | undefined {
+    if (!payload || tableName !== 'inventory_batches') return payload;
+
+    const { is_retail_cut_lot, linked_product_id, product_sku, ...cleanPayload } = payload;
+    let notes = cleanPayload.notes || '';
+    if ((is_retail_cut_lot || linked_product_id || product_sku) && !notes.includes('<!--frostly_retail:')) {
+      const meta = JSON.stringify({
+        isRetailCutLot: Boolean(is_retail_cut_lot),
+        linkedProductId: linked_product_id || null,
+        productSku: product_sku || null,
+      });
+      cleanPayload.notes = notes ? `${notes} <!--frostly_retail:${meta}-->` : `<!--frostly_retail:${meta}-->`;
+    }
+
+    if (cleanPayload.species_name || cleanPayload.species_id) {
+      cleanPayload.species_id = getSpeciesIdFromName(cleanPayload.species_name, cleanPayload.species_id);
+    }
+
+    return cleanPayload;
+  }
+
   private loadFromStorage(): void {
     if (typeof localStorage === 'undefined') return;
     try {
@@ -19,7 +41,20 @@ class SyncQueue {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) {
-          this.queue = parsed;
+          let hasCleaned = false;
+          this.queue = parsed.map((item) => {
+            if (item && item.tableName === 'inventory_batches' && item.payload) {
+              const sanitized = this.sanitizePayload(item.tableName, item.payload);
+              if (sanitized !== item.payload) {
+                hasCleaned = true;
+                return { ...item, payload: sanitized };
+              }
+            }
+            return item;
+          });
+          if (hasCleaned) {
+            this.saveToStorage();
+          }
         }
       }
     } catch (e) {
@@ -52,6 +87,8 @@ class SyncQueue {
   public enqueue(
     item: Omit<SyncQueueItem, 'id' | 'timestamp' | 'retryCount'>
   ): SyncQueueItem {
+    const sanitizedPayload = this.sanitizePayload(item.tableName, item.payload);
+
     // Check if an entry for the same table and record already exists
     const existingIndex = this.queue.findIndex(
       (q) => q.tableName === item.tableName && q.recordId === item.recordId
@@ -63,7 +100,7 @@ class SyncQueue {
       // Consolidate operations if possible
       if (existing.operation === 'INSERT' && item.operation === 'UPDATE') {
         // Keep as INSERT, but merge payload
-        existing.payload = { ...existing.payload, ...item.payload };
+        existing.payload = { ...existing.payload, ...sanitizedPayload };
         existing.timestamp = Date.now();
         this.saveToStorage();
         return existing;
@@ -92,7 +129,7 @@ class SyncQueue {
       } else {
         // Replace existing item
         existing.operation = item.operation;
-        existing.payload = { ...existing.payload, ...item.payload };
+        existing.payload = { ...existing.payload, ...sanitizedPayload };
         existing.timestamp = Date.now();
         this.saveToStorage();
         return existing;
@@ -104,7 +141,7 @@ class SyncQueue {
       tableName: item.tableName,
       operation: item.operation,
       recordId: item.recordId,
-      payload: item.payload,
+      payload: sanitizedPayload,
       timestamp: Date.now(),
       retryCount: 0,
     };

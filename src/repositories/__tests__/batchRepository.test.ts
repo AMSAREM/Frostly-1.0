@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
 import { batchRepository } from '../batchRepository';
+import { batchMapper } from '../../mappers/batchMapper';
 import { syncQueue } from '../../sync/queue';
 import { InventoryBatch } from '../../types';
 
@@ -137,5 +138,36 @@ describe('BatchRepository & Data Flow Tests', () => {
 
     batchRepository.resetCache([]);
     expect(batchRepository.getLocalCache()).toHaveLength(0);
+  });
+
+  it('safely embeds retail cut metadata into notes without emitting unmigrated columns in toDatabase', async () => {
+    const retailLot: InventoryBatch = {
+      ...sampleBatch,
+      id: 'LOT-RET-KING-I860',
+      isRetailCutLot: true,
+      linkedProductId: 'prod-salmon-fillet-01',
+      productSku: 'SKU-RET-SAL-01',
+      notes: 'High yield king salmon retail cuts',
+    };
+
+    await batchRepository.save(retailLot, true);
+
+    const queueItem = syncQueue.getAll()[0];
+    expect(queueItem).toBeDefined();
+    // Verify unmigrated columns are NOT present in database payload
+    expect(queueItem.payload.is_retail_cut_lot).toBeUndefined();
+    expect(queueItem.payload.linked_product_id).toBeUndefined();
+    expect(queueItem.payload.product_sku).toBeUndefined();
+    // Verify metadata was safely preserved inside notes
+    expect(queueItem.payload.notes).toContain('<!--frostly_retail:');
+    expect(queueItem.payload.notes).toContain('prod-salmon-fillet-01');
+    expect(queueItem.payload.notes).toContain('SKU-RET-SAL-01');
+
+    // Verify toDomain successfully reconstructs all retail properties from database row
+    const restored = batchMapper.toDomain(queueItem.payload as any);
+    expect(restored.isRetailCutLot).toBe(true);
+    expect(restored.linkedProductId).toBe('prod-salmon-fillet-01');
+    expect(restored.productSku).toBe('SKU-RET-SAL-01');
+    expect(restored.notes).toBe('High yield king salmon retail cuts');
   });
 });

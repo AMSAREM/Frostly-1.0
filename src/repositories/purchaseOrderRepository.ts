@@ -2,6 +2,7 @@ import { BaseRepository } from './base';
 import { PurchaseOrderLanding } from '../types';
 import { purchaseOrderMapper, DatabasePurchaseOrderRow } from '../mappers/purchaseOrderMapper';
 import { supabase } from '../utils/supabase';
+import { getSpeciesIdFromName } from '../utils/speciesHelper';
 
 export class PurchaseOrderRepository extends BaseRepository<PurchaseOrderLanding, DatabasePurchaseOrderRow> {
   constructor() {
@@ -44,7 +45,7 @@ export class PurchaseOrderRepository extends BaseRepository<PurchaseOrderLanding
       try {
         const itemsPayload = po.speciesItems.map((item) => ({
           po_id: po.id,
-          species_id: 'spec-landed',
+          species_id: getSpeciesIdFromName(item.speciesName),
           species_name: item.speciesName,
           weight_kg: item.weightKg,
           cost_per_kg: item.costPerKg,

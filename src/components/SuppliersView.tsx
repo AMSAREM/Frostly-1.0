@@ -64,7 +64,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
   // New Inward Catch / PO Form State
   const [poSupplierId, setPoSupplierId] = useState(suppliers[0]?.id || '');
   const [poVessel, setPoVessel] = useState('');
-  const [poSpeciesName, setPoSpeciesName] = useState('');
+  const [poSpeciesName, setPoSpeciesName] = useState('Pacific Bluefin Tuna (Hon-Maguro)');
   const [poWeightKg, setPoWeightKg] = useState('');
   const [poCostPerKg, setPoCostPerKg] = useState('');
   const [poGrade, setPoGrade] = useState<QualityGrade>('Grade #1');
@@ -129,6 +129,10 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
     if (isNaN(weight) || isNaN(unitCost) || weight <= 0 || unitCost <= 0) return;
 
     const totalCost = weight * unitCost;
+    const effectiveSpeciesName = poSpeciesName.trim() || 'Pacific Bluefin Tuna (Hon-Maguro)';
+    const spPrefix = (effectiveSpeciesName.split(' ')[0] || 'FISH').replace(/[^A-Za-z]/g, '').slice(0, 4).toUpperCase() || 'FISH';
+    const assignedLotId = `LOT-${new Date().getFullYear()}-${spPrefix}-${Math.floor(1000 + Math.random() * 9000)}`;
+
     const newPO: PurchaseOrderLanding = {
       id: `PO-${(8820 + purchaseOrders.length + 1).toString()}`,
       supplierId: sup.id,
@@ -139,7 +143,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
       deliveryDate: new Date().toISOString().split('T')[0],
       speciesItems: [
         {
-          speciesName: poSpeciesName,
+          speciesName: effectiveSpeciesName,
           weightKg: weight,
           costPerKg: unitCost,
           totalCost: totalCost,
@@ -151,7 +155,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
       paymentStatus: 'Pending Settlement',
       paymentDueDate: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
       receivedBy: 'Dock Receiving Master',
-      lotAssignedId: `LOT-${new Date().getFullYear()}-${poSpeciesName.slice(0, 3).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      lotAssignedId: assignedLotId,
       status: 'Received & In Stock',
       notes: poNotes.trim() || 'Landed catch inspected and verified at dock scale.'
     };
@@ -213,7 +217,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <span>Catch Inward Logs</span>
+              <span>Purchase Orders (Catch Logs)</span>
               <span className="px-1.5 py-0.5 text-[10px] bg-indigo-100 text-indigo-800 rounded-full font-extrabold">
                 {purchaseOrders.length}
               </span>
@@ -628,8 +632,9 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                     <option value="Wild King & Atlantic Salmon (Icy Fjord)">Wild King & Atlantic Salmon (Icy Fjord)</option>
                     <option value="Red King Crab (Whole Clusters)">Red King Crab (Whole Clusters)</option>
                     <option value="North Atlantic Hard-Shell Live Lobster">North Atlantic Hard-Shell Live Lobster</option>
-                    <option value="Hokkaido Diver Scallops (U-10)">Hokkaido Diver Scallops (U-10)</option>
-                    <option value="Jumbo Black Tiger Prawns">Jumbo Black Tiger Prawns</option>
+                    <option value="Kumamoto & Belon Pacific Oysters">Kumamoto & Belon Pacific Oysters</option>
+                    <option value="Jumbo Black Tiger Prawns (U-8 Count)">Jumbo Black Tiger Prawns (U-8 Count)</option>
+                    <option value="Alaskan Black Cod (Sablefish Butterfish)">Alaskan Black Cod (Sablefish Butterfish)</option>
                   </select>
                 </div>
 

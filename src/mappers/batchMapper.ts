@@ -1,4 +1,5 @@
 import { InventoryBatch, SpeciesCategory, QualityGrade, StorageZone } from '../types';
+import { getSpeciesIdFromName } from '../utils/speciesHelper';
 
 export interface DatabaseInventoryBatchRow {
   id: string;
@@ -65,6 +66,31 @@ export const batchMapper = {
     const scientificName = row.species?.scientific_name ?? row.scientific_name ?? '';
     const category = (row.species?.category ?? row.category ?? 'Pelagic') as SpeciesCategory;
 
+    let isRetailCutLot = Boolean(row.is_retail_cut_lot);
+    let linkedProductId = row.linked_product_id || undefined;
+    let productSku = row.product_sku || undefined;
+    let rawNotes = row.notes ?? '';
+
+    // Parse structured metadata embedded in notes if present
+    if (rawNotes.includes('<!--frostly_retail:')) {
+      try {
+        const match = rawNotes.match(/<!--frostly_retail:(\{.*?\})-->/);
+        if (match && match[1]) {
+          const parsed = JSON.parse(match[1]);
+          if (parsed.isRetailCutLot !== undefined && !isRetailCutLot) isRetailCutLot = Boolean(parsed.isRetailCutLot);
+          if (parsed.linkedProductId && !linkedProductId) linkedProductId = parsed.linkedProductId;
+          if (parsed.productSku && !productSku) productSku = parsed.productSku;
+          rawNotes = rawNotes.replace(/<!--frostly_retail:.*?-->/, '').trim();
+        }
+      } catch {
+        // ignore parse error
+      }
+    }
+
+    if (!isRetailCutLot && (row.id?.startsWith('LOT-RET') || (rawNotes && rawNotes.toLowerCase().includes('retail cut')))) {
+      isRetailCutLot = true;
+    }
+
     return {
       id: row.id,
       speciesId: row.species_id,
@@ -99,20 +125,36 @@ export const batchMapper = {
       receivedDate: row.received_date,
       expiryDate: row.expiry_date,
       qrCodeSeed: row.qr_code_seed || row.id,
-      notes: row.notes ?? '',
-      linkedProductId: row.linked_product_id || undefined,
-      productSku: row.product_sku || undefined,
-      isRetailCutLot: Boolean(row.is_retail_cut_lot),
+      notes: rawNotes,
+      linkedProductId,
+      productSku,
+      isRetailCutLot,
     };
   },
 
   /**
-   * Convert a domain InventoryBatch to Supabase database row payload
+   * Convert a domain InventoryBatch to Supabase database row payload.
+   * Embeds retail cut linkage metadata into notes so that existing schemas without
+   * is_retail_cut_lot or linked_product_id columns retain 100% data fidelity.
    */
   toDatabase(batch: InventoryBatch): Record<string, any> {
-    return {
+    let cleanNotes = batch.notes || '';
+    if (cleanNotes.includes('<!--frostly_retail:')) {
+      cleanNotes = cleanNotes.replace(/<!--frostly_retail:.*?-->/, '').trim();
+    }
+
+    if (batch.isRetailCutLot || batch.linkedProductId || batch.productSku) {
+      const meta = JSON.stringify({
+        isRetailCutLot: Boolean(batch.isRetailCutLot),
+        linkedProductId: batch.linkedProductId || null,
+        productSku: batch.productSku || null,
+      });
+      cleanNotes = cleanNotes ? `${cleanNotes} <!--frostly_retail:${meta}-->` : `<!--frostly_retail:${meta}-->`;
+    }
+
+    const payload: Record<string, any> = {
       id: batch.id,
-      species_id: batch.speciesId,
+      species_id: getSpeciesIdFromName(batch.speciesName, batch.speciesId),
       species_name: batch.speciesName,
       scientific_name: batch.scientificName,
       category: batch.category,
@@ -144,10 +186,9 @@ export const batchMapper = {
       received_date: batch.receivedDate,
       expiry_date: batch.expiryDate,
       qr_code_seed: batch.qrCodeSeed || batch.id,
-      notes: batch.notes || null,
-      linked_product_id: batch.linkedProductId || null,
-      product_sku: batch.productSku || null,
-      is_retail_cut_lot: batch.isRetailCutLot ?? false,
+      notes: cleanNotes || null,
     };
+
+    return payload;
   },
 };

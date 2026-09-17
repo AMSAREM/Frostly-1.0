@@ -141,13 +141,13 @@ export const Header: React.FC<HeaderProps> = ({
   }, [showMobileSearch, searchQuery]);
 
   // Quick suggestion chips for mobile search
-  const searchChips = ['Tuna', 'Salmon', 'Lobster', 'LOT-', 'ORD-'];
+  const searchChips = ['Tuna', 'Salmon', 'Lobster', 'LOT-', 'ORD-', 'PO-'];
 
   const navItems: { id: ActiveTab; label: string; icon: React.ReactNode }[] = [
     { id: 'dashboard', label: 'Overview', icon: <Anchor className="w-4 h-4" /> },
     { id: 'retail_wholesale', label: 'Retail & Wholesale', icon: <ShoppingBag className="w-4 h-4" /> },
     { id: 'customers', label: 'Customers', icon: <Users className="w-4 h-4" /> },
-    { id: 'suppliers', label: 'Suppliers', icon: <Ship className="w-4 h-4" /> },
+    { id: 'suppliers', label: 'Suppliers & POs', icon: <Ship className="w-4 h-4" /> },
     { id: 'financials', label: 'Financials & P&L', icon: <DollarSign className="w-4 h-4" /> },
     { id: 'inventory', label: 'Inventory', icon: <Package className="w-4 h-4" /> },
   ];
