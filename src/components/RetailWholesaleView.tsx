@@ -22,6 +22,7 @@ import {
   Sparkles,
   ChevronRight,
   Edit2,
+  AlertCircle,
   Image as ImageIcon
 } from 'lucide-react';
 import { 
@@ -48,6 +49,7 @@ interface RetailWholesaleViewProps {
   onUpdateProductPricing: (productId: string, wholesalePrice: number, retailPrice: number) => void;
   onSaveProduct?: (product: RetailWholesaleProduct) => Promise<void> | void;
   onDeleteProduct?: (productId: string) => Promise<void> | void;
+  onNavigateToInventory?: () => void;
   formatCurrency: (amount: number) => string;
 }
 
@@ -64,6 +66,7 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   onUpdateProductPricing,
   onSaveProduct,
   onDeleteProduct,
+  onNavigateToInventory,
   formatCurrency
 }) => {
   const [activeChannelTab, setActiveChannelTab] = useState<'retail_pos' | 'wholesale_orders' | 'price_matrix'>('retail_pos');
@@ -679,6 +682,35 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
             </button>
           </div>
 
+          {/* Dual Channel Connection Explainer */}
+          <div className="bg-gradient-to-r from-indigo-50/80 via-blue-50/50 to-slate-50 p-4 rounded-2xl border border-indigo-100/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-700">
+            <div className="flex items-start gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                <Tag className="w-4 h-4" />
+              </div>
+              <div className="space-y-0.5">
+                <div className="font-bold text-slate-900 flex items-center gap-2 flex-wrap">
+                  <span>How Dual Price Catalog Connects to Inventory Ledger</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800">
+                    {products.length} Products Configured
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed max-w-3xl">
+                  Each product in this matrix has dual wholesale ($/kg) and retail ($/unit) pricing matrices. Every active product is directly linked to an inspected cold-storage lot in the <strong>Inventory Ledger</strong>, ensuring automatic stock deduction across both counter POS receipts and B2B invoices.
+                </p>
+              </div>
+            </div>
+            {onNavigateToInventory && (
+              <button
+                onClick={onNavigateToInventory}
+                className="px-3.5 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-indigo-700 text-xs font-bold border border-indigo-200 transition-colors shadow-2xs cursor-pointer shrink-0 flex items-center gap-1 self-start sm:self-center"
+              >
+                <span>View In Inventory</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
           {/* Mobile Price Matrix Cards */}
           <div className="space-y-3 md:hidden">
             {products.map(prod => {
@@ -699,6 +731,32 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                       <div>
                         <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
                         <div className="text-[11px] text-slate-500">{prod.cutType} • {prod.sku}</div>
+                        {(() => {
+                          const linkedBatch = batches.find(b => 
+                            (prod.linkedBatchId && b.id === prod.linkedBatchId) ||
+                            (b.linkedProductId && b.linkedProductId === prod.id) ||
+                            (b.productSku && prod.sku && b.productSku.toLowerCase() === prod.sku.toLowerCase()) ||
+                            b.id === `LOT-RET-${prod.id.replace('prod-', '')}`
+                          );
+                          if (linkedBatch) {
+                            return (
+                              <button
+                                onClick={onNavigateToInventory}
+                                className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer"
+                                title={`Physical lot stored in ${linkedBatch.storageZone}. Click to view in Inventory Ledger.`}
+                              >
+                                <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                <span>Vault Lot: {linkedBatch.id} ({linkedBatch.availableWeightKg} kg)</span>
+                              </button>
+                            );
+                          }
+                          return (
+                            <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                              <AlertCircle className="w-2.5 h-2.5 text-amber-600" />
+                              <span>Syncing to Vault...</span>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5">
@@ -825,6 +883,32 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                           <div>
                             <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
                             <div className="text-slate-400 text-[11px]">{prod.cutType} • {prod.sku}</div>
+                            {(() => {
+                              const linkedBatch = batches.find(b => 
+                                (prod.linkedBatchId && b.id === prod.linkedBatchId) ||
+                                (b.linkedProductId && b.linkedProductId === prod.id) ||
+                                (b.productSku && prod.sku && b.productSku.toLowerCase() === prod.sku.toLowerCase()) ||
+                                b.id === `LOT-RET-${prod.id.replace('prod-', '')}`
+                              );
+                              if (linkedBatch) {
+                                return (
+                                  <button
+                                    onClick={onNavigateToInventory}
+                                    className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer"
+                                    title={`Physical lot stored in ${linkedBatch.storageZone}. Click to view in Inventory Ledger.`}
+                                  >
+                                    <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                    <span>Vault Lot: {linkedBatch.id} ({linkedBatch.availableWeightKg} kg)</span>
+                                  </button>
+                                );
+                              }
+                              return (
+                                <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                  <AlertCircle className="w-2.5 h-2.5 text-amber-600" />
+                                  <span>Syncing to Vault...</span>
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>
                       </td>

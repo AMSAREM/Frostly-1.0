@@ -27,14 +27,19 @@ const ADJUSTMENT_REASONS = [
   'Physical Vault Inventory Count Correction'
 ];
 
-export const StockAdjustmentModal: React.FC<StockAdjustmentModalProps> = ({
+interface StockAdjustmentModalContentProps {
+  batch: InventoryBatch;
+  onClose: () => void;
+  onSave: (updatedBatch: InventoryBatch) => void;
+  useImperial: boolean;
+}
+
+const StockAdjustmentModalContent: React.FC<StockAdjustmentModalContentProps> = ({
   batch,
   onClose,
   onSave,
   useImperial
 }) => {
-  if (!batch) return null;
-
   const currentAvailable = batch.availableWeightKg;
   const [newAvailableKg, setNewAvailableKg] = useState<number>(currentAvailable);
   const [reason, setReason] = useState<string>(ADJUSTMENT_REASONS[0]);
@@ -191,4 +196,11 @@ export const StockAdjustmentModal: React.FC<StockAdjustmentModalProps> = ({
       </div>
     </div>
   );
+};
+
+export const StockAdjustmentModal: React.FC<StockAdjustmentModalProps> = (props) => {
+  if (!props.batch) {
+    return null;
+  }
+  return <StockAdjustmentModalContent {...props} batch={props.batch} key={props.batch.id} />;
 };

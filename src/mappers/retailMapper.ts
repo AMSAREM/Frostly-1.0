@@ -19,6 +19,8 @@ export interface DatabaseProductRow {
   origin: string;
   is_available_for_retail: boolean;
   is_available_for_wholesale: boolean;
+  linked_batch_id?: string | null;
+  storage_zone?: string | null;
   is_active?: boolean;
   organization_id?: string;
 }
@@ -64,6 +66,8 @@ export const productMapper = {
       origin: row.origin,
       isAvailableForRetail: Boolean(row.is_available_for_retail),
       isAvailableForWholesale: Boolean(row.is_available_for_wholesale),
+      linkedBatchId: row.linked_batch_id || undefined,
+      storageZone: (row.storage_zone as any) || undefined,
     };
   },
 
@@ -87,6 +91,8 @@ export const productMapper = {
       origin: domain.origin,
       is_available_for_retail: domain.isAvailableForRetail,
       is_available_for_wholesale: domain.isAvailableForWholesale,
+      linked_batch_id: domain.linkedBatchId || null,
+      storage_zone: domain.storageZone || null,
     };
   },
 };

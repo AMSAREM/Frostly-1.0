@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Header, ActiveTab } from './components/Header';
 import { DashboardView } from './components/DashboardView';
 import { RetailWholesaleView } from './components/RetailWholesaleView';
@@ -29,7 +29,8 @@ import {
   INITIAL_RETAIL_TRANSACTIONS,
   INITIAL_PURCHASE_ORDERS,
   INITIAL_FINANCIAL_ENTRIES,
-  INITIAL_NOTIFICATIONS 
+  INITIAL_NOTIFICATIONS,
+  SPECIES_CATALOG
 } from './data/mockData';
 
 import { 
@@ -44,7 +45,8 @@ import {
   SystemNotification,
   OrderStatus,
   AppSettings,
-  DEFAULT_SETTINGS 
+  DEFAULT_SETTINGS,
+  StorageZone
 } from './types';
 import { formatCurrency } from './utils/formatters';
 import { batchRepository } from './repositories/batchRepository';
@@ -341,6 +343,112 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('frostly_settings_v3', JSON.stringify(settings));
   }, [settings]);
+
+  // Helper to reconcile Dual-Price & Retail catalog products with cold-chain inventory lots
+  const reconcileCatalogWithInventory = (
+    currentProducts: RetailWholesaleProduct[],
+    currentBatches: InventoryBatch[]
+  ): { updatedBatches: InventoryBatch[]; newLots: InventoryBatch[] } => {
+    if (!currentProducts || currentProducts.length === 0) {
+      return { updatedBatches: currentBatches, newLots: [] };
+    }
+
+    const newLots: InventoryBatch[] = [];
+    let workingBatches = [...currentBatches];
+
+    for (const product of currentProducts) {
+      const hasLot = workingBatches.some(b => 
+        (product.linkedBatchId && b.id === product.linkedBatchId) ||
+        (b.linkedProductId && b.linkedProductId === product.id) ||
+        (b.productSku && product.sku && b.productSku.toLowerCase() === product.sku.toLowerCase()) ||
+        b.id === `LOT-RET-${product.id.replace('prod-', '')}`
+      );
+
+      if (!hasLot) {
+        const matchedSpecies = SPECIES_CATALOG.find(s => s.id === product.speciesId);
+        const spPrefix = (product.speciesId || 'SPEC').replace('spec-', '').toUpperCase().slice(0, 4);
+        const cleanSku = (product.sku || '').replace(/[^a-zA-Z0-9]/g, '').slice(-4);
+        const cleanId = (product.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-4);
+        const newBatchId = `LOT-RET-${spPrefix}-${cleanSku || cleanId || Math.floor(1000 + Math.random() * 9000)}`;
+
+        const zone: StorageZone = product.storageZone || 
+          (product.grade === 'Sashimi AAA' 
+            ? 'Super-Cryo Deep Freeze (-60°C)' 
+            : product.cutType === 'Live in Oxygen Tank' 
+              ? 'Live Seawater Tank (+8°C)' 
+              : 'Commercial Cold Storage (-22°C)');
+
+        const currentTemp = zone.includes('-60') ? -59.8 : zone.includes('-22') ? -22.1 : zone.includes('+8') ? 8.2 : 0.8;
+        const targetTemp = zone.includes('-60') ? -60 : zone.includes('-22') ? -22 : zone.includes('+8') ? 8 : 1;
+
+        const isDual = product.isAvailableForRetail && product.isAvailableForWholesale;
+        const channelLabel = isDual ? 'Dual (B2B/POS)' : product.isAvailableForRetail ? 'Retail (POS)' : 'Wholesale (B2B)';
+
+        const newLot: InventoryBatch = {
+          id: newBatchId,
+          speciesId: product.speciesId,
+          speciesName: product.name,
+          scientificName: matchedSpecies?.scientificName || 'Seafood Commercial Cut',
+          category: product.category,
+          harvestDate: new Date().toISOString().split('T')[0],
+          landingPort: product.origin || 'San Francisco Cold Storage Hub',
+          vesselName: 'Retail Packhouse & Cold Vault',
+          vesselRegistration: `RET-${product.sku || 'CUT'}`,
+          captainName: 'Operations Lead',
+          faoArea: 'FAO 67 (Northeast Pacific)',
+          coordinates: {
+            lat: 37.7749,
+            lng: -122.4194,
+            description: product.origin || 'Certified Packhouse'
+          },
+          gearType: 'Certified Retail Cutting & Skin-Packing',
+          grade: product.grade,
+          initialWeightKg: Number(product.stockKg) || 0,
+          availableWeightKg: Number(product.stockKg) || 0,
+          allocatedWeightKg: 0,
+          storageZone: zone,
+          currentTempCelsius: currentTemp,
+          targetTempCelsius: targetTemp,
+          costPerKg: Number(product.costPricePerUnit) || 0,
+          wholesalePricePerKg: Number(product.wholesalePricePerUnit) || 0,
+          certifications: ['FDA HACCP Compliant', 'Retail Skin-Pack', 'Traceable Origin'],
+          inspectionStatus: 'Passed',
+          histaminePpm: 0.8,
+          coreTempCelsius: currentTemp,
+          receivedDate: new Date().toISOString().split('T')[0],
+          expiryDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+          qrCodeSeed: `QR-RET-${product.sku || product.id}`,
+          notes: `Retail Inventory Lot for ${product.name} (${product.cutType}). SKU: ${product.sku}. Pack: ${product.retailPackSize || 'Standard'}. Channel: ${channelLabel}`,
+          linkedProductId: product.id,
+          productSku: product.sku,
+          isRetailCutLot: true
+        };
+
+        newLots.push(newLot);
+        workingBatches = [newLot, ...workingBatches];
+      }
+    }
+
+    return { updatedBatches: workingBatches, newLots };
+  };
+
+  // Auto-reconcile catalog products to ensure every retail/dual product has a physical lot in Inventory Ledger
+  const reconciledProductCountRef = useRef<number>(-1);
+
+  useEffect(() => {
+    if (products.length > 0 && reconciledProductCountRef.current !== products.length) {
+      const { updatedBatches, newLots } = reconcileCatalogWithInventory(products, batches);
+      if (newLots.length > 0) {
+        setBatches(updatedBatches);
+        newLots.forEach(lot => {
+          batchRepository.save(lot, true).catch(err => {
+            console.warn('[App] batchRepository auto-reconcile save error:', err);
+          });
+        });
+      }
+      reconciledProductCountRef.current = products.length;
+    }
+  }, [products, batches]);
 
   // Settings & Data Management Handlers
   const handleUpdateSettings = (newSettings: AppSettings) => {
@@ -769,9 +877,10 @@ export default function App() {
     setProducts(prev => prev.map(prod => {
       const soldItem = sale.items.find(i => i.productId === prod.id);
       if (soldItem) {
+        const soldWeight = prod.unit === 'pack' ? soldItem.quantity * 0.5 : soldItem.quantity;
         const updatedProd = {
           ...prod,
-          stockKg: Math.max(0, parseFloat((prod.stockKg - (prod.unit === 'pack' ? soldItem.quantity * 0.5 : soldItem.quantity)).toFixed(1)))
+          stockKg: Math.max(0, parseFloat((prod.stockKg - soldWeight).toFixed(1)))
         };
         productRepository.save(updatedProd, false).catch(err => {
           console.warn('[App] productRepository update stock error:', err);
@@ -779,6 +888,26 @@ export default function App() {
         return updatedProd;
       }
       return prod;
+    }));
+
+    // Deduct sold stock from corresponding inventory batches for ledger accountability
+    setBatches(prev => prev.map(batch => {
+      const soldItem = sale.items.find(i => 
+        (batch.linkedProductId && i.productId === batch.linkedProductId) ||
+        (batch.productSku && i.productName.includes(batch.productSku))
+      );
+      if (soldItem) {
+        const soldWeight = soldItem.unit === 'pack' ? soldItem.quantity * 0.5 : soldItem.quantity;
+        const newAvailable = Math.max(0, parseFloat((batch.availableWeightKg - soldWeight).toFixed(1)));
+        batchRepository.updateWeights(batch.id, newAvailable, batch.allocatedWeightKg).catch(err => {
+          console.warn('[App] batchRepository updateWeights error during retail sale:', err);
+        });
+        return {
+          ...batch,
+          availableWeightKg: newAvailable
+        };
+      }
+      return batch;
     }));
 
     // Add Income ledger entry
@@ -844,10 +973,134 @@ export default function App() {
         return [product, ...prev];
       });
 
+      // Synchronize to Inventory Ledger for total accountability
+      const matchedSpecies = SPECIES_CATALOG.find(s => s.id === product.speciesId);
+      const isDual = product.isAvailableForRetail && product.isAvailableForWholesale;
+      const channelLabel = isDual ? 'Dual (B2B/POS)' : product.isAvailableForRetail ? 'Retail (POS)' : 'Wholesale (B2B)';
+
+      let linkedBatch: InventoryBatch | undefined;
+      let isNewBatch = false;
+
+      // 1. Check if product was linked to an existing landed vessel lot
+      if (product.linkedBatchId) {
+        const existing = batches.find(b => b.id === product.linkedBatchId);
+        if (existing) {
+          linkedBatch = {
+            ...existing,
+            speciesName: existing.speciesName,
+            availableWeightKg: product.stockKg > 0 ? product.stockKg : existing.availableWeightKg,
+            wholesalePricePerKg: product.wholesalePricePerUnit || existing.wholesalePricePerKg,
+            costPerKg: product.costPricePerUnit || existing.costPerKg,
+            notes: `${existing.notes || ''} | Processed Retail Cut: ${product.name} (${product.sku})`.trim(),
+            linkedProductId: product.id,
+            productSku: product.sku,
+            isRetailCutLot: true,
+          };
+        }
+      }
+
+      // 2. If not linked to a vessel lot, check if a dedicated retail lot already exists for this product ID or SKU
+      if (!linkedBatch) {
+        const existingLot = batches.find(b => 
+          (b.linkedProductId && b.linkedProductId === product.id) || 
+          (b.productSku && b.productSku === product.sku) ||
+          b.id === `LOT-RET-${product.id.replace('prod-', '')}`
+        );
+
+        if (existingLot) {
+          linkedBatch = {
+            ...existingLot,
+            speciesName: product.name,
+            grade: product.grade,
+            initialWeightKg: Math.max(existingLot.initialWeightKg, product.stockKg),
+            availableWeightKg: product.stockKg,
+            costPerKg: product.costPricePerUnit,
+            wholesalePricePerKg: product.wholesalePricePerUnit,
+            storageZone: product.storageZone || existingLot.storageZone,
+            notes: `Retail Inventory Lot for ${product.name} (${product.cutType}). SKU: ${product.sku}. Pack: ${product.retailPackSize || 'Standard'}. Channel: ${channelLabel}`,
+            linkedProductId: product.id,
+            productSku: product.sku,
+            isRetailCutLot: true
+          };
+        }
+      }
+
+      // 3. If no lot exists yet, create a brand new dedicated Retail Inventory Batch in the ledger
+      if (!linkedBatch) {
+        isNewBatch = true;
+        const spPrefix = (product.speciesId || 'SPEC').replace('spec-', '').toUpperCase().slice(0, 4);
+        const lotSuffix = product.sku ? product.sku.replace(/[^a-zA-Z0-9]/g, '').slice(-4) : Math.floor(1000 + Math.random() * 9000);
+        const newBatchId = `LOT-RET-${spPrefix}-${lotSuffix}`;
+
+        const zone: StorageZone = product.storageZone || 
+          (product.grade === 'Sashimi AAA' 
+            ? 'Super-Cryo Deep Freeze (-60°C)' 
+            : product.cutType === 'Live in Oxygen Tank' 
+              ? 'Live Seawater Tank (+8°C)' 
+              : 'Commercial Cold Storage (-22°C)');
+
+        const currentTemp = zone.includes('-60') ? -59.8 : zone.includes('-22') ? -22.1 : zone.includes('+8') ? 8.2 : 0.8;
+        const targetTemp = zone.includes('-60') ? -60 : zone.includes('-22') ? -22 : zone.includes('+8') ? 8 : 1;
+
+        linkedBatch = {
+          id: newBatchId,
+          speciesId: product.speciesId,
+          speciesName: product.name,
+          scientificName: matchedSpecies?.scientificName || 'Seafood Retail Stock',
+          category: product.category,
+          harvestDate: new Date().toISOString().split('T')[0],
+          landingPort: product.origin || 'San Francisco Cold Storage Hub',
+          vesselName: 'Retail Packhouse & Cold Vault',
+          vesselRegistration: `RET-${product.sku}`,
+          captainName: 'Operations Lead',
+          faoArea: 'FAO 67 (Northeast Pacific)',
+          coordinates: {
+            lat: 37.7749,
+            lng: -122.4194,
+            description: product.origin || 'Certified Packhouse'
+          },
+          gearType: 'Certified Retail Cutting & Skin-Packing',
+          grade: product.grade,
+          initialWeightKg: Number(product.stockKg) || 0,
+          availableWeightKg: Number(product.stockKg) || 0,
+          allocatedWeightKg: 0,
+          storageZone: zone,
+          currentTempCelsius: currentTemp,
+          targetTempCelsius: targetTemp,
+          costPerKg: Number(product.costPricePerUnit) || 0,
+          wholesalePricePerKg: Number(product.wholesalePricePerUnit) || 0,
+          certifications: ['FDA HACCP Compliant', 'Retail Skin-Pack', 'Traceable Origin'],
+          inspectionStatus: 'Passed',
+          histaminePpm: 0.8,
+          coreTempCelsius: currentTemp,
+          receivedDate: new Date().toISOString().split('T')[0],
+          expiryDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+          qrCodeSeed: `QR-RET-${product.sku}`,
+          notes: `Retail Inventory Lot for ${product.name} (${product.cutType}). SKU: ${product.sku}. Pack: ${product.retailPackSize || 'Standard'}. Channel: ${channelLabel}`,
+          linkedProductId: product.id,
+          productSku: product.sku,
+          isRetailCutLot: true
+        };
+      }
+
+      // Persist the inventory lot via batchRepository
+      await batchRepository.save(linkedBatch, isNewBatch);
+
+      // Update state for instant UI reflection in Inventory Ledger
+      setBatches(prev => {
+        const idx = prev.findIndex(b => b.id === linkedBatch!.id);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = linkedBatch!;
+          return updated;
+        }
+        return [linkedBatch!, ...prev];
+      });
+
       addNotification({
         type: 'order_update',
-        title: `Product Saved: ${product.name}`,
-        message: `${product.name} (${product.sku}) updated in retail/wholesale catalog with photo.`,
+        title: `Product & Inventory Accounted: ${product.name}`,
+        message: `${product.name} (${product.sku}) saved and reflected in the Inventory Ledger with ${product.stockKg} kg stock (Lot: ${linkedBatch.id}).`,
         urgency: 'low'
       });
     } catch (err) {
@@ -855,7 +1108,7 @@ export default function App() {
       addNotification({
         type: 'system',
         title: 'Product Save Failed',
-        message: 'Could not synchronize product to catalog database.',
+        message: 'Could not synchronize product to catalog or inventory database.',
         urgency: 'high'
       });
       throw err;
@@ -866,14 +1119,54 @@ export default function App() {
     try {
       await productRepository.delete(productId);
       setProducts(prev => prev.filter(p => p.id !== productId));
+
+      // Also clean up linked retail inventory lot for accountability
+      setBatches(prev => {
+        const linked = prev.find(b => b.linkedProductId === productId);
+        if (linked) {
+          if (linked.isRetailCutLot) {
+            batchRepository.delete(linked.id).catch(err => console.warn(err));
+            return prev.filter(b => b.id !== linked.id);
+          } else {
+            const unlinked = { ...linked, linkedProductId: undefined, isRetailCutLot: false };
+            batchRepository.save(unlinked, false).catch(err => console.warn(err));
+            return prev.map(b => b.id === linked.id ? unlinked : b);
+          }
+        }
+        return prev;
+      });
+
       addNotification({
         type: 'order_update',
         title: 'Product Removed',
-        message: 'Product removed from retail and wholesale price books.',
+        message: 'Product removed from catalog and inventory accountability.',
         urgency: 'low'
       });
     } catch (err) {
       console.error('[App] Failed to delete product:', err);
+    }
+  };
+
+  const handleReconcileCatalog = () => {
+    const { updatedBatches, newLots } = reconcileCatalogWithInventory(products, batches);
+    if (newLots.length > 0) {
+      setBatches(updatedBatches);
+      newLots.forEach(lot => {
+        batchRepository.save(lot, true).catch(err => console.warn(err));
+      });
+      addNotification({
+        type: 'order_update',
+        title: 'Catalog Synchronized with Inventory',
+        message: `Registered ${newLots.length} new inventory lot(s) for catalog products into cold storage.`,
+        urgency: 'low'
+      });
+    } else {
+      addNotification({
+        type: 'system',
+        title: 'All Products Synchronized',
+        message: `All ${products.length} catalog products already have active physical lots in the Inventory Ledger.`,
+        urgency: 'low'
+      });
     }
   };
 
@@ -1114,6 +1407,7 @@ export default function App() {
             onUpdateProductPricing={handleUpdateProductPricing}
             onSaveProduct={handleSaveProduct}
             onDeleteProduct={handleDeleteProduct}
+            onNavigateToInventory={() => setActiveTab('inventory')}
             formatCurrency={formatAppCurrency}
           />
         )}
@@ -1158,10 +1452,12 @@ export default function App() {
         {activeTab === 'inventory' && (
           <InventoryLedgerView
             batches={batches}
+            products={products}
             onOpenPassport={(b) => setPassportBatch(b)}
             onOpenNewBatch={() => setIsNewBatchModalOpen(true)}
             onUpdateBatch={handleUpdateBatch}
             onNavigateToRetail={() => setActiveTab('retail_wholesale')}
+            onReconcileCatalog={handleReconcileCatalog}
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
             useImperial={useImperial}

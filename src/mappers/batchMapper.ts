@@ -37,6 +37,9 @@ export interface DatabaseInventoryBatchRow {
   expiry_date: string;
   qr_code_seed: string;
   notes: string | null;
+  linked_product_id?: string | null;
+  product_sku?: string | null;
+  is_retail_cut_lot?: boolean | null;
   created_at?: string;
   updated_at?: string;
   // Optional join fields for relations if populated
@@ -97,6 +100,9 @@ export const batchMapper = {
       expiryDate: row.expiry_date,
       qrCodeSeed: row.qr_code_seed || row.id,
       notes: row.notes ?? '',
+      linkedProductId: row.linked_product_id || undefined,
+      productSku: row.product_sku || undefined,
+      isRetailCutLot: Boolean(row.is_retail_cut_lot),
     };
   },
 
@@ -139,6 +145,9 @@ export const batchMapper = {
       expiry_date: batch.expiryDate,
       qr_code_seed: batch.qrCodeSeed || batch.id,
       notes: batch.notes || null,
+      linked_product_id: batch.linkedProductId || null,
+      product_sku: batch.productSku || null,
+      is_retail_cut_lot: batch.isRetailCutLot ?? false,
     };
   },
 };

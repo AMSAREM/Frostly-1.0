@@ -15,7 +15,11 @@ import {
   AlertTriangle,
   FileText,
   Sliders,
-  Sparkles
+  Sparkles,
+  ShoppingBag,
+  Store,
+  Truck,
+  ArrowRight
 } from 'lucide-react';
 import { InventoryBatch } from '../../types';
 import { formatCurrency, formatWeight, formatTemp } from '../../utils/formatters';
@@ -26,6 +30,7 @@ interface LotDetailsModalProps {
   onClose: () => void;
   onOpenPassport: (batch: InventoryBatch) => void;
   onOpenAdjustment: (batch: InventoryBatch) => void;
+  onNavigateToRetail?: () => void;
   useImperial: boolean;
 }
 
@@ -34,6 +39,7 @@ export const LotDetailsModal: React.FC<LotDetailsModalProps> = ({
   onClose,
   onOpenPassport,
   onOpenAdjustment,
+  onNavigateToRetail,
   useImperial
 }) => {
   if (!batch) return null;
@@ -236,6 +242,68 @@ export const LotDetailsModal: React.FC<LotDetailsModalProps> = ({
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Section: Sales Channel Distribution (Wholesale, Retail & Dual) */}
+          <div className="bg-gradient-to-br from-indigo-50/70 to-blue-50/50 p-4 sm:p-5 rounded-2xl border border-indigo-100 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-indigo-950 font-bold text-xs">
+                <ShoppingBag className="w-4 h-4 text-indigo-600" />
+                <span>Sales Channel Distribution & Dual Execution</span>
+              </div>
+              <span className="px-2.5 py-0.5 rounded-full bg-indigo-200/60 text-indigo-900 text-[10px] font-bold">
+                Dual-Channel Active
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              This raw landed catch lot feeds both B2B restaurant wholesale and counter retail POS channels:
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              {/* Wholesale Flow */}
+              <div className="bg-white p-3.5 rounded-xl border border-indigo-100 shadow-2xs space-y-1.5">
+                <div className="flex items-center gap-1.5 text-blue-700 font-bold text-xs">
+                  <Truck className="w-3.5 h-3.5" />
+                  <span>Wholesale Orders (B2B Bulk)</span>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Sold as whole fish, loins, or cases by weight at <strong>{formatCurrency(batch.wholesalePricePerKg)}/kg</strong>. Booking an order automatically reserves (allocates) kilograms from this lot to prevent double-selling.
+                </p>
+                <div className="text-[10px] font-mono text-blue-700 bg-blue-50 px-2 py-1 rounded-lg">
+                  Allocated to active orders: {formatWeight(allocated, useImperial)}
+                </div>
+              </div>
+
+              {/* Retail POS Flow */}
+              <div className="bg-white p-3.5 rounded-xl border border-indigo-100 shadow-2xs space-y-1.5">
+                <div className="flex items-center gap-1.5 text-emerald-700 font-bold text-xs">
+                  <Store className="w-3.5 h-3.5" />
+                  <span>Walk-in Retail POS Counter</span>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Processed into consumer portions (250g sashimi vacuum skin packs or fillets). Sold at retail counter price points with instant barcoded checkout receipts.
+                </p>
+                <div className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-1 rounded-lg">
+                  Est. Retail yield: ~{(available * 0.85).toFixed(0)}kg cuts
+                </div>
+              </div>
+            </div>
+
+            {onNavigateToRetail && (
+              <div className="pt-1 flex justify-end">
+                <button
+                  onClick={() => {
+                    onClose();
+                    onNavigateToRetail();
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-indigo-700 font-bold hover:text-indigo-900 bg-white hover:bg-indigo-100/60 border border-indigo-200 px-3 py-1.5 rounded-xl transition-all shadow-2xs cursor-pointer"
+                >
+                  <span>Open Product in Retail & Wholesale Catalog</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Section 3: Cold Chain & Food Safety */}

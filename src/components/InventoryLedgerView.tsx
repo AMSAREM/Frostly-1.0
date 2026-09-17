@@ -27,7 +27,7 @@ import {
   ExternalLink,
   ChevronRight
 } from 'lucide-react';
-import { InventoryBatch, SpeciesCategory, QualityGrade, StorageZone } from '../types';
+import { InventoryBatch, SpeciesCategory, QualityGrade, StorageZone, RetailWholesaleProduct } from '../types';
 import { formatCurrency, formatWeight, formatTemp } from '../utils/formatters';
 import { SPECIES_CATALOG } from '../data/mockData';
 import { InventoryExplainerBanner } from './Inventory/InventoryExplainerBanner';
@@ -36,23 +36,27 @@ import { StockAdjustmentModal } from './Inventory/StockAdjustmentModal';
 
 interface InventoryLedgerViewProps {
   batches: InventoryBatch[];
+  products?: RetailWholesaleProduct[];
   onOpenPassport: (batch: InventoryBatch) => void;
   onOpenNewBatch: () => void;
   onUpdateBatch?: (updatedBatch: InventoryBatch) => void;
   onNavigateToRetail?: () => void;
+  onReconcileCatalog?: () => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   useImperial: boolean;
 }
 
-type QuickFilterStatus = 'all' | 'in_stock' | 'low_stock' | 'fresh' | 'super_cryo' | 'live';
+type QuickFilterStatus = 'all' | 'retail_cuts' | 'in_stock' | 'low_stock' | 'fresh' | 'super_cryo' | 'live';
 
 export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
   batches = [],
+  products = [],
   onOpenPassport,
   onOpenNewBatch,
   onUpdateBatch,
   onNavigateToRetail,
+  onReconcileCatalog,
   searchQuery,
   setSearchQuery,
   useImperial
@@ -88,6 +92,18 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
     return 'https://images.unsplash.com/photo-1534482421-64566f976cfa?auto=format&fit=crop&w=600&q=80';
   };
 
+  // Unlinked retail catalog products calculation for inventory reconciliation
+  const catalogProductsCount = products?.length || 0;
+  const unlinkedProducts = useMemo(() => {
+    if (!products || products.length === 0) return [];
+    return products.filter(p => !batches.some(b => 
+      (p.linkedBatchId && b.id === p.linkedBatchId) ||
+      (b.linkedProductId && b.linkedProductId === p.id) ||
+      (b.productSku && p.sku && b.productSku.toLowerCase() === p.sku.toLowerCase()) ||
+      b.id === `LOT-RET-${p.id.replace('prod-', '')}`
+    ));
+  }, [products, batches]);
+
   // Filtered batches
   const filteredBatches = useMemo(() => {
     return batches.filter((b) => {
@@ -99,18 +115,28 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
         b.vesselName.toLowerCase().includes(q) ||
         b.landingPort.toLowerCase().includes(q) ||
         b.faoArea.toLowerCase().includes(q) ||
-        b.storageZone.toLowerCase().includes(q);
+        b.storageZone.toLowerCase().includes(q) ||
+        (b.productSku && b.productSku.toLowerCase().includes(q)) ||
+        (b.notes && b.notes.toLowerCase().includes(q));
 
       const matchesCategory = selectedCategory === 'All' || b.category === selectedCategory;
       const matchesZone = selectedZone === 'All' || b.storageZone === selectedZone;
       const matchesGrade = selectedGrade === 'All' || b.grade === selectedGrade;
 
       let matchesQuick = true;
-      if (quickFilter === 'in_stock') matchesQuick = b.availableWeightKg > 0;
-      else if (quickFilter === 'low_stock') matchesQuick = b.availableWeightKg > 0 && b.availableWeightKg < 50;
-      else if (quickFilter === 'fresh') matchesQuick = b.storageZone.includes('Fresh') || b.storageZone.includes('Slush');
-      else if (quickFilter === 'super_cryo') matchesQuick = b.storageZone.includes('-60');
-      else if (quickFilter === 'live') matchesQuick = b.storageZone.includes('Live');
+      if (quickFilter === 'retail_cuts') {
+        matchesQuick = Boolean(b.isRetailCutLot || b.linkedProductId || b.productSku || b.id.includes('LOT-RET'));
+      } else if (quickFilter === 'in_stock') {
+        matchesQuick = b.availableWeightKg > 0;
+      } else if (quickFilter === 'low_stock') {
+        matchesQuick = b.availableWeightKg > 0 && b.availableWeightKg < 50;
+      } else if (quickFilter === 'fresh') {
+        matchesQuick = b.storageZone.includes('Fresh') || b.storageZone.includes('Slush');
+      } else if (quickFilter === 'super_cryo') {
+        matchesQuick = b.storageZone.includes('-60');
+      } else if (quickFilter === 'live') {
+        matchesQuick = b.storageZone.includes('Live');
+      }
 
       return matchesSearch && matchesCategory && matchesZone && matchesGrade && matchesQuick;
     });
@@ -200,6 +226,58 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
 
         {/* Explainer / Onboarding Banner */}
         <InventoryExplainerBanner onNavigateToRetail={onNavigateToRetail} />
+
+        {/* Dual Price Catalog Sync Status Pill / Banner */}
+        {catalogProductsCount > 0 && (
+          <div className="pt-2">
+            {unlinkedProducts.length > 0 ? (
+              <div className="bg-amber-50 border border-amber-200/90 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-900 shadow-2xs">
+                <div className="flex items-start sm:items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="font-bold flex items-center gap-2">
+                      <span>Dual Price Catalog & Inventory Synchronization</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-200 text-amber-900">
+                        {unlinkedProducts.length} Pending Vault Registration
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
+                      There are {catalogProductsCount} products in the Dual Price Book, but {unlinkedProducts.length} product(s) ({unlinkedProducts.map(p => p.name).join(', ')}) do not have active physical lots registered in the cold storage ledger yet.
+                    </p>
+                  </div>
+                </div>
+                {onReconcileCatalog && (
+                  <button
+                    onClick={onReconcileCatalog}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs shrink-0 cursor-pointer shadow-xs transition-colors"
+                  >
+                    Sync All to Inventory
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="bg-emerald-50/80 border border-emerald-200/90 rounded-2xl px-4 py-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-emerald-900">
+                <div className="flex items-center gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="text-[11px] text-emerald-800">
+                    <strong>100% Price Book Accountability:</strong> All {catalogProductsCount} Dual Price Book products have active, traceable lots in cold storage vaults.
+                  </span>
+                </div>
+                {onNavigateToRetail && (
+                  <button
+                    onClick={onNavigateToRetail}
+                    className="text-emerald-700 hover:text-emerald-900 font-bold text-[11px] flex items-center gap-1 cursor-pointer shrink-0"
+                  >
+                    <span>View Dual Price Book</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 2. Executive KPI Metrics Cards */}
@@ -387,6 +465,11 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
             {[
               { id: 'all', label: 'All Lots', count: batches.length },
+              { 
+                id: 'retail_cuts', 
+                label: '🛒 Retail Catalog Lots', 
+                count: batches.filter(b => b.isRetailCutLot || Boolean(b.linkedProductId) || Boolean(b.productSku) || b.id.includes('LOT-RET')).length 
+              },
               { id: 'in_stock', label: 'In Stock', count: batches.filter(b => b.availableWeightKg > 0).length },
               { id: 'low_stock', label: 'Low Stock (<50kg)', count: lowStockCount },
               { id: 'super_cryo', label: 'Super-Cryo (-60°C)', count: superCryoCount },
@@ -672,6 +755,32 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
                       </div>
                     </div>
 
+                    {/* Sales Channel Connection Pill */}
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="text-slate-400 font-medium">Channel:</span>
+                        {batch.isRetailCutLot || batch.linkedProductId || batch.id.startsWith('LOT-RET') ? (
+                          <span className="font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md truncate" title={batch.productSku ? `SKU: ${batch.productSku}` : undefined}>
+                            🛒 Retail Cut {batch.productSku ? `(${batch.productSku})` : ''}
+                          </span>
+                        ) : (
+                          <span className="font-bold text-indigo-700 bg-indigo-50 border border-indigo-100/80 px-2 py-0.5 rounded-md">
+                            Dual (B2B + POS)
+                          </span>
+                        )}
+                      </div>
+                      {onNavigateToRetail && (
+                        <button
+                          onClick={onNavigateToRetail}
+                          className="text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1 text-[11px] cursor-pointer shrink-0 ml-1"
+                          title="View items in Retail & Wholesale catalog"
+                        >
+                          <span>Sell</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+
                   </div>
                 </div>
 
@@ -719,6 +828,7 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
                   <th className="py-3.5 px-4 text-right">Storage Temp</th>
                   <th className="py-3.5 px-4 text-right">Wholesale Price</th>
                   <th className="py-3.5 px-4 text-right">Lot Value</th>
+                  <th className="py-3.5 px-4 text-center">Channels</th>
                   <th className="py-3.5 px-4 text-center">Actions</th>
                 </tr>
               </thead>
@@ -798,6 +908,18 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4 text-center">
+                        {batch.isRetailCutLot || batch.linkedProductId || batch.id.startsWith('LOT-RET') ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200" title={batch.productSku ? `SKU: ${batch.productSku}` : undefined}>
+                            🛒 Retail Cut {batch.productSku ? `(${batch.productSku})` : ''}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                            Dual (B2B/POS)
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-center">
                         <div className="flex items-center justify-center gap-1">
                           <button
                             onClick={() => setInspectingBatch(batch)}
@@ -844,6 +966,7 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
             setInspectingBatch(null);
             setAdjustingBatch(b);
           }}
+          onNavigateToRetail={onNavigateToRetail}
           useImperial={useImperial}
         />
       )}

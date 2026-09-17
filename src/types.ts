@@ -55,6 +55,9 @@ export interface InventoryBatch {
   expiryDate: string;
   qrCodeSeed: string;
   notes: string;
+  linkedProductId?: string;
+  productSku?: string;
+  isRetailCutLot?: boolean;
 }
 
 export type OrderStatus = 
@@ -273,6 +276,8 @@ export interface RetailWholesaleProduct {
   origin: string;
   isAvailableForRetail: boolean;
   isAvailableForWholesale: boolean;
+  linkedBatchId?: string;
+  storageZone?: StorageZone;
 }
 
 export interface RetailSaleItem {

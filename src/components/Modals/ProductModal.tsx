@@ -9,14 +9,16 @@ import {
   Check, 
   AlertCircle,
   Upload,
-  Info
+  Info,
+  Warehouse
 } from 'lucide-react';
 import { 
   RetailWholesaleProduct, 
   InventoryBatch, 
   SeafoodCutType, 
   SpeciesCategory, 
-  QualityGrade 
+  QualityGrade,
+  StorageZone
 } from '../../types';
 import { SPECIES_CATALOG } from '../../data/mockData';
 
@@ -57,6 +59,13 @@ const CATEGORIES: SpeciesCategory[] = [
   'Groundfish',
 ];
 
+const STORAGE_ZONES: StorageZone[] = [
+  'Commercial Cold Storage (-22°C)',
+  'Super-Cryo Deep Freeze (-60°C)',
+  'Fresh Slush Ice (0°C to +2°C)',
+  'Live Seawater Tank (+8°C)',
+];
+
 export const ProductModal: React.FC<ProductModalProps> = ({
   isOpen,
   onClose,
@@ -88,9 +97,12 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const [wholesaleMinQty, setWholesaleMinQty] = useState<number>(editingProduct?.wholesaleMinQty ?? 5);
   const [isAvailableRetail, setIsAvailableRetail] = useState<boolean>(editingProduct?.isAvailableForRetail ?? true);
   const [isAvailableWholesale, setIsAvailableWholesale] = useState<boolean>(editingProduct?.isAvailableForWholesale ?? true);
+  const [storageZone, setStorageZone] = useState<StorageZone>(
+    editingProduct?.storageZone || 'Commercial Cold Storage (-22°C)'
+  );
 
   // Link to an active Inventory Batch Lot (optional helper)
-  const [linkedBatchId, setLinkedBatchId] = useState<string>('');
+  const [linkedBatchId, setLinkedBatchId] = useState<string>(editingProduct?.linkedBatchId || '');
   const [imagePreviewError, setImagePreviewError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -115,6 +127,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       setWholesaleMinQty(editingProduct.wholesaleMinQty);
       setIsAvailableRetail(editingProduct.isAvailableForRetail);
       setIsAvailableWholesale(editingProduct.isAvailableForWholesale);
+      setStorageZone(editingProduct.storageZone || 'Commercial Cold Storage (-22°C)');
+      setLinkedBatchId(editingProduct.linkedBatchId || '');
       setImagePreviewError(false);
     } else {
       setName('');
@@ -134,6 +148,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       setWholesaleMinQty(5);
       setIsAvailableRetail(true);
       setIsAvailableWholesale(true);
+      setStorageZone('Commercial Cold Storage (-22°C)');
       setImagePreviewError(false);
       setLinkedBatchId('');
     }
@@ -248,6 +263,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         origin: origin.trim() || 'Cold-Chain Certified Fleet',
         isAvailableForRetail: isAvailableRetail,
         isAvailableForWholesale: isAvailableWholesale,
+        linkedBatchId: linkedBatchId || undefined,
+        storageZone,
       };
 
       await onSaveProduct(finalProduct);
@@ -513,7 +530,60 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             </div>
           </div>
 
-          {/* Section 4: Dual Price Book Matrix */}
+          {/* Section 4: Inventory Accountability & Cold Storage Vault */}
+          <div className="p-4 bg-gradient-to-r from-emerald-50/70 via-teal-50/50 to-slate-50 border border-emerald-200 rounded-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                <Warehouse className="w-4 h-4 text-emerald-700" />
+                <span>Inventory Ledger Accountability & Cold Storage</span>
+              </label>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                <Check className="w-3 h-3" />
+                Auto-Reflects in Inventory
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              Every retail product automatically registers or updates a traceable lot in the <strong>Inventory Ledger</strong> with <strong>{stockKg} {unit}</strong> of physical stock, cold-vault temperature logging, and synchronized POS sales depletion.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Cold Vault Storage Location
+                </label>
+                <select
+                  value={storageZone}
+                  onChange={(e) => setStorageZone(e.target.value as StorageZone)}
+                  className="w-full text-xs bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                >
+                  {STORAGE_ZONES.map(z => (
+                    <option key={z} value={z}>{z}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Link to Landed Vessel Lot (Optional)
+                </label>
+                <select
+                  value={linkedBatchId}
+                  onChange={(e) => handleSelectBatch(e.target.value)}
+                  className="w-full text-xs bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                >
+                  <option value="">-- Create Dedicated Retail SKU Lot --</option>
+                  {batches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.id} • {b.speciesName} ({b.availableWeightKg} kg available)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 5: Dual Price Book Matrix */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-bold text-slate-900">Dual Pricing & Profit Margins</label>
