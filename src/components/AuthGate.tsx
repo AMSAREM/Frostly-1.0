@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../utils/supabase';
 import { getStaffProfile, signOut as authSignOut, StaffProfile } from '../data/auth';
 import { AuthGateScreen } from './AuthGateScreen';
+import { TenantOnboardingScreen } from './TenantOnboardingScreen';
 
 export interface AuthContextType {
   session: Session | null;
@@ -152,7 +153,21 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     );
   }
 
-  // State 3: Active session - render protected app shell inside AuthContext
+  // State 3: User authenticated but needs workspace initialization / onboarding
+  if (staffProfile?.needs_onboarding) {
+    return (
+      <TenantOnboardingScreen
+        user={session.user}
+        onCompleted={async () => {
+          const profile = await getStaffProfile(true);
+          setStaffProfile(profile);
+        }}
+        onSignOut={handleSignOut}
+      />
+    );
+  }
+
+  // State 4: Active session with provisioned tenant - render protected app shell inside AuthContext
   return (
     <AuthContext.Provider
       value={{

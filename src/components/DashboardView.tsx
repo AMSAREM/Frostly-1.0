@@ -52,6 +52,7 @@ interface DashboardViewProps {
   onOpenNewOrder?: () => void;
   onOpenNewOrderModal?: () => void;
   useImperial: boolean;
+  companyName?: string;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -68,7 +69,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenNewBatch,
   onOpenNewOrder,
   onOpenNewOrderModal,
-  useImperial
+  useImperial,
+  companyName
 }) => {
   const handleOpenOrder = onOpenNewOrder || onOpenNewOrderModal || (() => {});
   // Aggregate Core Metrics
@@ -87,24 +89,34 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalAR = customers.reduce((sum, c) => sum + c.outstandingBalanceUSD, 0);
   const totalAP = suppliers.reduce((sum, s) => sum + s.outstandingPayableUSD, 0);
 
+  const displayCompanyName = companyName || 'Commercial Cold-Chain Operations';
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       {/* Top Welcome Banner & Quick Action Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 sm:p-7 rounded-3xl border border-slate-200 shadow-xs">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 text-xs font-extrabold uppercase tracking-wider border border-emerald-200">
-              Seafood Business ERP Active
+          <div className="flex flex-wrap items-center gap-2">
+            <span 
+              id="dashboard-company-name-pill"
+              className="px-3 py-1 rounded-full bg-indigo-50 text-indigo-900 text-xs font-black uppercase tracking-wider border border-indigo-200 flex items-center gap-1.5 shadow-2xs"
+            >
+              <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span>{displayCompanyName}</span>
             </span>
-            <span className="text-xs text-slate-400 font-mono-code">
-              Pier 38 Commercial Operations Hub
+            <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-xs font-bold border border-emerald-200 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Facility Active</span>
+            </span>
+            <span className="text-xs text-slate-400 font-mono-code hidden md:inline">
+              Cold-Chain Operations Hub
             </span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-heading font-extrabold text-slate-900 tracking-tight mt-1.5">
-            Executive Financials & Supply Chain
+          <h1 className="text-2xl sm:text-3xl font-heading font-extrabold text-slate-900 tracking-tight mt-2">
+            {displayCompanyName}
           </h1>
           <p className="text-xs text-slate-500 mt-1 max-w-2xl">
-            Integrated financials, customer CRM, harvester fleet procurement, and dual-channel retail POS and wholesale distribution.
+            Integrated commercial cold-chain ERP, multi-channel wholesale and retail POS, customer CRM, and automated inventory ledger for <strong>{displayCompanyName}</strong>.
           </p>
         </div>
 

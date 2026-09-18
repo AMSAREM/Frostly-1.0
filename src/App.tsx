@@ -210,19 +210,54 @@ export default function App() {
   const { session, user: currentUser, staffProfile, refreshProfile: handleRefreshProfile, signOut: handleSignOut } = useAuth();
 
   const configuredCreatorEmail = typeof import.meta !== 'undefined' ? import.meta.env?.VITE_DEV_CREATOR_EMAIL : undefined;
+  
+  // A user is a tenant if they belong to an organization workspace
+  const isTenantUser = Boolean(staffProfile?.organization_id);
+
+  // Platform creator console is ONLY for platform owners who do NOT belong to an isolated tenant organization
   const isPlatformCreator = Boolean(
-    (configuredCreatorEmail && currentUser?.email?.toLowerCase() === configuredCreatorEmail.toLowerCase()) ||
+    !isTenantUser &&
+    ((configuredCreatorEmail && currentUser?.email?.toLowerCase() === configuredCreatorEmail.toLowerCase()) ||
     currentUser?.user_metadata?.role === 'platform_creator' ||
     currentUser?.app_metadata?.role === 'platform_creator' ||
-    (staffProfile && (staffProfile.role as string) === 'platform_creator')
+    (staffProfile && (staffProfile.role as string) === 'platform_creator'))
   );
+
+  const showPlatformConsole = Boolean(isPlatformCreator && !isTenantUser);
+
+  // Active workspace company / organization name
+  const companyName =
+    staffProfile?.organization?.name ||
+    staffProfile?.organization_name ||
+    currentUser?.user_metadata?.organization_name ||
+    currentUser?.user_metadata?.org_name ||
+    settings.companyName ||
+    'Sharp Operations';
+
+  // Keep settings.companyName synchronized with active tenant organization name
+  useEffect(() => {
+    const orgName = staffProfile?.organization?.name || staffProfile?.organization_name;
+    if (orgName && settings.companyName !== orgName) {
+      setSettings((prev) => ({
+        ...prev,
+        companyName: orgName,
+      }));
+    }
+  }, [staffProfile?.organization?.name, staffProfile?.organization_name, settings.companyName]);
+
+  // CRITICAL: Tenants MUST NEVER be redirected to creator platform - enforce tenant's own workspace
+  useEffect(() => {
+    if (isTenantUser && activeTab === 'platform') {
+      setActiveTab('dashboard');
+    }
+  }, [isTenantUser, activeTab]);
 
   // If Creator logs in without a tenant organization, default directly to the Platform Console
   useEffect(() => {
-    if (isPlatformCreator && !staffProfile?.organization_id) {
+    if (isPlatformCreator && !isTenantUser && staffProfile !== null) {
       setActiveTab((prev) => (prev === 'dashboard' ? 'platform' : prev));
     }
-  }, [isPlatformCreator, staffProfile?.organization_id]);
+  }, [isPlatformCreator, isTenantUser, staffProfile]);
 
   // Hydrate batches from repository on mount and when authenticated session changes
   useEffect(() => {
@@ -1405,8 +1440,10 @@ export default function App() {
         isOnline={isOnline}
         onSignOut={handleSignOut}
         isAuthenticated={Boolean(currentUser)}
-        userRole={isPlatformCreator ? 'Platform Creator' : (staffProfile?.role ?? (currentUser ? 'Staff' : null))}
+        userRole={showPlatformConsole ? 'Platform Creator' : (staffProfile?.role ?? (currentUser ? 'Staff' : null))}
         userEmail={currentUser?.email ?? null}
+        showPlatformConsole={showPlatformConsole}
+        companyName={companyName}
       />
 
       {/* Organization Licensing & Grace Period Status Alert Bar */}
@@ -1471,6 +1508,7 @@ export default function App() {
             onOpenNewBatch={() => setIsNewBatchModalOpen(true)}
             onOpenNewOrderModal={() => setIsNewOrderModalOpen(true)}
             useImperial={useImperial}
+            companyName={companyName}
           />
         )}
 
@@ -1559,12 +1597,13 @@ export default function App() {
             financialEntries={financialEntries}
             staffProfile={staffProfile}
             onRefreshProfile={handleRefreshProfile}
+            showPlatformConsole={showPlatformConsole}
             onRestoreAllData={handleRestoreAllData}
             onResetToDefaults={handleResetToDefaults}
           />
         )}
 
-        {activeTab === 'platform' && (
+        {activeTab === 'platform' && showPlatformConsole && (
           <PlatformConsoleView onClose={() => setActiveTab('dashboard')} />
         )}
       </main>

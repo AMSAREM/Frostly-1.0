@@ -3,8 +3,18 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
+
+function getSupabaseAdmin() {
+  const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
 
 function maskEmail(email: string): string {
   const [user, domain] = email.split('@');
@@ -281,6 +291,241 @@ async function startServer() {
         sentDirectly: false,
         error: err?.message || 'Google SMTP dispatch encountered an error',
       });
+    }
+  });
+
+  // Direct Backend Tenant & User Provisioning Endpoint (bypasses failing Supabase internal SMTP)
+  app.post('/api/auth/register-tenant', async (req, res) => {
+    const {
+      email,
+      password,
+      orgName,
+      adminFullName,
+      adminDepartment = 'Executive',
+      facilityType = 'cold_storage',
+      facilityCode,
+      currency = 'GHS',
+      primaryPort = 'Port of Tema & Pier 38 Fishing Harbour',
+      websiteUrl,
+    } = req.body;
+
+    if (!email || !password || !orgName) {
+      res.status(400).json({ error: 'Email, password, and organization name are required.' });
+      return;
+    }
+
+    const adminClient = getSupabaseAdmin();
+    if (!adminClient) {
+      res.status(500).json({ error: 'Supabase admin client is not configured on the server.' });
+      return;
+    }
+
+    try {
+      const cleanEmail = email.trim().toLowerCase();
+      const cleanOrgName = orgName.trim();
+      const cleanAdminName = (adminFullName || cleanEmail.split('@')[0]).trim();
+      const cleanDept = (adminDepartment || 'Executive').trim();
+
+      // 1. Enforce unique email: no two persons or organizations can use the same email address
+      let userId: string | null = null;
+      const { data: userList } = await adminClient.auth.admin.listUsers();
+      const existingUser = userList?.users?.find(
+        (u) => u.email?.toLowerCase() === cleanEmail
+      );
+
+      const { data: existingStaff } = await adminClient
+        .from('staff_profiles')
+        .select('id, email, organization_id')
+        .ilike('email', cleanEmail)
+        .maybeSingle();
+
+      if (existingUser || existingStaff) {
+        res.status(409).json({
+          error: 'An account with this email address already exists. Each person must use a unique email address. Please sign in to your workspace or use a different work email.',
+        });
+        return;
+      }
+
+      // Create user in auth.users with email_confirm: true
+      const { data: newUser, error: createErr } = await adminClient.auth.admin.createUser({
+        email: cleanEmail,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          full_name: cleanAdminName,
+          department: cleanDept,
+          organization_name: cleanOrgName,
+          org_name: cleanOrgName,
+          role: 'admin',
+          facility_type: facilityType,
+          facility_code: facilityCode,
+          currency,
+          primary_port: primaryPort,
+        },
+      });
+
+      if (createErr || !newUser.user) {
+        throw new Error(createErr?.message || 'Failed to create user in Supabase auth.');
+      }
+      userId = newUser.user.id;
+
+      // 2. Create organization in public.organizations with 14-day starter trial & 5 seats
+      const { data: org, error: orgErr } = await adminClient
+        .from('organizations')
+        .insert({
+          name: cleanOrgName,
+          plan_tier: 'starter',
+          subscription_status: 'trial',
+          trial_ends_at: new Date(Date.now() + 14 * 86400000).toISOString(),
+          max_staff_seats: 5,
+          billing_currency: currency,
+        })
+        .select()
+        .single();
+
+      if (orgErr || !org) {
+        throw new Error(orgErr?.message || 'Failed to insert organization in Supabase database.');
+      }
+
+      // 3. Upsert staff profile for admin
+      const { error: staffErr } = await adminClient
+        .from('staff_profiles')
+        .upsert({
+          id: userId,
+          organization_id: org.id,
+          email: cleanEmail,
+          full_name: cleanAdminName,
+          role: 'admin',
+          department: cleanDept,
+          is_active: true,
+        });
+
+      if (staffErr) {
+        console.warn('[Register Tenant] Warning on staff profile upsert:', staffErr);
+      }
+
+      // 4. Seed app_settings for organization
+      const derivedFacilityCode = facilityCode?.trim() || `FAC-${cleanOrgName.substring(0, 3).toUpperCase()}-01`;
+      await adminClient.from('app_settings').upsert({
+        organization_id: org.id,
+        company_name: cleanOrgName,
+        facility_code: derivedFacilityCode,
+        primary_port: primaryPort,
+        currency: currency,
+        tax_rate: 15.0,
+        fda_registration_number: `FDA-REG-${cleanOrgName.substring(0, 5).toUpperCase()}01`,
+        eu_approval_number: `EU-APPR-${cleanOrgName.substring(0, 5).toUpperCase()}01`,
+      });
+
+      // 5. Send Google SMTP Confirmation / Welcome Email
+      const transporter = getGoogleSmtpTransporter();
+      if (transporter) {
+        const fromUser = process.env.GOOGLE_SMTP_FROM_EMAIL || process.env.GOOGLE_SMTP_USER;
+        const fromName = process.env.GOOGLE_SMTP_FROM_NAME || 'Frostly Seafood Platform';
+        const originHeader = typeof req.headers.origin === 'string' ? req.headers.origin : '';
+        const refererHeader = typeof req.headers.referer === 'string' ? req.headers.referer : '';
+        let detectedOrigin = originHeader;
+        if (!detectedOrigin && refererHeader) {
+          try {
+            detectedOrigin = new URL(refererHeader).origin;
+          } catch {}
+        }
+        if (!detectedOrigin && req.headers.host) {
+          detectedOrigin = `${req.protocol || 'https'}://${req.headers.host}`;
+        }
+        const targetWebsite = websiteUrl || detectedOrigin || 'https://frostly.io';
+        const activationUrl = `${targetWebsite}?activated=true&email=${encodeURIComponent(cleanEmail)}&org=${encodeURIComponent(cleanOrgName)}`;
+
+        transporter.sendMail({
+          from: `"${fromName}" <${fromUser}>`,
+          to: cleanEmail,
+          subject: `❄️ Activation of this website: Welcome to ${cleanOrgName} - Frostly`,
+          text: `Welcome ${cleanAdminName}!\n\nYour organization workspace for ${cleanOrgName} has been initialized in Supabase.\nWebsite: ${targetWebsite}\nActivation URL: ${activationUrl}\nAdministrator: ${cleanEmail}\nFacility Code: ${derivedFacilityCode}`,
+          html: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 580px; margin: 0 auto; padding: 32px 24px; border: 1px solid #e2e8f0; border-radius: 20px; background-color: #ffffff; color: #0f172a;">
+              <div style="display: flex; align-items: center; margin-bottom: 24px;">
+                <span style="font-size: 26px; margin-right: 10px;">❄️</span>
+                <strong style="font-size: 20px; color: #0f172a;">Frostly Seafood Platform</strong>
+              </div>
+              <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 14px; padding: 18px 20px; margin-bottom: 24px;">
+                <div style="display: inline-block; background-color: #16a34a; color: #ffffff; font-size: 10px; font-weight: 800; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; margin-bottom: 8px;">
+                  Workspace Ready
+                </div>
+                <h2 style="font-size: 17px; color: #14532d; font-weight: 700; margin: 0 0 6px 0;">
+                  Organization Created in Supabase
+                </h2>
+                <p style="font-size: 13px; color: #15803d; margin: 0;">
+                  Your organization <strong>${cleanOrgName}</strong> has been registered with 14 days Starter trial access.
+                </p>
+              </div>
+              <p style="font-size: 14px; color: #334155; line-height: 1.6; margin: 0 0 20px 0;">
+                Hello <strong>${cleanAdminName}</strong>, your workspace has been configured. Click below to sign in:
+              </p>
+              <div style="margin: 28px 0; text-align: left;">
+                <a href="${activationUrl}" style="background-color: #4f46e5; color: #ffffff; text-decoration: none; font-weight: 700; font-size: 14px; padding: 14px 28px; border-radius: 12px; display: inline-block;">
+                  Sign In to ${cleanOrgName} Workspace
+                </a>
+              </div>
+              <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin: 24px 0; font-size: 12px; color: #475569;">
+                <div><strong>Website:</strong> ${targetWebsite}</div>
+                <div><strong>Organization:</strong> ${cleanOrgName}</div>
+                <div><strong>Admin:</strong> ${cleanEmail}</div>
+                <div><strong>Facility Code:</strong> ${derivedFacilityCode}</div>
+              </div>
+            </div>
+          `,
+        }).catch(console.warn);
+      }
+
+      res.json({
+        success: true,
+        organization: org,
+        userId,
+        message: `Organization "${cleanOrgName}" successfully created in Supabase.`,
+      });
+    } catch (err: any) {
+      console.error('[Register Tenant Error]:', err);
+      res.status(500).json({ error: err?.message || 'Failed to register organization' });
+    }
+  });
+
+  // Activate / Set Password Endpoint for Email-Activated Users
+  app.post('/api/auth/set-password-and-activate', async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      res.status(400).json({ error: 'Email and new password are required.' });
+      return;
+    }
+    const adminClient = getSupabaseAdmin();
+    if (!adminClient) {
+      res.status(500).json({ error: 'Supabase admin service is not configured.' });
+      return;
+    }
+
+    try {
+      const cleanEmail = email.trim().toLowerCase();
+      const { data: userList } = await adminClient.auth.admin.listUsers();
+      const targetUser = userList?.users?.find(
+        (u) => u.email?.toLowerCase() === cleanEmail
+      );
+
+      if (!targetUser) {
+        res.status(404).json({ error: `No account found for ${cleanEmail}.` });
+        return;
+      }
+
+      const { error: updateErr } = await adminClient.auth.admin.updateUserById(targetUser.id, {
+        password: password,
+        email_confirm: true,
+      });
+
+      if (updateErr) {
+        throw updateErr;
+      }
+
+      res.json({ success: true, message: 'Password updated and account activated successfully.' });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to set password.' });
     }
   });
 

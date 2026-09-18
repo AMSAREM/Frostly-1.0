@@ -24,6 +24,7 @@ export interface StaffProfile {
   role: 'admin' | 'ops_staff' | 'sales_staff' | 'dispatch_staff' | 'viewer';
   department?: string;
   is_active: boolean;
+  needs_onboarding?: boolean;
 }
 
 /**
@@ -167,30 +168,32 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       user.user_metadata?.role === 'platform_creator' || 
       user.app_metadata?.role === 'platform_creator';
     const fallbackRole = isCreator ? 'admin' : (user.user_metadata?.role || 'admin');
+    const isUnprovisioned = !profileData && !isCreator;
 
     const defaultOrg: TenantOrganization = {
-      id: profileData?.organization_id || 'org-frostly-hq',
-      name: orgData?.name || 'Frostly Seafood Operations',
-      plan_tier: orgData?.plan_tier || 'enterprise',
-      subscription_status: orgData?.subscription_status || 'active',
-      trial_ends_at: orgData?.trial_ends_at,
+      id: profileData?.organization_id || (isUnprovisioned ? '' : 'org-frostly-hq'),
+      name: orgData?.name || user.user_metadata?.organization_name || (isUnprovisioned ? '' : 'Frostly Seafood Operations'),
+      plan_tier: orgData?.plan_tier || 'starter',
+      subscription_status: orgData?.subscription_status || 'trial',
+      trial_ends_at: orgData?.trial_ends_at || new Date(Date.now() + 14 * 86400000).toISOString(),
       current_period_ends_at: orgData?.current_period_ends_at,
-      max_staff_seats: orgData?.max_staff_seats || 50,
+      max_staff_seats: orgData?.max_staff_seats || 5,
     };
 
     cachedStaffProfile = {
       id: profileData?.id || user.id,
-      organization_id: profileData?.organization_id || 'org-frostly-hq',
-      organization_name: orgData?.name || 'Frostly Seafood Operations',
+      organization_id: profileData?.organization_id || (isUnprovisioned ? '' : 'org-frostly-hq'),
+      organization_name: orgData?.name || user.user_metadata?.organization_name || (isUnprovisioned ? '' : 'Frostly Seafood Operations'),
       organization: defaultOrg,
       email: profileData?.email || user.email || '',
       full_name: profileData?.full_name || user.user_metadata?.full_name || (user.email?.split('@')[0] ?? 'Staff User'),
       role: (profileData?.role as any) || fallbackRole,
-      department: profileData?.department || user.user_metadata?.department || 'Operations',
+      department: profileData?.department || user.user_metadata?.department || 'Executive',
       is_active: profileData?.is_active ?? true,
+      needs_onboarding: isUnprovisioned,
     };
 
-    if (cachedStaffProfile.organization_id && cachedStaffProfile.organization_id !== 'org-frostly-hq') {
+    if (cachedStaffProfile.organization_id && cachedStaffProfile.organization_id !== 'org-frostly-hq' && !isUnprovisioned) {
       try {
         localStorage.setItem('frostly_active_org_id', cachedStaffProfile.organization_id);
       } catch {}
@@ -345,6 +348,13 @@ export function onAuthStateChange(
   };
 }
 
+export interface CreateOrgCustomOptions {
+  facilityCode?: string;
+  currency?: 'GHS' | 'USD' | 'EUR' | 'GBP' | 'JPY' | 'CAD' | 'AUD';
+  facilityType?: string;
+  primaryPort?: string;
+}
+
 /**
  * Creates an organization and assigns the current authenticated user as its administrator.
  * Calls SECURITY DEFINER function public.create_organization_and_admin
@@ -352,10 +362,41 @@ export function onAuthStateChange(
 export async function createOrganizationAndAdmin(
   orgName: string,
   adminFullName?: string,
-  adminDepartment?: string
+  adminDepartment?: string,
+  options?: CreateOrgCustomOptions
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   if (!isSupabaseConfigured) {
-    return { success: false, error: 'Supabase client is not configured' };
+    // Offline / Local Simulation Mode:
+    const mockOrgId = 'org-local-' + Math.random().toString(36).substring(2, 9);
+    const mockOrg: TenantOrganization = {
+      id: mockOrgId,
+      name: orgName,
+      plan_tier: 'starter',
+      subscription_status: 'trial',
+      trial_ends_at: new Date(Date.now() + 14 * 86400000).toISOString(),
+      max_staff_seats: 5,
+    };
+    try {
+      localStorage.setItem('frostly_active_org_id', mockOrgId);
+      const existingSettingsStr = localStorage.getItem('frostly_settings_v2');
+      const existingSettings = existingSettingsStr ? JSON.parse(existingSettingsStr) : {};
+      localStorage.setItem('frostly_settings_v2', JSON.stringify({
+        ...existingSettings,
+        companyName: orgName,
+        facilityCode: options?.facilityCode || `FAC-${orgName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase()}-01`,
+        currency: options?.currency || existingSettings.currency || 'GHS',
+        primaryPort: options?.primaryPort || existingSettings.primaryPort || 'Port of Tema & Pier 38 Fishing Harbour',
+      }));
+    } catch {}
+
+    if (cachedStaffProfile) {
+      cachedStaffProfile.organization_id = mockOrgId;
+      cachedStaffProfile.organization_name = orgName;
+      cachedStaffProfile.organization = mockOrg;
+      cachedStaffProfile.role = 'admin';
+      cachedStaffProfile.needs_onboarding = false;
+    }
+    return { success: true, data: { organization_id: mockOrgId, organization_name: orgName } };
   }
 
   try {
@@ -367,6 +408,39 @@ export async function createOrganizationAndAdmin(
 
     if (error) {
       return { success: false, error: error.message };
+    }
+
+    const orgId = (data as any)?.organization_id || (data as any)?.id;
+    if (orgId) {
+      try {
+        localStorage.setItem('frostly_active_org_id', orgId);
+      } catch {}
+    }
+
+    // Apply custom facility defaults if options provided
+    try {
+      const existingSettingsStr = localStorage.getItem('frostly_settings_v2');
+      const existingSettings = existingSettingsStr ? JSON.parse(existingSettingsStr) : {};
+      localStorage.setItem('frostly_settings_v2', JSON.stringify({
+        ...existingSettings,
+        companyName: orgName,
+        facilityCode: options?.facilityCode || `FAC-${orgName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase()}-01`,
+        currency: options?.currency || existingSettings.currency || 'GHS',
+        primaryPort: options?.primaryPort || existingSettings.primaryPort || 'Port of Tema & Pier 38 Fishing Harbour',
+      }));
+
+      if (orgId) {
+        await supabase.from('app_settings').upsert({
+          organization_id: orgId,
+          company_name: orgName,
+          facility_code: options?.facilityCode || `FAC-${orgName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase()}-01`,
+          currency: options?.currency || 'GHS',
+          primary_port: options?.primaryPort || 'Port of Tema & Pier 38 Fishing Harbour',
+          updated_at: new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      console.warn('[Auth] Error setting custom facility defaults:', err);
     }
 
     await getStaffProfile(true);
@@ -420,9 +494,44 @@ export async function createInvite(
     return { success: false, error: 'Supabase client is not configured' };
   }
 
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    return { success: false, error: 'A valid email address is required.' };
+  }
+
   try {
+    // Enforce unique email: check if a staff member already exists with this email
+    const { data: existingStaff } = await supabase
+      .from('staff_profiles')
+      .select('id, email')
+      .ilike('email', cleanEmail)
+      .maybeSingle();
+
+    if (existingStaff) {
+      return {
+        success: false,
+        error: 'This email address is already assigned to an existing staff member in the platform. No two persons can use the same email address.',
+      };
+    }
+
+    // Check if an unexpired invitation is already pending for this email
+    const { data: existingInvite } = await supabase
+      .from('invites')
+      .select('id, email, expires_at, used_at')
+      .ilike('email', cleanEmail)
+      .is('used_at', null)
+      .gt('expires_at', new Date().toISOString())
+      .maybeSingle();
+
+    if (existingInvite) {
+      return {
+        success: false,
+        error: 'An active invitation has already been issued to this email address.',
+      };
+    }
+
     const { data, error } = await supabase.rpc('create_invite', {
-      p_email: email.trim(),
+      p_email: cleanEmail,
       p_role: role,
       p_validity_days: validityDays,
     });
@@ -455,13 +564,81 @@ export async function signUpAndCreateOrganization(
   password: string,
   orgName: string,
   adminFullName: string,
-  adminDepartment = 'Executive'
+  adminDepartment = 'Executive',
+  options?: CreateOrgCustomOptions
 ): Promise<{ session: Session | null; profile: StaffProfile | null; error: string | null }> {
   if (!isSupabaseConfigured) {
-    return { session: null, profile: null, error: 'Supabase client is not configured' };
+    const orgRes = await createOrganizationAndAdmin(orgName, adminFullName, adminDepartment, options);
+    if (!orgRes.success) {
+      return { session: null, profile: null, error: orgRes.error || 'Failed to create organization' };
+    }
+    const mockProfile: StaffProfile = {
+      id: 'usr-local-' + Math.random().toString(36).substring(2, 9),
+      organization_id: orgRes.data?.organization_id || 'org-local-1',
+      organization_name: orgName,
+      email,
+      full_name: adminFullName || email.split('@')[0],
+      role: 'admin',
+      department: adminDepartment,
+      is_active: true,
+      needs_onboarding: false,
+    };
+    cachedStaffProfile = mockProfile;
+    return { session: null, profile: mockProfile, error: null };
   }
 
   try {
+    // 1. First attempt direct server-side tenant provisioning (guarantees DB insertion and avoids Supabase internal SMTP 500 errors)
+    try {
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const regResp = await fetch('/api/auth/register-tenant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email.trim(),
+          password,
+          orgName: orgName.trim(),
+          adminFullName: adminFullName.trim() || email.trim().split('@')[0],
+          adminDepartment,
+          facilityType: options?.facilityType || 'cold_storage',
+          facilityCode: options?.facilityCode,
+          currency: options?.currency || 'GHS',
+          primaryPort: options?.primaryPort || 'Port of Tema & Pier 38 Fishing Harbour',
+          websiteUrl: origin,
+        }),
+      });
+
+      if (!regResp.ok) {
+        const regData = await regResp.json().catch(() => ({}));
+        return {
+          session: null,
+          profile: null,
+          error: regData.error || 'Failed to register organization. Please check details and try again.',
+        };
+      }
+
+      const regData = await regResp.json();
+      if (regData.success) {
+        // Immediately sign in with the configured credentials to acquire user session
+        const signInRes = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+
+        if (signInRes.data.session) {
+          cachedSession = signInRes.data.session;
+          const profile = await getStaffProfile(true);
+          return { session: signInRes.data.session, profile, error: null };
+        }
+      }
+    } catch (backendErr: any) {
+      if (backendErr && typeof backendErr.message === 'string' && backendErr.message.includes('already exists')) {
+        return { session: null, profile: null, error: backendErr.message };
+      }
+      console.warn('[Auth] Backend tenant registration fallback to client-side:', backendErr);
+    }
+
+    // 2. Client-side fallback if server-side endpoint is unreachable
     const redirectUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
     const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
       email,
@@ -474,12 +651,23 @@ export async function signUpAndCreateOrganization(
           organization_name: orgName,
           org_name: orgName,
           role: 'admin',
+          facility_type: options?.facilityType || 'cold_storage',
+          facility_code: options?.facilityCode,
+          currency: options?.currency || 'GHS',
+          primary_port: options?.primaryPort || 'Port of Tema & Pier 38 Fishing Harbour',
         },
       },
     });
 
     if (signUpErr) {
-      return { session: null, profile: null, error: signUpErr.message };
+      const isDuplicate = signUpErr.message.toLowerCase().includes('already registered') || signUpErr.message.toLowerCase().includes('already exists');
+      return {
+        session: null,
+        profile: null,
+        error: isDuplicate
+          ? 'An account with this email address already exists. Each person must use a unique email address. Please sign in or use a different work email.'
+          : signUpErr.message,
+      };
     }
 
     if (!signUpData.session) {
@@ -493,7 +681,7 @@ export async function signUpAndCreateOrganization(
 
     cachedSession = signUpData.session;
 
-    const orgRes = await createOrganizationAndAdmin(orgName, adminFullName, adminDepartment);
+    const orgRes = await createOrganizationAndAdmin(orgName, adminFullName, adminDepartment, options);
     if (!orgRes.success) {
       return { session: signUpData.session, profile: null, error: orgRes.error || 'Failed to create organization' };
     }
@@ -502,6 +690,29 @@ export async function signUpAndCreateOrganization(
     return { session: signUpData.session, profile, error: null };
   } catch (e: any) {
     return { session: null, profile: null, error: e?.message || 'Organization registration failed' };
+  }
+}
+
+/**
+ * Set password and activate account for users arriving from an activation email link
+ */
+export async function setPasswordAndActivate(
+  email: string,
+  newPassword: string
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const resp = await fetch('/api/auth/set-password-and-activate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim(), password: newPassword }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.success) {
+      return { success: false, error: data.error || 'Failed to update password' };
+    }
+    return { success: true, error: null };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error updating password' };
   }
 }
 

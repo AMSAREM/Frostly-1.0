@@ -14,8 +14,15 @@ import {
   KeyRound,
   ShieldCheck,
   MailCheck,
-  Server
+  Server,
+  Fish,
+  ThermometerSnowflake,
+  Ship,
+  Truck,
+  Coins,
+  Sparkles
 } from 'lucide-react';
+import { FacilityOperationType } from '../types';
 import { GoogleSmtpModal } from './GoogleSmtpModal';
 import { sendDirectGoogleSmtpConfirmation } from '../services/googleSmtpService';
 import { 
@@ -25,6 +32,7 @@ import {
   signUpAndCreateOrganization, 
   signUpAndAcceptInvite,
   resendConfirmationEmail,
+  setPasswordAndActivate,
   DEFAULT_TEST_USER_EMAIL,
   DEFAULT_TEST_USER_PASSWORD,
   DEFAULT_CREATOR_EMAIL,
@@ -47,8 +55,20 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
 
   // Create Org inputs
   const [orgName, setOrgName] = useState('');
+  const [facilityType, setFacilityType] = useState<FacilityOperationType>('cold_storage');
+  const [currency, setCurrency] = useState<'GHS' | 'USD' | 'EUR' | 'GBP'>('GHS');
+  const [facilityCode, setFacilityCode] = useState('FAC-TEM-01');
+  const [primaryPort, setPrimaryPort] = useState('Port of Tema & Pier 38 Fishing Harbour');
   const [adminFullName, setAdminFullName] = useState('');
   const [adminDepartment, setAdminDepartment] = useState('Executive');
+
+  const handleOrgNameChange = (val: string) => {
+    setOrgName(val);
+    const letters = val.replace(/[^a-zA-Z]/g, '').substring(0, 3).toUpperCase();
+    if (letters.length >= 2) {
+      setFacilityCode(`FAC-${letters}-01`);
+    }
+  };
 
   // Accept Invite inputs
   const [inviteToken, setInviteToken] = useState('');
@@ -62,10 +82,42 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
   const [resendErrorMessage, setResendErrorMessage] = useState<string | null>(null);
   const [showSmtpModal, setShowSmtpModal] = useState(false);
 
+  // Email activation link landing state
+  const [activationNotice, setActivationNotice] = useState<{
+    isActivated: boolean;
+    email: string;
+    org?: string;
+  } | null>(null);
+  const [isSettingPassword, setIsSettingPassword] = useState(false);
+  const [newPasswordVal, setNewPasswordVal] = useState('');
+  const [confirmPasswordVal, setConfirmPasswordVal] = useState('');
+  const [passwordUpdatedSuccess, setPasswordUpdatedSuccess] = useState(false);
+
   // UI state
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+  // Parse activation query parameters on mount (?activated=true&email=...)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const isAct = params.get('activated') === 'true';
+      const emailParam = params.get('email');
+      const orgParam = params.get('org');
+
+      if (isAct && emailParam) {
+        setMode('login');
+        setEmail(emailParam);
+        setActivationNotice({
+          isActivated: true,
+          email: emailParam,
+          org: orgParam || 'Sharp',
+        });
+      }
+    } catch {}
+  }, []);
 
   // Monitor network connectivity
   useEffect(() => {
@@ -86,6 +138,44 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
     setErrorMessage(null);
     setResendSuccessMessage(null);
     setResendErrorMessage(null);
+  };
+
+  // Handler for setting / updating password and signing in directly from activation notice
+  const handleSetPasswordAndLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPasswordVal || newPasswordVal.length < 6) {
+      setErrorMessage('Password must be at least 6 characters.');
+      return;
+    }
+    if (newPasswordVal !== confirmPasswordVal) {
+      setErrorMessage('Passwords do not match.');
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await setPasswordAndActivate(email.trim(), newPasswordVal);
+      if (!res.success) {
+        setErrorMessage(res.error || 'Failed to update password.');
+        return;
+      }
+      setPasswordUpdatedSuccess(true);
+      setPassword(newPasswordVal);
+      
+      // Automatically sign in with newly set credentials
+      const loginRes = await signIn(email.trim(), newPasswordVal);
+      if (loginRes.error) {
+        setErrorMessage(loginRes.error);
+      } else {
+        if (onAuthSuccess) onAuthSuccess();
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Failed to set password and sign in.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Sign In Handler
@@ -190,15 +280,20 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
         password,
         orgName.trim(),
         adminFullName.trim() || email.trim().split('@')[0],
-        adminDepartment.trim() || 'Executive'
+        adminDepartment.trim() || 'Executive',
+        {
+          facilityType,
+          facilityCode: facilityCode.trim(),
+          currency,
+          primaryPort: primaryPort.trim()
+        }
       );
 
       if (res.error) {
         // If email confirmation is required by Supabase settings, show confirmation screen
         if (
           res.error.toLowerCase().includes('confirmation') ||
-          res.error.toLowerCase().includes('confirm your email') ||
-          !res.session
+          res.error.toLowerCase().includes('confirm your email')
         ) {
           setPendingEmail(email.trim());
           setMode('pending_confirmation');
@@ -213,16 +308,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
         } else {
           setErrorMessage(res.error);
         }
-      } else if (!res.session) {
-        setPendingEmail(email.trim());
-        setMode('pending_confirmation');
-        sendDirectGoogleSmtpConfirmation({
-          email: email.trim(),
-          orgName: orgName.trim(),
-          adminName: adminFullName.trim(),
-          websiteUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
-          confirmationUrl: typeof window !== 'undefined' ? `${window.location.origin}?activated=true&email=${encodeURIComponent(email.trim())}` : undefined,
-        }).catch(console.warn);
       } else {
         if (onAuthSuccess) onAuthSuccess();
       }
@@ -390,8 +475,23 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
           {errorMessage && (
             <div className="mb-5 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5">
               <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <div className="leading-relaxed font-medium">
-                {errorMessage}
+              <div className="leading-relaxed font-medium w-full">
+                <div>{errorMessage}</div>
+                {(errorMessage.includes('unique email') || errorMessage.includes('already exists')) && mode === 'create_org' && (
+                  <div className="mt-2 pt-2 border-t border-rose-200/70 flex items-center justify-between">
+                    <span className="text-[11px] text-rose-700">Already registered?</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorMessage(null);
+                        setMode('login');
+                      }}
+                      className="text-xs font-bold text-indigo-700 underline hover:text-indigo-900 cursor-pointer"
+                    >
+                      Sign In to Workspace →
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -501,6 +601,25 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
           ) : mode === 'login' ? (
             /* FORM 1: LOG IN */
             <form onSubmit={handleLogin} className="space-y-4">
+              {/* Activation Notice Banner if arrived via email link */}
+              {activationNotice?.isActivated && (
+                <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-950 space-y-1.5 animate-in fade-in duration-300">
+                  <div className="flex items-center gap-2 font-bold text-emerald-800">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Website Activation Link Verified</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-800 leading-relaxed">
+                    Your account for <strong>{activationNotice.email}</strong> is activated!
+                    {activationNotice.org ? ` Organization "${activationNotice.org}" is ready in Supabase.` : ''}
+                  </p>
+                  {passwordUpdatedSuccess && (
+                    <p className="text-[11px] font-semibold text-emerald-700 bg-emerald-100/70 px-2 py-1 rounded-md">
+                      ✓ Password saved! You can now log in below.
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">
                   Work Email
@@ -518,52 +637,130 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Password
-                </label>
-                <div className="relative">
-                  <input
-                    id="auth-gate-password-input"
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    autoComplete="current-password"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    disabled={isLoading}
-                    className="w-full px-3.5 py-2.5 pr-10 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 focus:border-indigo-600 transition-colors disabled:opacity-50"
-                  />
+              {!isSettingPassword ? (
+                <>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="auth-gate-password-input"
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        autoComplete="current-password"
+                        placeholder="••••••••"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        disabled={isLoading}
+                        className="w-full px-3.5 py-2.5 pr-10 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 focus:border-indigo-600 transition-colors disabled:opacity-50"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-1"
+                        title={showPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showPassword ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
                   <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-1"
-                    title={showPassword ? 'Hide password' : 'Show password'}
+                    id="auth-gate-login-button"
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 mt-2"
                   >
-                    {showPassword ? (
-                      <EyeOff className="w-4 h-4" />
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-white" />
+                        <span>Signing in...</span>
+                      </>
                     ) : (
-                      <Eye className="w-4 h-4" />
+                      <span>Log In to Workspace</span>
                     )}
                   </button>
-                </div>
-              </div>
 
-              <button
-                id="auth-gate-login-button"
-                type="submit"
-                disabled={isLoading}
-                className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 mt-2"
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin text-white" />
-                    <span>Signing in...</span>
-                  </>
-                ) : (
-                  <span>Log In</span>
-                )}
-              </button>
+                  {/* Toggle to set/reset password for activated user */}
+                  {activationNotice?.isActivated && (
+                    <div className="text-center pt-1">
+                      <button
+                        type="button"
+                        id="btn-toggle-set-password"
+                        onClick={() => setIsSettingPassword(true)}
+                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium underline underline-offset-2 cursor-pointer"
+                      >
+                        Need to set or update your password? Click here
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                /* Sub-form: Set New Password */
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                  <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Set New Password for {email}</span>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      New Password (min 6 characters)
+                    </label>
+                    <input
+                      id="auth-gate-new-password-input"
+                      type="password"
+                      placeholder="••••••••"
+                      value={newPasswordVal}
+                      onChange={(e) => setNewPasswordVal(e.target.value)}
+                      disabled={isLoading}
+                      className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Confirm New Password
+                    </label>
+                    <input
+                      id="auth-gate-confirm-password-input"
+                      type="password"
+                      placeholder="••••••••"
+                      value={confirmPasswordVal}
+                      onChange={(e) => setConfirmPasswordVal(e.target.value)}
+                      disabled={isLoading}
+                      className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-600"
+                    />
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setIsSettingPassword(false)}
+                      disabled={isLoading}
+                      className="flex-1 py-2 px-3 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium rounded-lg transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      id="btn-submit-new-password"
+                      onClick={handleSetPasswordAndLogin}
+                      disabled={isLoading}
+                      className="flex-2 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+                    >
+                      {isLoading ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                      )}
+                      <span>Set Password &amp; Sign In</span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Dev-Only Quick Login Buttons & Credentials Box (Strictly Local DEV guarded) */}
               {import.meta.env.DEV && Boolean(DEFAULT_CREATOR_EMAIL || DEFAULT_TEST_USER_EMAIL) && (
@@ -674,26 +871,133 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
           ) : mode === 'create_org' ? (
             /* FORM 2: CREATE ORGANIZATION (In-Place Swap) */
             <form onSubmit={handleCreateOrg} className="space-y-3.5">
+              {/* Organization Name */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Organization Name *
+                  Organization / Company Legal Name *
                 </label>
-                <input
-                  id="auth-gate-create-org-name"
-                  type="text"
-                  required
-                  placeholder="e.g. Tema Cold Store Ltd"
-                  value={orgName}
-                  onChange={(e) => setOrgName(e.target.value)}
-                  disabled={isLoading}
-                  className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 focus:border-indigo-600 transition-colors disabled:opacity-50"
-                />
+                <div className="relative">
+                  <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    id="auth-gate-create-org-name"
+                    type="text"
+                    required
+                    placeholder="e.g. Tema Marine Cold Storage Ltd"
+                    value={orgName}
+                    onChange={(e) => handleOrgNameChange(e.target.value)}
+                    disabled={isLoading}
+                    className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 focus:border-indigo-600 transition-colors disabled:opacity-50"
+                  />
+                </div>
+              </div>
+
+              {/* Facility Classification Selector */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Primary Facility Type
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    id="auth-gate-facility-cold-storage"
+                    onClick={() => setFacilityType('cold_storage')}
+                    className={`p-2 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2 ${
+                      facilityType === 'cold_storage'
+                        ? 'bg-indigo-50/80 border-indigo-600 text-indigo-950 font-semibold ring-1 ring-indigo-600/30'
+                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <ThermometerSnowflake className={`w-4 h-4 shrink-0 ${facilityType === 'cold_storage' ? 'text-indigo-600' : 'text-slate-400'}`} />
+                    <span className="text-[11px] leading-tight">Cold Storage Depot</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="auth-gate-facility-processing"
+                    onClick={() => setFacilityType('processing_plant')}
+                    className={`p-2 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2 ${
+                      facilityType === 'processing_plant'
+                        ? 'bg-indigo-50/80 border-indigo-600 text-indigo-950 font-semibold ring-1 ring-indigo-600/30'
+                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Fish className={`w-4 h-4 shrink-0 ${facilityType === 'processing_plant' ? 'text-indigo-600' : 'text-slate-400'}`} />
+                    <span className="text-[11px] leading-tight">Processing Plant</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="auth-gate-facility-vessel"
+                    onClick={() => setFacilityType('vessel_operator')}
+                    className={`p-2 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2 ${
+                      facilityType === 'vessel_operator'
+                        ? 'bg-indigo-50/80 border-indigo-600 text-indigo-950 font-semibold ring-1 ring-indigo-600/30'
+                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Ship className={`w-4 h-4 shrink-0 ${facilityType === 'vessel_operator' ? 'text-indigo-600' : 'text-slate-400'}`} />
+                    <span className="text-[11px] leading-tight">Vessel Fleet Landings</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="auth-gate-facility-wholesale"
+                    onClick={() => setFacilityType('wholesale_distribution')}
+                    className={`p-2 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2 ${
+                      facilityType === 'wholesale_distribution'
+                        ? 'bg-indigo-50/80 border-indigo-600 text-indigo-950 font-semibold ring-1 ring-indigo-600/30'
+                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Truck className={`w-4 h-4 shrink-0 ${facilityType === 'wholesale_distribution' ? 'text-indigo-600' : 'text-slate-400'}`} />
+                    <span className="text-[11px] leading-tight">Wholesale &amp; Reefer</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Currency & Facility Code */}
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Operating Currency
+                  </label>
+                  <div className="relative">
+                    <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <select
+                      id="auth-gate-create-currency"
+                      value={currency}
+                      onChange={(e) => setCurrency(e.target.value as any)}
+                      disabled={isLoading}
+                      className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 focus:border-indigo-600 transition-colors disabled:opacity-50 cursor-pointer"
+                    >
+                      <option value="GHS">GHS (₵ Ghana Cedi)</option>
+                      <option value="USD">USD ($ US Dollar)</option>
+                      <option value="EUR">EUR (€ Euro)</option>
+                      <option value="GBP">GBP (£ British Pound)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Facility Code
+                  </label>
+                  <input
+                    id="auth-gate-create-facility-code"
+                    type="text"
+                    placeholder="FAC-TEM-01"
+                    value={facilityCode}
+                    onChange={(e) => setFacilityCode(e.target.value.toUpperCase())}
+                    disabled={isLoading}
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-mono placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 focus:border-indigo-600 transition-colors disabled:opacity-50"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Your Full Name
+                    Administrator Name
                   </label>
                   <input
                     id="auth-gate-create-admin-name"
@@ -702,7 +1006,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
                     value={adminFullName}
                     onChange={(e) => setAdminFullName(e.target.value)}
                     disabled={isLoading}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 focus:border-indigo-600 transition-colors disabled:opacity-50"
+                    className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 focus:border-indigo-600 transition-colors disabled:opacity-50"
                   />
                 </div>
                 <div>
@@ -716,7 +1020,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
                     value={adminDepartment}
                     onChange={(e) => setAdminDepartment(e.target.value)}
                     disabled={isLoading}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 focus:border-indigo-600 transition-colors disabled:opacity-50"
+                    className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 focus:border-indigo-600 transition-colors disabled:opacity-50"
                   />
                 </div>
               </div>
@@ -769,6 +1073,19 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
                 </div>
               </div>
 
+              {/* Starter Plan Guarantee */}
+              <div className="p-2.5 rounded-xl bg-slate-100/90 border border-slate-200 flex items-center justify-between text-xs text-slate-700">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span className="text-[11px] font-medium text-slate-600">
+                    <strong className="text-slate-900">14-Day Free Starter Trial</strong> • 5 Staff Seats Included
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wide bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                  No Card Needed
+                </span>
+              </div>
+
               {/* Email Confirmation Notice via Google SMTP */}
               <div className="p-3 bg-indigo-50/70 rounded-xl border border-indigo-100 flex items-start gap-2.5 text-xs text-indigo-950">
                 <MailCheck className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
@@ -796,12 +1113,12 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
                 {isLoading ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin text-white" />
-                    <span>Sending Confirmation via Google SMTP...</span>
+                    <span>Creating Workspace &amp; Sending Confirmation...</span>
                   </>
                 ) : (
                   <>
-                    <MailCheck className="w-4 h-4 text-indigo-200" />
-                    <span>Create Organization &amp; Send Confirmation Email</span>
+                    <Building2 className="w-4 h-4 text-indigo-200" />
+                    <span>Register Organization &amp; Create Workspace</span>
                   </>
                 )}
               </button>

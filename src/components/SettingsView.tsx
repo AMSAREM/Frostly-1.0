@@ -47,6 +47,7 @@ interface SettingsViewProps {
   financialEntries: FinancialLedgerEntry[];
   staffProfile?: StaffProfile | null;
   onRefreshProfile?: () => Promise<void>;
+  showPlatformConsole?: boolean;
   onRestoreAllData: (importedData: {
     batches?: InventoryBatch[];
     orders?: ClientOrder[];
@@ -74,10 +75,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   financialEntries,
   staffProfile,
   onRefreshProfile,
+  showPlatformConsole = false,
   onRestoreAllData,
   onResetToDefaults
 }) => {
   const [activeCategory, setActiveCategory] = useState<'profile' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data' | 'subscription' | 'platform'>('profile');
+
+  // If activeCategory is 'platform' but user is not a platform creator, fallback to 'profile'
+  React.useEffect(() => {
+    if (!showPlatformConsole && activeCategory === 'platform') {
+      setActiveCategory('profile');
+    }
+  }, [showPlatformConsole, activeCategory]);
   const [formData, setFormData] = useState<AppSettings>({ ...settings });
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [resetModalOpen, setResetModalOpen] = useState<boolean>(false);
@@ -195,7 +204,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const navCategories = [
     { id: 'profile', label: 'Plant & Profile', icon: Building2, desc: 'Enterprise registration & facility specs' },
     { id: 'subscription', label: 'Subscription & Licensing', icon: CreditCard, desc: 'Plan tiers, staff seats & Stripe billing' },
-    { id: 'platform', label: 'Platform Console', icon: ShieldCheck, desc: 'Cross-tenant oversight & manual MoMo billing' },
+    ...(showPlatformConsole ? [{ id: 'platform', label: 'Platform Console', icon: ShieldCheck, desc: 'Cross-tenant oversight & manual MoMo billing' }] : []),
     { id: 'coldchain', label: 'Cold-Chain & HACCP', icon: ThermometerSnowflake, desc: 'Temperature alerts & critical limits' },
     { id: 'units', label: 'Units & Display', icon: Sliders, desc: 'Weight, temperatures & date formats' },
     { id: 'fulfillment', label: 'POS & Fulfillment', icon: ShoppingBag, desc: 'Terms, ice surcharges & QR presets' },
@@ -275,6 +284,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </button>
               );
             })}
+          </div>
+
+          {/* Active Company Workspace Card */}
+          <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-xs space-y-2">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Active Organization Workspace
+            </div>
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-700 shrink-0">
+                <Building2 className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div id="settings-company-name-display" className="text-xs font-bold text-slate-900 truncate">
+                  {staffProfile?.organization?.name || staffProfile?.organization_name || formData.companyName}
+                </div>
+                <div className="text-[10px] text-slate-500 truncate">
+                  {staffProfile?.organization_id ? `Tenant ID: ${staffProfile.organization_id.slice(0, 8)}...` : 'Local Workspace'}
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Quick System Diagnostics Widget - Flat slate-50/white surface, no gradients */}

@@ -433,3 +433,23 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyVesselArrivals: true,
   lowStockThresholdKg: 200
 };
+
+// -------------------------------------------------------------
+// TENANT REGISTRATION & WORKSPACE ONBOARDING TYPES
+// -------------------------------------------------------------
+
+export type FacilityOperationType = 
+  | 'cold_storage' 
+  | 'processing_plant' 
+  | 'vessel_operator' 
+  | 'wholesale_distribution';
+
+export interface TenantOnboardingDetails {
+  organizationName: string;
+  facilityType: FacilityOperationType;
+  facilityCode: string;
+  primaryPort: string;
+  currency: 'GHS' | 'USD' | 'EUR' | 'GBP';
+  adminFullName: string;
+  adminDepartment: string;
+}
