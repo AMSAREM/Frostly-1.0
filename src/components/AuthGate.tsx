@@ -5,6 +5,7 @@ import { supabase, isSupabaseConfigured } from '../utils/supabase';
 import { getStaffProfile, signOut as authSignOut, StaffProfile } from '../data/auth';
 import { AuthGateScreen } from './AuthGateScreen';
 import { TenantOnboardingScreen } from './TenantOnboardingScreen';
+import { LandingPage } from './LandingPage';
 
 export interface AuthContextType {
   session: Session | null;
@@ -42,6 +43,34 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [staffProfile, setStaffProfile] = useState<StaffProfile | null>(null);
   const [isCheckingSession, setIsCheckingSession] = useState<boolean>(true);
+
+  // Navigation state for unauthenticated visitors: defaults to the Landing Page
+  const [unauthView, setUnauthView] = useState<'landing' | 'login' | 'create_org' | 'accept_invite'>(() => {
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash.toLowerCase();
+      if (hash === '#login') return 'login';
+      if (hash === '#signup' || hash === '#register' || hash === '#create-org') return 'create_org';
+      if (hash === '#accept-invite') return 'accept_invite';
+      const params = new URLSearchParams(window.location.search);
+      const viewParam = params.get('view') || params.get('auth');
+      if (viewParam === 'login') return 'login';
+      if (viewParam === 'signup' || viewParam === 'create_org') return 'create_org';
+      if (viewParam === 'accept_invite') return 'accept_invite';
+    }
+    return 'landing';
+  });
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.toLowerCase();
+      if (hash === '#login') setUnauthView('login');
+      else if (hash === '#signup' || hash === '#register' || hash === '#create-org') setUnauthView('create_org');
+      else if (hash === '#accept-invite') setUnauthView('accept_invite');
+      else if (hash === '#landing' || hash === '' || hash === '#') setUnauthView('landing');
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   const refreshProfile = async (): Promise<StaffProfile | null> => {
     if (!session) {
@@ -142,10 +171,37 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     );
   }
 
-  // State 2: No active session - render full-screen AuthGateScreen
+  // State 2: No active session - render LandingPage or AuthGateScreen
   if (!session) {
+    if (unauthView === 'landing') {
+      return (
+        <LandingPage
+          onSignIn={() => {
+            window.location.hash = '#login';
+            setUnauthView('login');
+          }}
+          onGetStarted={() => {
+            window.location.hash = '#signup';
+            setUnauthView('create_org');
+          }}
+          onExploreDemo={() => {
+            window.location.hash = '#login';
+            setUnauthView('login');
+          }}
+        />
+      );
+    }
+
     return (
       <AuthGateScreen 
+        initialMode={
+          unauthView === 'create_org' ? 'create_org' : 
+          unauthView === 'accept_invite' ? 'accept_invite' : 'login'
+        }
+        onBackToLanding={() => {
+          window.location.hash = '';
+          setUnauthView('landing');
+        }}
         onAuthSuccess={() => {
           // Profile & session update is reactively handled by onAuthStateChange
         }} 
