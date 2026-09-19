@@ -234,7 +234,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="p-2 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
+            <span className="p-2 rounded-xl bg-slate-100 text-slate-700 border border-slate-200">
               <Sliders className="w-5 h-5" />
             </span>
             <h1 className="text-xl font-black font-heading tracking-tight text-slate-900">
@@ -248,8 +248,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         <div className="flex items-center gap-3">
           {saveSuccess && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold animate-in fade-in">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 text-slate-800 border border-slate-300 text-xs font-bold animate-in fade-in">
+              <CheckCircle2 className="w-4 h-4 text-slate-700" />
               <span>Saved Successfully</span>
             </div>
           )}
@@ -258,7 +258,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <button
               id="settings-save-top-btn"
               onClick={handleSave}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition-all cursor-pointer"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
             >
               <Save className="w-4 h-4" />
               <span>Save Changes</span>
@@ -282,7 +282,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   onClick={() => setActiveCategory(cat.id as any)}
                   className={`w-full flex items-start gap-3 p-3.5 rounded-2xl text-left transition-all cursor-pointer ${
                     isActive
-                      ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-200'
+                      ? 'bg-slate-900 text-white shadow-xs'
                       : 'hover:bg-slate-50 text-slate-700'
                   }`}
                 >
@@ -293,7 +293,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                   <div>
                     <div className="text-xs font-bold">{cat.label}</div>
-                    <div className={`text-[11px] leading-tight ${isActive ? 'text-indigo-100' : 'text-slate-400'}`}>
+                    <div className={`text-[11px] leading-tight ${isActive ? 'text-slate-300' : 'text-slate-400'}`}>
                       {cat.desc}
                     </div>
                   </div>
@@ -308,7 +308,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               Active Organization Workspace
             </div>
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-700 shrink-0">
+              <div className="w-8 h-8 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 shrink-0">
                 <Building2 className="w-4 h-4" />
               </div>
               <div className="min-w-0 flex-1">
@@ -326,9 +326,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 type="button"
                 id="btn-open-onboarding-wizard"
                 onClick={onOpenOnboardingWizard}
-                className="w-full mt-2 py-2 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold border border-indigo-200 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                className="w-full mt-2 py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-200 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                <Sparkles className="w-3.5 h-3.5 text-slate-600" />
                 <span>Launch Onboarding Wizard</span>
               </button>
             )}
@@ -1014,7 +1014,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   type="button"
                   onClick={handleSave}
                   id="settings-save-bottom-btn"
-                  className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition-all cursor-pointer"
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
                 >
                   <Save className="w-4 h-4" />
                   <span>Save All Settings</span>

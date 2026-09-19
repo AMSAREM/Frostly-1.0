@@ -151,18 +151,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div 
           id="dashboard-kpi-revenue"
           onClick={() => onSelectTab('financials')}
-          className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs hover:border-emerald-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between"
+          className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-100/80 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                 <DollarSign className="w-4 h-4" />
               </div>
               <span className="text-sm font-semibold text-slate-700">
                 Gross Revenue
               </span>
             </div>
-            <span className="text-xs font-medium text-slate-400 group-hover:text-emerald-600 flex items-center gap-0.5 transition-colors">
+            <span className="text-xs font-medium text-slate-400 group-hover:text-slate-800 flex items-center gap-0.5 transition-colors">
               <span>P&L</span>
               <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
             </span>
@@ -172,8 +172,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {formatCurrency(grossRevenue)}
             </div>
             <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100 text-xs">
-              <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100/80">
-                <ArrowUpRight className="w-3 h-3" /> {grossMarginPct.toFixed(1)}% margin
+              <span className="inline-flex items-center gap-1 font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200/80">
+                <ArrowUpRight className="w-3 h-3 text-slate-500" /> {grossMarginPct.toFixed(1)}% margin
               </span>
               <span className="text-slate-400 text-[11px] truncate">B2B Wholesale & POS</span>
             </div>
@@ -184,28 +184,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div 
           id="dashboard-kpi-ar"
           onClick={() => onSelectTab('customers')}
-          className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs hover:border-amber-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between"
+          className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 border border-amber-100/80 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                 <Users className="w-4 h-4" />
               </div>
               <span className="text-sm font-semibold text-slate-700">
                 Accounts Receivable
               </span>
             </div>
-            <span className="text-xs font-medium text-slate-400 group-hover:text-amber-600 flex items-center gap-0.5 transition-colors">
+            <span className="text-xs font-medium text-slate-400 group-hover:text-slate-800 flex items-center gap-0.5 transition-colors">
               <span>Clients</span>
               <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
             </span>
           </div>
           <div className="mt-3">
-            <div className="text-2xl font-black text-amber-700 font-mono-code tracking-tight">
+            <div className="text-2xl font-black text-slate-900 font-mono-code tracking-tight">
               {formatCurrency(totalAR)}
             </div>
             <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100 text-xs">
-              <span className="inline-flex items-center gap-1 font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100/80">
+              <span className="inline-flex items-center gap-1 font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200/80">
                 {customers.filter(c => c.outstandingBalanceUSD > 0).length} Unpaid
               </span>
               <span className="text-slate-400 text-[11px] truncate">{customers.length} Client Accounts</span>
@@ -217,28 +217,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div 
           id="dashboard-kpi-ap"
           onClick={() => onSelectTab('suppliers')}
-          className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs hover:border-rose-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between"
+          className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 border border-rose-100/80 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                 <Ship className="w-4 h-4" />
               </div>
               <span className="text-sm font-semibold text-slate-700">
                 Accounts Payable
               </span>
             </div>
-            <span className="text-xs font-medium text-slate-400 group-hover:text-rose-600 flex items-center gap-0.5 transition-colors">
+            <span className="text-xs font-medium text-slate-400 group-hover:text-slate-800 flex items-center gap-0.5 transition-colors">
               <span>Fleets</span>
               <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
             </span>
           </div>
           <div className="mt-3">
-            <div className="text-2xl font-black text-rose-700 font-mono-code tracking-tight">
+            <div className="text-2xl font-black text-slate-900 font-mono-code tracking-tight">
               {formatCurrency(totalAP)}
             </div>
             <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100 text-xs">
-              <span className="inline-flex items-center gap-1 font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-100/80">
+              <span className="inline-flex items-center gap-1 font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200/80">
                 {suppliers.length} Harvesters
               </span>
               <span className="text-slate-400 text-[11px] truncate">Catch Landings</span>
@@ -250,28 +250,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div 
           id="dashboard-kpi-biomass"
           onClick={() => onSelectTab('inventory')}
-          className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs hover:border-indigo-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between"
+          className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100/80 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                 <Package className="w-4 h-4" />
               </div>
               <span className="text-sm font-semibold text-slate-700">
                 Biomass In Stock
               </span>
             </div>
-            <span className="text-xs font-medium text-slate-400 group-hover:text-indigo-600 flex items-center gap-0.5 transition-colors">
+            <span className="text-xs font-medium text-slate-400 group-hover:text-slate-800 flex items-center gap-0.5 transition-colors">
               <span>Ledger</span>
               <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
             </span>
           </div>
           <div className="mt-3">
-            <div className="text-2xl font-black text-indigo-900 font-mono-code tracking-tight">
+            <div className="text-2xl font-black text-slate-900 font-mono-code tracking-tight">
               {formatWeight(totalStockKg, useImperial)}
             </div>
             <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100 text-xs">
-              <span className="inline-flex items-center gap-1 font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100/80">
+              <span className="inline-flex items-center gap-1 font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200/80">
                 {formatCurrency(totalStockValueUSD)}
               </span>
               <span className="text-slate-400 text-[11px] truncate">{batches.length} Active Lots</span>
