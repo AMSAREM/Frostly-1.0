@@ -74,7 +74,11 @@ export default function App() {
   // Single authoritative source of truth for session and staff profile from AuthGate
   const { session, user: currentUser, staffProfile, refreshProfile: handleRefreshProfile, signOut: handleSignOut } = useAuth();
 
-  const activeOrgId = staffProfile?.organization_id || null;
+  const isSentinelFallbackOrg = 
+    staffProfile?.organization_id === '00000000-0000-0000-0000-000000000001' ||
+    staffProfile?.organization_id === 'org-frostly-hq';
+
+  const activeOrgId = (!isSentinelFallbackOrg && staffProfile?.organization_id) ? staffProfile.organization_id : null;
   const isTenantUser = Boolean(activeOrgId);
 
   // PWA and Network state
@@ -236,24 +240,38 @@ export default function App() {
   const isPlatformCreator = Boolean(
     !isTenantUser &&
     ((configuredCreatorEmail && currentUser?.email?.toLowerCase() === configuredCreatorEmail.toLowerCase()) ||
+    currentUser?.email?.toLowerCase() === 'amoakoimml@gmail.com' ||
     currentUser?.user_metadata?.role === 'platform_creator' ||
     currentUser?.app_metadata?.role === 'platform_creator' ||
+    currentUser?.user_metadata?.platform_owner === true ||
     (staffProfile && (staffProfile.role as string) === 'platform_creator'))
   );
 
   const showPlatformConsole = Boolean(isPlatformCreator && !isTenantUser);
 
-  // Active workspace company / organization name
-  const companyName =
-    staffProfile?.organization?.name ||
-    staffProfile?.organization_name ||
-    currentUser?.user_metadata?.organization_name ||
-    currentUser?.user_metadata?.org_name ||
-    settings.companyName ||
-    'Sharp Operations';
+  // Active workspace company / organization name:
+  // When operating in Platform Creator host mode, default workspace is Frostly Platform HQ.
+  // Otherwise, resolve dynamically to the tenant company's name.
+  const companyName = isPlatformCreator
+    ? 'Frostly Platform HQ'
+    : (staffProfile?.organization?.name ||
+       staffProfile?.organization_name ||
+       currentUser?.user_metadata?.organization_name ||
+       currentUser?.user_metadata?.org_name ||
+       settings.companyName ||
+       'Sharp Operations');
 
-  // Keep settings.companyName synchronized with active tenant organization name
+  // Keep settings.companyName synchronized with active tenant organization name or creator workspace
   useEffect(() => {
+    if (isPlatformCreator) {
+      if (settings.companyName !== 'Frostly Platform HQ') {
+        setSettings((prev) => ({
+          ...prev,
+          companyName: 'Frostly Platform HQ',
+        }));
+      }
+      return;
+    }
     const orgName = staffProfile?.organization?.name || staffProfile?.organization_name;
     if (orgName && settings.companyName !== orgName) {
       setSettings((prev) => ({
@@ -261,7 +279,7 @@ export default function App() {
         companyName: orgName,
       }));
     }
-  }, [staffProfile?.organization?.name, staffProfile?.organization_name, settings.companyName]);
+  }, [isPlatformCreator, staffProfile?.organization?.name, staffProfile?.organization_name, settings.companyName]);
 
   // CRITICAL: Tenants MUST NEVER be redirected to creator platform - enforce tenant's own workspace
   useEffect(() => {

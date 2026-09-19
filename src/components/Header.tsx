@@ -206,10 +206,18 @@ export const Header: React.FC<HeaderProps> = ({
                 <div className="h-5 sm:h-6 w-px bg-slate-200 hidden xs:block shrink-0" />
                 <div
                   id="header-company-name-badge"
-                  className="hidden xs:inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl bg-indigo-50/70 border border-indigo-200/70 text-[11px] sm:text-xs font-bold text-indigo-950 shadow-2xs max-w-[85px] xs:max-w-[110px] sm:max-w-[150px] md:max-w-[190px] lg:max-w-[240px] truncate shrink-0"
-                  title={`Workspace Company: ${companyName}`}
+                  className={`hidden xs:inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl text-[11px] sm:text-xs font-bold shadow-2xs max-w-[85px] xs:max-w-[110px] sm:max-w-[150px] md:max-w-[190px] lg:max-w-[240px] truncate shrink-0 ${
+                    showPlatformConsole
+                      ? 'bg-amber-50/90 border border-amber-300/80 text-amber-950'
+                      : 'bg-indigo-50/70 border border-indigo-200/70 text-indigo-950'
+                  }`}
+                  title={showPlatformConsole ? `Platform Host Workspace: ${companyName}` : `Workspace Company: ${companyName}`}
                 >
-                  <Building2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-indigo-600 shrink-0" />
+                  {showPlatformConsole ? (
+                    <ShieldCheck className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-600 shrink-0" />
+                  ) : (
+                    <Building2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-indigo-600 shrink-0" />
+                  )}
                   <span className="truncate">{companyName}</span>
                 </div>
               </>
@@ -475,12 +483,20 @@ export const Header: React.FC<HeaderProps> = ({
                       </div>
                     )}
                     {companyName && (
-                      <div className="mt-2 p-2 rounded-xl bg-slate-50 border border-slate-200/80">
+                      <div className={`mt-2 p-2 rounded-xl border ${
+                        showPlatformConsole 
+                          ? 'bg-amber-50/80 border-amber-200 text-amber-950' 
+                          : 'bg-slate-50 border-slate-200/80 text-indigo-950'
+                      }`}>
                         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                          Company / Workspace
+                          {showPlatformConsole ? 'Host Workspace' : 'Company / Workspace'}
                         </div>
-                        <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5 mt-0.5 truncate">
-                          <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                        <div className="text-xs font-bold flex items-center gap-1.5 mt-0.5 truncate">
+                          {showPlatformConsole ? (
+                            <ShieldCheck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          ) : (
+                            <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                          )}
                           <span className="truncate">{companyName}</span>
                         </div>
                       </div>
