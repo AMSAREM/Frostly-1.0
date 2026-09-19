@@ -41,9 +41,11 @@ function getGoogleSmtpTransporter() {
   });
 }
 
-async function startServer() {
+export async function createExpressApp(options: { withVite?: boolean; adminClient?: any } = {}) {
   const app = express();
   const PORT = 3000;
+
+  const adminClientGetter = () => options.adminClient || getSupabaseAdmin();
 
   app.use(express.json());
 
@@ -211,7 +213,32 @@ async function startServer() {
       }
 
       const targetWebsite = websiteUrl || detectedOrigin || 'https://frostly.io';
-      const targetLink = confirmationUrl || (targetWebsite ? `${targetWebsite}?activated=true&email=${encodeURIComponent(email.trim())}` : 'https://frostly.io');
+      let targetLink = confirmationUrl;
+
+      // Ensure confirmation links are cryptographically generated via Supabase Auth Admin
+      const adminClient = getSupabaseAdmin();
+      if (adminClient && (!targetLink || !targetLink.includes('token_hash='))) {
+        try {
+          const { data: linkData } = await (adminClient.auth.admin.generateLink as any)({
+            type: 'signup',
+            email: email.trim(),
+            options: {
+              redirectTo: targetWebsite,
+            },
+          });
+          if (linkData?.properties?.action_link) {
+            targetLink = linkData.properties.action_link;
+          } else if (linkData?.properties?.hashed_token) {
+            targetLink = `${targetWebsite}?token_hash=${linkData.properties.hashed_token}&type=signup&email=${encodeURIComponent(email.trim())}`;
+          }
+        } catch (linkGenErr) {
+          console.warn('[Google SMTP Link Gen Notice]:', linkGenErr);
+        }
+      }
+
+      if (!targetLink) {
+        targetLink = `${targetWebsite}?email=${encodeURIComponent(email.trim())}`;
+      }
 
       await transporter.sendMail({
         from: `"${fromName}" <${fromUser}>`,
@@ -331,8 +358,8 @@ async function startServer() {
       let userId: string | null = null;
       let existingOrgId: string | null = null;
       const { data: userList } = await adminClient.auth.admin.listUsers();
-      const existingUser = userList?.users?.find(
-        (u) => u.email?.toLowerCase() === cleanEmail
+      const existingUser = (userList?.users as any[])?.find(
+        (u: any) => u.email?.toLowerCase() === cleanEmail
       );
 
       const { data: existingStaff } = await adminClient
@@ -528,239 +555,19 @@ async function startServer() {
     }
   });
 
-  // Activate / Set Password Endpoint for Email-Activated Users
-  app.post('/api/auth/set-password-and-activate', async (req, res) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      res.status(400).json({ error: 'Email and new password are required.' });
-      return;
-    }
-    const adminClient = getSupabaseAdmin();
-    if (!adminClient) {
-      res.status(500).json({ error: 'Supabase admin service is not configured.' });
-      return;
-    }
-
-    try {
-      const cleanEmail = email.trim().toLowerCase();
-      const { data: userList } = await adminClient.auth.admin.listUsers({ page: 1, perPage: 1000 });
-      let targetUser = userList?.users?.find(
-        (u) => u.email?.toLowerCase() === cleanEmail
-      );
-
-      if (!targetUser) {
-        // If user does not exist in Auth, provision directly with confirmed email
-        const { data: newUser, error: createErr } = await adminClient.auth.admin.createUser({
-          email: cleanEmail,
-          password: password,
-          email_confirm: true,
-        });
-        if (createErr || !newUser?.user) {
-          res.status(404).json({ error: createErr?.message || `No account found for ${cleanEmail}.` });
-          return;
-        }
-        targetUser = newUser.user;
-      } else {
-        const { error: updateErr } = await adminClient.auth.admin.updateUserById(targetUser.id, {
-          password: password,
-          email_confirm: true,
-        });
-
-        if (updateErr) {
-          throw updateErr;
-        }
-      }
-
-      // Ensure staff profile is marked active and onboarding complete
-      await adminClient
-        .from('staff_profiles')
-        .update({ is_active: true, needs_onboarding: false, updated_at: new Date().toISOString() })
-        .eq('id', targetUser.id);
-
-      res.json({ success: true, message: 'Password updated and account activated successfully.' });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to set password.' });
-    }
+  // SECURITY HARDENING: Permanently decommission unauthenticated password reset and activation bypass routes.
+  // Password updates require an authenticated session via supabase.auth.updateUser.
+  // Account activation and invite acceptance require valid cryptographic tokens.
+  app.post('/api/auth/set-password-and-activate', (req, res) => {
+    res.status(403).json({
+      error: 'Direct unauthenticated password modification is forbidden. Please sign in or use standard password recovery.',
+    });
   });
 
-  // Instant 1-Click Activation Endpoint with Auto-Provisioning
-  app.post('/api/auth/instant-activate', async (req, res) => {
-    const { email, password } = req.body;
-    if (!email) {
-      res.status(400).json({ error: 'Email is required for activation.' });
-      return;
-    }
-    const adminClient = getSupabaseAdmin();
-    if (!adminClient) {
-      res.status(500).json({ error: 'Supabase admin service is not configured.' });
-      return;
-    }
-
-    try {
-      const cleanEmail = email.trim().toLowerCase();
-      const { data: userList } = await adminClient.auth.admin.listUsers({ page: 1, perPage: 1000 });
-      let targetUser = userList?.users?.find(
-        (u) => u.email?.toLowerCase() === cleanEmail
-      );
-
-      if (!targetUser) {
-        // Auto-provision user account in Supabase Auth if not yet created
-        const tempPassword = (password && typeof password === 'string' && password.length >= 6)
-          ? password
-          : `Frostly_${Math.random().toString(36).slice(2, 10)}!`;
-        const { data: newUser, error: createErr } = await adminClient.auth.admin.createUser({
-          email: cleanEmail,
-          password: tempPassword,
-          email_confirm: true,
-        });
-        if (createErr || !newUser?.user) {
-          res.status(404).json({ error: createErr?.message || `No user account found for ${cleanEmail}.` });
-          return;
-        }
-        targetUser = newUser.user;
-      }
-
-      // Mark email confirmed in Supabase Auth (and optionally update password if provided)
-      const updatePayload: { email_confirm: boolean; password?: string } = {
-        email_confirm: true,
-      };
-      if (password && typeof password === 'string' && password.length >= 6) {
-        updatePayload.password = password;
-      }
-      await adminClient.auth.admin.updateUserById(targetUser.id, updatePayload);
-
-      // Check if user has an existing staff profile & organization
-      const { data: existingProfile } = await adminClient
-        .from('staff_profiles')
-        .select('id, organization_id, is_active')
-        .eq('id', targetUser.id)
-        .maybeSingle();
-
-      let activeOrgId = existingProfile?.organization_id;
-      let activeOrgName = '';
-
-      if (!activeOrgId) {
-        // Check if there is an invite in invites table
-        const { data: pendingInvite } = await adminClient
-          .from('invites')
-          .select('*')
-          .ilike('email', cleanEmail)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (pendingInvite) {
-          activeOrgId = pendingInvite.organization_id;
-          const { data: orgData } = await adminClient
-            .from('organizations')
-            .select('name')
-            .eq('id', activeOrgId)
-            .maybeSingle();
-          activeOrgName = orgData?.name || 'Frostly Seafood Operations';
-
-          await adminClient
-            .from('staff_profiles')
-            .upsert({
-              id: targetUser.id,
-              organization_id: activeOrgId,
-              email: cleanEmail,
-              full_name: targetUser.user_metadata?.full_name || cleanEmail.split('@')[0],
-              role: pendingInvite.role || 'ops_staff',
-              department: targetUser.user_metadata?.department || 'Operations',
-              is_active: true,
-              needs_onboarding: false,
-              updated_at: new Date().toISOString(),
-            });
-
-          // Mark invite used
-          await adminClient
-            .from('invites')
-            .update({ used_at: new Date().toISOString() })
-            .eq('id', pendingInvite.id);
-        }
-      }
-
-      if (!activeOrgId) {
-        // Auto-provision tenant organization from user metadata or fallback
-        const orgName = 
-          targetUser.user_metadata?.organization_name || 
-          targetUser.user_metadata?.org_name || 
-          `${cleanEmail.split('@')[0].toUpperCase()} Seafood Operations`;
-        
-        const fullName = 
-          targetUser.user_metadata?.full_name || 
-          targetUser.user_metadata?.name || 
-          cleanEmail.split('@')[0];
-        
-        const department = targetUser.user_metadata?.department || 'Executive Operations';
-        const currency = targetUser.user_metadata?.currency || 'GHS';
-
-        const { data: newOrg } = await adminClient
-          .from('organizations')
-          .insert({
-            name: orgName,
-            billing_currency: currency,
-            plan_tier: 'starter',
-            subscription_status: 'trial',
-            trial_ends_at: new Date(Date.now() + 14 * 86400000).toISOString(),
-            max_staff_seats: 5,
-          })
-          .select('*')
-          .maybeSingle();
-
-        if (newOrg) {
-          activeOrgId = newOrg.id;
-          activeOrgName = newOrg.name;
-
-          await adminClient
-            .from('staff_profiles')
-            .upsert({
-              id: targetUser.id,
-              organization_id: activeOrgId,
-              email: cleanEmail,
-              full_name: fullName,
-              role: 'admin',
-              department: department,
-              is_active: true,
-              needs_onboarding: false,
-              updated_at: new Date().toISOString(),
-            });
-        }
-      } else {
-        // Mark staff_profile as active
-        await adminClient
-          .from('staff_profiles')
-          .update({ is_active: true, needs_onboarding: false, updated_at: new Date().toISOString() })
-          .eq('id', targetUser.id);
-
-        const { data: orgData } = await adminClient
-          .from('organizations')
-          .select('name')
-          .eq('id', activeOrgId)
-          .maybeSingle();
-        activeOrgName = orgData?.name || '';
-      }
-
-      // Generate a magiclink action link so the browser can exchange session or sign in immediately
-      const { data: linkData } = await adminClient.auth.admin.generateLink({
-        type: 'magiclink',
-        email: cleanEmail,
-      });
-
-      res.json({
-        success: true,
-        email: cleanEmail,
-        organization_id: activeOrgId,
-        organization_name: activeOrgName,
-        actionLink: linkData?.properties?.action_link,
-        hashedToken: linkData?.properties?.hashed_token,
-        emailOtp: linkData?.properties?.email_otp,
-        message: 'Account successfully confirmed and activated in Supabase.',
-      });
-    } catch (err: any) {
-      console.error('[Instant Activate Error]:', err);
-      res.status(500).json({ error: err?.message || 'Failed to activate account.' });
-    }
+  app.post('/api/auth/instant-activate', (req, res) => {
+    res.status(403).json({
+      error: 'Direct unauthenticated account activation is forbidden. Please verify your account via the link sent to your email or accept your invitation with your secure token.',
+    });
   });
 
   // Onboarding Bootstrap Endpoint: Ensures tenant organization and admin profile are created reliably
@@ -784,7 +591,7 @@ async function startServer() {
 
       if (!targetUserId && cleanEmail) {
         const { data: userList } = await adminClient.auth.admin.listUsers();
-        const found = userList?.users?.find((u) => u.email?.toLowerCase() === cleanEmail);
+        const found = (userList?.users as any[])?.find((u: any) => u.email?.toLowerCase() === cleanEmail);
         if (found) targetUserId = found.id;
       }
 
@@ -872,15 +679,85 @@ async function startServer() {
   // TENANT WORKSPACE: WORKER MANAGEMENT ROUTES
   // ==========================================
 
+  // Middleware: Enforces that caller is authenticated and holds administrator or creator role for the tenant organization
+  const requireTenantAdmin = async (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction
+  ) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({ error: 'Missing or invalid Authorization bearer token.' });
+      return;
+    }
+
+    const token = authHeader.slice(7).trim();
+    if (!token) {
+      res.status(401).json({ error: 'Empty bearer token supplied.' });
+      return;
+    }
+
+    const adminClient = adminClientGetter();
+    if (!adminClient) {
+      res.status(500).json({ error: 'Supabase admin client is not configured.' });
+      return;
+    }
+
+    try {
+      const { data: userData, error: userErr } = await adminClient.auth.getUser(token);
+      if (userErr || !userData?.user) {
+        res.status(401).json({ error: 'Unauthorized: Invalid or expired session token.' });
+        return;
+      }
+
+      const user = userData.user;
+      const targetOrgId = (req.body?.organizationId || req.query?.organizationId) as string | undefined;
+
+      // Look up caller's staff profile
+      const { data: callerProfile } = await adminClient
+        .from('staff_profiles')
+        .select('id, organization_id, role, is_active')
+        .eq('id', user.id)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (!callerProfile) {
+        res.status(403).json({ error: 'Forbidden: No active staff profile found for authenticated user.' });
+        return;
+      }
+
+      const isCreator = callerProfile.role === 'creator';
+      const isAdmin = callerProfile.role === 'admin';
+
+      if (!isCreator && !isAdmin) {
+        res.status(403).json({ error: 'Forbidden: Administrator privileges required.' });
+        return;
+      }
+
+      // If target organization specified, ensure caller has access (creator can access all; admin can only access their org)
+      if (targetOrgId && !isCreator && callerProfile.organization_id !== targetOrgId) {
+        res.status(403).json({ error: 'Forbidden: Access denied to target tenant organization.' });
+        return;
+      }
+
+      (req as any).callerUser = user;
+      (req as any).callerProfile = callerProfile;
+      next();
+    } catch (authErr: any) {
+      console.error('[requireTenantAdmin Middleware Error]:', authErr);
+      res.status(500).json({ error: authErr?.message || 'Authentication error.' });
+    }
+  };
+
   // 1. List Workers and Pending Invites for a Tenant Workspace
-  app.get('/api/tenant/workers', async (req, res) => {
+  app.get('/api/tenant/workers', requireTenantAdmin, async (req, res) => {
     const { organizationId } = req.query;
     if (!organizationId || typeof organizationId !== 'string') {
       res.status(400).json({ error: 'Organization ID parameter is required.' });
       return;
     }
 
-    const adminClient = getSupabaseAdmin();
+    const adminClient = adminClientGetter();
     if (!adminClient) {
       res.status(500).json({ error: 'Supabase admin client is not configured.' });
       return;
@@ -948,7 +825,7 @@ async function startServer() {
   });
 
   // 2. Add Worker / User to Tenant Workspace (Direct Account Provisioning or Invite Token)
-  app.post('/api/tenant/workers', async (req, res) => {
+  app.post('/api/tenant/workers', requireTenantAdmin, async (req, res) => {
     const {
       organizationId,
       email,
@@ -971,7 +848,7 @@ async function startServer() {
     const allowedRoles = ['admin', 'ops_staff', 'sales_staff', 'dispatch_staff', 'viewer'];
     const validRole = allowedRoles.includes(role) ? role : 'ops_staff';
 
-    const adminClient = getSupabaseAdmin();
+    const adminClient = adminClientGetter();
     if (!adminClient) {
       res.status(500).json({ error: 'Supabase admin client is not configured on the server.' });
       return;
@@ -1307,7 +1184,7 @@ async function startServer() {
   });
 
   // 3. Update Worker Profile / Role / Status
-  app.patch('/api/tenant/workers/:id', async (req, res) => {
+  app.patch('/api/tenant/workers/:id', requireTenantAdmin, async (req, res) => {
     const { id } = req.params;
     const { organizationId, role, department, full_name, is_active } = req.body;
 
@@ -1316,7 +1193,7 @@ async function startServer() {
       return;
     }
 
-    const adminClient = getSupabaseAdmin();
+    const adminClient = adminClientGetter();
     if (!adminClient) {
       res.status(500).json({ error: 'Supabase admin client not configured.' });
       return;
@@ -1361,7 +1238,7 @@ async function startServer() {
   });
 
   // 4. Delete / Remove Worker or Pending Invite from Tenant Workspace
-  app.delete('/api/tenant/workers/:id', async (req, res) => {
+  app.delete('/api/tenant/workers/:id', requireTenantAdmin, async (req, res) => {
     const { id } = req.params;
     const { organizationId, isInvite } = req.query;
 
@@ -1370,7 +1247,7 @@ async function startServer() {
       return;
     }
 
-    const adminClient = getSupabaseAdmin();
+    const adminClient = adminClientGetter();
     if (!adminClient) {
       res.status(500).json({ error: 'Supabase admin client not configured.' });
       return;
@@ -1416,7 +1293,7 @@ async function startServer() {
   });
 
   // 5. Reset Worker Password
-  app.post('/api/tenant/workers/:id/reset-password', async (req, res) => {
+  app.post('/api/tenant/workers/:id/reset-password', requireTenantAdmin, async (req, res) => {
     const { id } = req.params;
     const { password, email, organizationName } = req.body;
 
@@ -1425,7 +1302,7 @@ async function startServer() {
       return;
     }
 
-    const adminClient = getSupabaseAdmin();
+    const adminClient = adminClientGetter();
     if (!adminClient) {
       res.status(500).json({ error: 'Supabase admin client not configured.' });
       return;
@@ -1464,23 +1341,33 @@ async function startServer() {
   });
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+  if (options.withVite !== false) {
+    if (process.env.NODE_ENV !== 'production') {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } else {
+      const distPath = path.join(process.cwd(), 'dist');
+      app.use(express.static(distPath));
+      app.get('*', (req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+      });
+    }
   }
 
+  return app;
+}
+
+export async function startServer() {
+  const app = await createExpressApp({ withVite: true });
+  const PORT = 3000;
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Frostly server running with Google SMTP on http://0.0.0.0:${PORT}`);
   });
 }
 
-startServer();
+if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+  startServer();
+}

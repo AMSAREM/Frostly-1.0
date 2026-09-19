@@ -26,6 +26,9 @@ jobs:
       - name: Type Check & Lint
         run: npm run lint
 
+      - name: Security Audit
+        run: npm run audit
+
       - name: Run Unit Tests
         run: npm run test
 

@@ -43,12 +43,24 @@ import {
 
 export type AuthScreenMode = 'login' | 'create_org' | 'accept_invite' | 'pending_confirmation';
 
-interface AuthGateScreenProps {
+export interface AuthGateScreenProps {
   onAuthSuccess?: () => void;
+  initialMode?: AuthScreenMode;
+  onBackToLanding?: () => void;
 }
 
-export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess }) => {
-  const [mode, setMode] = useState<AuthScreenMode>('login');
+export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ 
+  onAuthSuccess,
+  initialMode = 'login',
+  onBackToLanding 
+}) => {
+  const [mode, setMode] = useState<AuthScreenMode>(initialMode);
+
+  useEffect(() => {
+    if (initialMode) {
+      setMode(initialMode);
+    }
+  }, [initialMode]);
 
   // Input states
   const [email, setEmail] = useState('');
@@ -100,22 +112,53 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
 
-  // Parse activation query parameters on mount (?activated=true&email=...)
+  // Parse activation, invitation, and cryptographic verification query parameters on mount
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
       const params = new URLSearchParams(window.location.search);
-      const isAct = params.get('activated') === 'true';
+      const tokenHash = params.get('token_hash');
+      const tokenType = (params.get('type') || 'signup') as any;
+      const inviteParam = params.get('invite');
       const emailParam = params.get('email');
       const orgParam = params.get('org');
 
+      // 1. Cryptographic token verification from email link
+      if (tokenHash) {
+        setIsLoading(true);
+        supabase.auth.verifyOtp({ token_hash: tokenHash, type: tokenType }).then(({ data, error }) => {
+          setIsLoading(false);
+          if (!error && data?.session) {
+            if (tokenType === 'recovery') {
+              setIsSettingPassword(true);
+              setEmail(data.session.user.email || '');
+            } else if (onAuthSuccess) {
+              onAuthSuccess();
+            }
+          } else if (error) {
+            setErrorMessage(error.message || 'Verification link expired or invalid.');
+          }
+        });
+        return;
+      }
+
+      // 2. Worker invitation code (?invite=...&email=...)
+      if (inviteParam) {
+        setMode('accept_invite');
+        setInviteToken(inviteParam);
+        if (emailParam) setEmail(emailParam);
+        return;
+      }
+
+      // 3. Informational notice for confirmed account landing
+      const isAct = params.get('activated') === 'true';
       if (isAct && emailParam) {
         setMode('login');
         setEmail(emailParam);
         setActivationNotice({
           isActivated: true,
           email: emailParam,
-          org: orgParam || 'Sharp',
+          org: orgParam || 'Frostly Seafood Platform',
         });
       }
     } catch {}
@@ -142,7 +185,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
     setResendErrorMessage(null);
   };
 
-  // Handler for setting / updating password and signing in directly from activation notice
+  // Handler for setting / updating password securely for authenticated or recovery sessions
   const handleSetPasswordAndLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPasswordVal || newPasswordVal.length < 6) {
@@ -158,105 +201,35 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
     setErrorMessage(null);
 
     try {
-      const res = await setPasswordAndActivate(email.trim(), newPasswordVal);
-      if (!res.success) {
-        setErrorMessage(res.error || 'Failed to update password.');
-        return;
-      }
-      setPasswordUpdatedSuccess(true);
-      setPassword(newPasswordVal);
-      
-      // Automatically sign in with newly set credentials
-      const loginRes = await signIn(email.trim(), newPasswordVal);
-      if (loginRes.error) {
-        setErrorMessage(loginRes.error);
-      } else {
-        if (onAuthSuccess) onAuthSuccess();
-      }
-    } catch (err: any) {
-      setErrorMessage(err?.message || 'Failed to set password and sign in.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Handler for 1-click Instant Activation from verified email links
-  const handleInstantActivate = async (customEmail?: string | React.MouseEvent) => {
-    const rawEmail = typeof customEmail === 'string' ? customEmail : (activationNotice?.email || email || pendingEmail);
-    const targetEmail = typeof rawEmail === 'string' ? rawEmail.trim() : '';
-    if (!targetEmail) {
-      setErrorMessage('Please provide an email address for activation.');
-      return;
-    }
-
-    setIsLoading(true);
-    setErrorMessage(null);
-
-    try {
-      const res = await instantActivateAccount(targetEmail, password || undefined);
-      if (!res.success) {
-        setErrorMessage(res.error || 'Activation failed. Please try signing in or setting your password below.');
-        return;
-      }
-
-      setPasswordUpdatedSuccess(true);
-
-      // If user has entered password, log in directly
-      if (password) {
-        const loginRes = await signIn(targetEmail, password);
-        if (loginRes.error) {
-          setErrorMessage('Account verified and confirmed! Please enter your password to sign in.');
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session) {
+        // If no active recovery session, trigger a secure password reset email
+        const { error: resetErr } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+        });
+        if (resetErr) {
+          setErrorMessage(resetErr.message);
         } else {
-          if (onAuthSuccess) onAuthSuccess();
-          return;
+          setResendSuccessMessage('A secure password reset link has been dispatched to your email.');
+          setIsSettingPassword(false);
         }
+        return;
       }
 
-      // If hashedToken is available, verify OTP in-browser without external redirect
-      if (res.hashedToken) {
-        try {
-          const { data: verifyData, error: verifyErr } = await supabase.auth.verifyOtp({
-            token_hash: res.hashedToken,
-            type: 'magiclink' as any,
-          });
-          if (!verifyErr && verifyData?.session) {
-            if (onAuthSuccess) onAuthSuccess();
-            return;
-          }
-        } catch (otpErr) {
-          console.warn('[Activation OTP Verification Error]:', otpErr);
-        }
-      }
-
-      // If emailOtp is available, verify via OTP code
-      if (res.emailOtp) {
-        try {
-          const { data: otpData, error: otpErr } = await supabase.auth.verifyOtp({
-            email: targetEmail,
-            token: res.emailOtp,
-            type: 'email' as any,
-          });
-          if (!otpErr && otpData?.session) {
-            if (onAuthSuccess) onAuthSuccess();
-            return;
-          }
-        } catch (otpErr) {
-          console.warn('[Activation Email OTP Verification Error]:', otpErr);
-        }
-      }
-
-      // If no session acquired automatically, switch to password set view with clear guidance
-      setEmail(targetEmail);
-      setMode('login');
-      setIsSettingPassword(true);
-      setActivationNotice({
-        isActivated: true,
-        email: targetEmail,
-        org: res.organization_name || 'Frostly Seafood Operations',
+      // Update password for the verified session
+      const { error: updateErr } = await supabase.auth.updateUser({
+        password: newPasswordVal,
       });
-      setErrorMessage(null);
+      if (updateErr) {
+        setErrorMessage(updateErr.message);
+        return;
+      }
+
+      setPasswordUpdatedSuccess(true);
+      setIsSettingPassword(false);
+      if (onAuthSuccess) onAuthSuccess();
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Error during activation.');
+      setErrorMessage(err?.message || 'Failed to update password.');
     } finally {
       setIsLoading(false);
     }
@@ -483,6 +456,16 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
           
           {/* Top Brand Header */}
           <div className="mb-6">
+            {onBackToLanding && (
+              <button
+                type="button"
+                onClick={onBackToLanding}
+                className="mb-4 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-900 transition-colors"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Back to Frostly Overview</span>
+              </button>
+            )}
             <div className="flex items-center gap-2.5">
               <span className="p-2 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
                 <Snowflake className="w-5 h-5 text-indigo-600" />
@@ -625,26 +608,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
 
                 <div className="pt-2 border-t border-slate-100 flex flex-col gap-2">
                   <button
-                    id="btn-instant-activate-direct"
-                    type="button"
-                    onClick={() => handleInstantActivate(pendingEmail)}
-                    disabled={isLoading}
-                    className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
-                        <span>Activating &amp; Provisioning Workspace...</span>
-                      </>
-                    ) : (
-                      <>
-                        <ShieldCheck className="w-4 h-4 text-emerald-100" />
-                        <span>Instant 1-Click Activate &amp; Enter Workspace</span>
-                      </>
-                    )}
-                  </button>
-
-                  <button
                     id="btn-resend-confirmation-email"
                     type="button"
                     onClick={handleResendConfirmation}
@@ -707,11 +670,11 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
             <form onSubmit={handleLogin} className="space-y-4">
               {/* Activation Notice Banner if arrived via email link */}
               {activationNotice?.isActivated && (
-                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-950 space-y-2.5 animate-in fade-in duration-300">
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-950 space-y-2 animate-in fade-in duration-300">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 font-bold text-emerald-800">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span>Website Activation Link Verified</span>
+                      <span>Account Verification Confirmed</span>
                     </div>
                     <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
                       Verified
@@ -721,32 +684,8 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
                   <p className="text-xs text-emerald-900 leading-relaxed">
                     Your account for <strong>{activationNotice.email}</strong> is ready.
                     {activationNotice.org ? ` Your workspace "${activationNotice.org}" has been provisioned.` : ''}
+                    {' '}Please enter your password to sign in.
                   </p>
-
-                  <div className="pt-1 flex flex-col sm:flex-row gap-2">
-                    <button
-                      type="button"
-                      id="btn-instant-activate-launch"
-                      disabled={isLoading}
-                      onClick={() => handleInstantActivate()}
-                      className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50"
-                    >
-                      {isLoading ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <ShieldCheck className="w-3.5 h-3.5" />
-                      )}
-                      <span>1-Click Activate &amp; Launch</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setIsSettingPassword(!isSettingPassword)}
-                      className="px-3 py-2 bg-white hover:bg-emerald-100/60 text-emerald-800 border border-emerald-200 font-semibold text-xs rounded-xl transition-colors cursor-pointer text-center"
-                    >
-                      {isSettingPassword ? 'Sign In with Existing Password' : 'Set / Reset Password'}
-                    </button>
-                  </div>
 
                   {passwordUpdatedSuccess && (
                     <p className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-lg">
@@ -776,9 +715,18 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
               {!isSettingPassword ? (
                 <>
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                      Password
-                    </label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold text-slate-700">
+                        Password
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setIsSettingPassword(true)}
+                        className="text-[11px] text-indigo-600 hover:text-indigo-800 font-medium cursor-pointer"
+                      >
+                        Forgot password?
+                      </button>
+                    </div>
                     <div className="relative">
                       <input
                         id="auth-gate-password-input"
@@ -821,28 +769,17 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
                       <span>Log In to Workspace</span>
                     )}
                   </button>
-
-                  {/* Toggle to set/reset password for activated user */}
-                  {activationNotice?.isActivated && (
-                    <div className="text-center pt-1">
-                      <button
-                        type="button"
-                        id="btn-toggle-set-password"
-                        onClick={() => setIsSettingPassword(true)}
-                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium underline underline-offset-2 cursor-pointer"
-                      >
-                        Need to set or update your password? Click here
-                      </button>
-                    </div>
-                  )}
                 </>
               ) : (
-                /* Sub-form: Set New Password */
+                /* Sub-form: Secure Password Recovery */
                 <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
                   <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <KeyRound className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>Set New Password for {email}</span>
+                    <span>Password Reset / Update</span>
                   </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    Enter your new password below. If you do not have an active session, a secure reset link will be sent to your work email.
+                  </p>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                       New Password (min 6 characters)
@@ -892,7 +829,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
                       ) : (
                         <CheckCircle2 className="w-3.5 h-3.5" />
                       )}
-                      <span>Set Password &amp; Sign In</span>
+                      <span>Update Password</span>
                     </button>
                   </div>
                 </div>

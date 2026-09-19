@@ -18,12 +18,12 @@ export class SettingsRepository {
     return getCurrentOrganizationId();
   }
 
-  private getScopedStorageKey(orgId?: string): string {
+  private getScopedStorageKey(orgId?: string): string | null {
     const activeOrg = orgId || getCurrentOrganizationId();
-    if (activeOrg && activeOrg !== 'org-frostly-hq' && activeOrg !== '00000000-0000-0000-0000-000000000001') {
+    if (activeOrg && activeOrg !== 'org-frostly-hq' && activeOrg !== '00000000-0000-0000-0000-000000000001' && activeOrg !== '00000000-0000-0000-0000-000000000000') {
       return `${STORAGE_KEY}__tenant_${activeOrg}`;
     }
-    return `${STORAGE_KEY}__demo`;
+    return null;
   }
 
   public async getSettings(fallback: AppSettings): Promise<AppSettings> {
@@ -80,6 +80,7 @@ export class SettingsRepository {
   private getLocalCache(orgId?: string): AppSettings | null {
     try {
       const key = this.getScopedStorageKey(orgId);
+      if (!key) return null;
       const raw = localStorage.getItem(key);
       return raw ? JSON.parse(raw) : null;
     } catch {
@@ -90,6 +91,7 @@ export class SettingsRepository {
   private setLocalCache(settings: AppSettings, orgId?: string): void {
     try {
       const key = this.getScopedStorageKey(orgId);
+      if (!key) return;
       localStorage.setItem(key, JSON.stringify(settings));
     } catch (e) {
       console.warn('[SettingsRepository] Error writing local cache:', e);

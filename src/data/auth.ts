@@ -769,22 +769,35 @@ export async function signUpAndCreateOrganization(
 }
 
 /**
- * Set password and activate account for users arriving from an activation email link
+ * Set / update password for authenticated users or recovery sessions
+ * Enforces authenticated session security (prevents unauthenticated ATO attacks)
  */
 export async function setPasswordAndActivate(
   email: string,
   newPassword: string
 ): Promise<{ success: boolean; error: string | null }> {
+  if (!isSupabaseConfigured) {
+    return { success: false, error: 'Supabase client is not configured' };
+  }
+
   try {
-    const resp = await fetch('/api/auth/set-password-and-activate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email.trim(), password: newPassword }),
-    });
-    const data = await resp.json();
-    if (!resp.ok || !data.success) {
-      return { success: false, error: data.error || 'Failed to update password' };
+    // Verify an authenticated session exists before permitting password modifications
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session) {
+      return {
+        success: false,
+        error: 'Password modification requires an authenticated session. Please verify via your email link or use the password reset flow.',
+      };
     }
+
+    const { error: updateErr } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+
+    if (updateErr) {
+      return { success: false, error: updateErr.message };
+    }
+
     return { success: true, error: null };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Network error updating password' };
@@ -891,9 +904,10 @@ export async function signUpAndAcceptInvite(
 }
 
 /**
- * 1-Click Instant Activation helper for email links or direct admin confirmation
+ * Decommissioned instant activation helper.
+ * Enforces secure email verification and cryptographic token verification.
  */
-export async function instantActivateAccount(email: string, password?: string): Promise<{
+export async function instantActivateAccount(_email: string, _password?: string): Promise<{
   success: boolean;
   actionLink?: string;
   hashedToken?: string;
@@ -902,27 +916,10 @@ export async function instantActivateAccount(email: string, password?: string): 
   organization_name?: string;
   error?: string;
 }> {
-  try {
-    const res = await fetch('/api/auth/instant-activate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email.trim(), password }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      return { success: false, error: data.error || 'Failed to activate account' };
-    }
-    return {
-      success: true,
-      actionLink: data.actionLink,
-      hashedToken: data.hashedToken,
-      emailOtp: data.emailOtp,
-      organization_id: data.organization_id,
-      organization_name: data.organization_name,
-    };
-  } catch (err: any) {
-    return { success: false, error: err?.message || 'Network error during activation' };
-  }
+  return {
+    success: false,
+    error: 'Direct unauthenticated activation is decommissioned for security. Please use the verification link sent to your registered email address or your invitation code.',
+  };
 }
 
 /**
@@ -978,6 +975,21 @@ export interface AddWorkerParams {
   sendEmail?: boolean;
 }
 
+async function getAuthHeaders(includeJson: boolean = false): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
+  if (includeJson) {
+    headers['Content-Type'] = 'application/json';
+  }
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  } catch {}
+  return headers;
+}
+
 /**
  * Retrieves all active/suspended workers and pending invites for the given tenant workspace.
  */
@@ -994,7 +1006,10 @@ export async function listWorkspaceWorkers(organizationId: string): Promise<Work
 
   // 1. Try server-side endpoint first (has service-role visibility into users & invites)
   try {
-    const res = await fetch(`/api/tenant/workers?organizationId=${encodeURIComponent(organizationId)}`);
+    const headers = await getAuthHeaders();
+    const res = await fetch(`/api/tenant/workers?organizationId=${encodeURIComponent(organizationId)}`, {
+      headers,
+    });
     if (res.ok) {
       const data = await res.json();
       if (data.success) {
@@ -1129,9 +1144,10 @@ export async function addWorkerToWorkspace(params: AddWorkerParams): Promise<{
   message?: string;
 }> {
   try {
+    const headers = await getAuthHeaders(true);
     const res = await fetch('/api/tenant/workers', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(params),
     });
 
@@ -1176,9 +1192,10 @@ export async function updateWorkspaceWorker(
   }
 ): Promise<{ success: boolean; worker?: WorkspaceWorker; error?: string }> {
   try {
+    const headers = await getAuthHeaders(true);
     const res = await fetch(`/api/tenant/workers/${encodeURIComponent(workerId)}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ organizationId, ...updates }),
     });
 
@@ -1218,9 +1235,10 @@ export async function removeWorkerOrInvite(
   isInvite: boolean
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    const headers = await getAuthHeaders();
     const res = await fetch(
       `/api/tenant/workers/${encodeURIComponent(id)}?organizationId=${encodeURIComponent(organizationId)}&isInvite=${isInvite}`,
-      { method: 'DELETE' }
+      { method: 'DELETE', headers }
     );
     const data = await res.json();
     if (!res.ok || !data.success) {
@@ -1256,9 +1274,10 @@ export async function resetWorkerPassword(
   organizationName?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    const headers = await getAuthHeaders(true);
     const res = await fetch(`/api/tenant/workers/${encodeURIComponent(workerId)}/reset-password`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ email, password: newPassword, organizationName }),
     });
     const data = await res.json();

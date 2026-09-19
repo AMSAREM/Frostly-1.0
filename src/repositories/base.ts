@@ -4,6 +4,17 @@ import { syncQueue } from '../sync/queue';
 import { SyncOperationType } from '../sync/types';
 import { ensureValidUuid } from '../mappers/notificationMapper';
 
+export const INVALID_ORG_IDS = new Set([
+  'org-frostly-hq',
+  '00000000-0000-0000-0000-000000000000',
+  '00000000-0000-0000-0000-000000000001',
+]);
+
+export function isInvalidOrgId(orgId?: string | null): boolean {
+  if (!orgId) return true;
+  return INVALID_ORG_IDS.has(orgId) || /^00000000-0000-0000-0000-00000000000[01]$/.test(orgId);
+}
+
 export class OrganizationNotResolvedError extends Error {
   constructor(action: string, tableName: string) {
     super(`[BaseRepository:${tableName}] Organization ID could not be resolved for action '${action}'. Operation aborted to prevent cross-tenant data leakage.`);
@@ -21,9 +32,20 @@ export interface RepositoryOptions<TDomain, TDatabaseRow> {
 }
 
 export class BaseRepository<TDomain, TDatabaseRow> {
-  protected static unknownColumnsByTable: Map<string, Set<string>> = new Map([
-    ['inventory_batches', new Set(['is_retail_cut_lot', 'linked_product_id', 'product_sku'])],
-  ]);
+  protected static unknownColumnsByTable: Map<string, Set<string>> = new Map();
+
+  public static registerMissingColumn(tableName: string, columnName: string) {
+    let set = BaseRepository.unknownColumnsByTable.get(tableName);
+    if (!set) {
+      set = new Set<string>();
+      BaseRepository.unknownColumnsByTable.set(tableName, set);
+    }
+    set.add(columnName);
+  }
+
+  public static getMissingColumns(tableName: string): Set<string> | undefined {
+    return BaseRepository.unknownColumnsByTable.get(tableName);
+  }
 
   protected tableName: string;
   protected storageKey: string;
@@ -47,7 +69,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   public async getOrganizationId(): Promise<string> {
     try {
       const profile = await getStaffProfile();
-      if (profile?.organization_id && profile.organization_id !== 'org-frostly-hq') {
+      if (profile?.organization_id && !isInvalidOrgId(profile.organization_id)) {
         return profile.organization_id;
       }
     } catch {
@@ -63,7 +85,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
    */
   public getScopedStorageKey(orgId?: string): string | null {
     const activeOrg = orgId || getCurrentOrganizationId();
-    if (activeOrg && activeOrg !== 'org-frostly-hq' && activeOrg !== '00000000-0000-0000-0000-000000000001') {
+    if (!isInvalidOrgId(activeOrg)) {
       return `${this.storageKey}__tenant_${activeOrg}`;
     }
     return null;
@@ -254,7 +276,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     // Populate organization_id for multi-tenant composite key and complete isolation
     if (this.onConflict.includes('organization_id') || orgId) {
       const resolvedOrg = orgId || (await this.getOrganizationId());
-      if (!resolvedOrg || resolvedOrg === '00000000-0000-0000-0000-000000000001' || resolvedOrg === 'org-frostly-hq') {
+      if (isInvalidOrgId(resolvedOrg)) {
         throw new OrganizationNotResolvedError('save', this.tableName);
       }
       dbPayload.organization_id = resolvedOrg;
@@ -472,7 +494,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
           // Populate organization_id for multi-tenant composite key
           if (this.onConflict.includes('organization_id') || orgId) {
             const queueOrg = item.organizationId || orgId || (await this.getOrganizationId());
-            if (!queueOrg || queueOrg === '00000000-0000-0000-0000-000000000001' || queueOrg === 'org-frostly-hq') {
+            if (isInvalidOrgId(queueOrg)) {
               throw new OrganizationNotResolvedError('flushQueue', this.tableName);
             }
             payload.organization_id = queueOrg;
