@@ -21,6 +21,10 @@ import { PWAStatusBanner } from './components/PWAStatusBanner';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { usePWAInstall, useNetworkStatus } from './utils/pwa';
 
+import { TrialCountdownBanner } from './components/TrialCountdownBanner';
+import { LegalFooter } from './components/LegalFooter';
+import { LegalModal } from './components/LegalModal';
+
 import { 
   INITIAL_BATCHES, 
   INITIAL_ORDERS, 
@@ -85,6 +89,12 @@ export default function App() {
   const { isInstallable, isInstalled, isIOS, isStandalone, triggerInstall } = usePWAInstall();
   const { isOnline } = useNetworkStatus();
   const [isInstallModalOpen, setIsInstallModalOpen] = useState<boolean>(false);
+
+  // Legal & Architecture Modals
+  const [legalModal, setLegalModal] = useState<{ isOpen: boolean; type: 'privacy' | 'terms' | 'sitemap' }>({
+    isOpen: false,
+    type: 'privacy'
+  });
 
   // Settings State with LocalStorage Persistence
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -1482,6 +1492,15 @@ export default function App() {
         companyName={companyName}
       />
 
+      {/* Trial and Days Count Status Banner */}
+      <TrialCountdownBanner
+        organization={staffProfile?.organization}
+        onUpgradeClick={() => {
+          setActiveTab('settings');
+          setSettingsCategory('subscription');
+        }}
+      />
+
       {/* Organization Licensing & Grace Period Status Alert Bar */}
       {isSubscriptionPastDue(staffProfile?.organization) && (
         <div id="app-past-due-banner" className="bg-amber-500 text-slate-950 px-4 py-2 text-xs font-medium flex items-center justify-between shadow-xs z-30">
@@ -1747,6 +1766,21 @@ export default function App() {
         isIOS={isIOS}
         isInstallable={isInstallable}
         isStandalone={isStandalone}
+      />
+
+      {/* Legal Footer */}
+      <LegalFooter
+        onOpenPrivacy={() => setLegalModal({ isOpen: true, type: 'privacy' })}
+        onOpenTerms={() => setLegalModal({ isOpen: true, type: 'terms' })}
+        onOpenSitemap={() => setLegalModal({ isOpen: true, type: 'sitemap' })}
+      />
+
+      {/* Privacy Policy, Terms, and Sitemap Dialog Modal */}
+      <LegalModal
+        isOpen={legalModal.isOpen}
+        type={legalModal.type}
+        onClose={() => setLegalModal(prev => ({ ...prev, isOpen: false }))}
+        onSwitchType={(type) => setLegalModal({ isOpen: true, type })}
       />
     </div>
   );

@@ -1,0 +1,14 @@
+# Frostly Seafood Business Platform - Robots Configuration
+User-agent: *
+Allow: /
+Allow: /privacy
+Allow: /terms
+Allow: /sitemap.xml
+
+# Disallow private operational API endpoints and internal sync routes
+Disallow: /api/
+Disallow: /auth/
+Disallow: /admin/
+
+# Sitemap
+Sitemap: https://frostly.io/sitemap.xml
