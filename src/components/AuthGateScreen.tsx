@@ -469,7 +469,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
             )}
             <div className="flex items-center gap-3">
               <FrostlyLogo size={36} iconOnly variant="blue" />
-              <span className="text-2xl font-black font-heading tracking-tight text-slate-900">
+              <span className="text-2xl font-black font-heading tracking-tight text-slate-900 -ml-[15px]">
                 Frostly
               </span>
             </div>

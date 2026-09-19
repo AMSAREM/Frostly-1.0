@@ -46,7 +46,7 @@ export const LandingHeader: React.FC<LandingHeaderProps> = ({
             >
               <FrostlyLogo size={28} iconOnly variant="blue" />
               <div className="flex items-center">
-                <span className="font-semibold text-xl tracking-tight text-slate-900 group-hover:text-blue-600 transition-colors">
+                <span className="font-semibold text-xl tracking-tight text-slate-900 group-hover:text-blue-600 transition-colors pl-0 -ml-[15px]">
                   Frostly
                 </span>
                 <span className="mx-2.5 text-slate-300 font-light hidden sm:inline">|</span>

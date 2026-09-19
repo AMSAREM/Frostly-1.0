@@ -173,7 +173,7 @@ export const Header: React.FC<HeaderProps> = ({
               className="flex items-center gap-2 sm:gap-2.5 text-left group cursor-pointer focus:outline-none shrink-0"
               title="Return to Dashboard Overview"
             >
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white border border-slate-200/80 shadow-2xs flex items-center justify-center p-1 group-hover:border-blue-300 group-hover:shadow-xs transition-all shrink-0">
+              <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-white border border-slate-200/80 shadow-2xs flex items-center justify-center p-1.5 group-hover:border-blue-300 group-hover:shadow-xs transition-all shrink-0">
                 <FrostlyLogo size={24} iconOnly variant="blue" />
               </div>
               <div className="flex flex-col min-w-0">

@@ -319,7 +319,7 @@ export const TenantOnboardingScreen: React.FC<TenantOnboardingScreenProps> = ({
       {/* Top Header */}
       <header className="max-w-4xl w-full mx-auto flex items-center justify-between py-3 border-b border-slate-800">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center p-1 shadow-md">
+          <div className="w-12 h-12 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center p-1.5 shadow-md shrink-0">
             <FrostlyLogo size={24} iconOnly variant="blue" />
           </div>
           <div>

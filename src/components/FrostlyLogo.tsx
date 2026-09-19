@@ -30,44 +30,44 @@ export const FrostlyLogo: React.FC<FrostlyLogoProps> = ({
   subtext = 'Cold-Chain Platform',
   id = 'frostly-brand-logo'
 }) => {
-  // Map size presets to pixel dimensions
-  let iconPx = 32;
-  let textClass = 'text-lg';
-  let subtextClass = 'text-[10px]';
+  // Map size presets to pixel dimensions (scaled 50% larger for prominent brand presence)
+  let iconPx = 48; // 32 * 1.5
+  let textClass = 'text-xl';
+  let subtextClass = 'text-xs';
 
   if (typeof size === 'number') {
-    iconPx = size;
-    if (size <= 20) textClass = 'text-xs';
-    else if (size <= 28) textClass = 'text-sm';
-    else if (size <= 36) textClass = 'text-base';
-    else if (size <= 48) textClass = 'text-xl';
-    else textClass = 'text-2xl';
+    iconPx = Math.round(size * 1.5);
+    if (size <= 20) textClass = 'text-sm';
+    else if (size <= 28) textClass = 'text-base';
+    else if (size <= 36) textClass = 'text-lg';
+    else if (size <= 48) textClass = 'text-2xl';
+    else textClass = 'text-3xl';
   } else {
     switch (size) {
       case 'xs':
-        iconPx = 18;
-        textClass = 'text-xs font-bold';
-        subtextClass = 'text-[8px]';
-        break;
-      case 'sm':
-        iconPx = 24;
+        iconPx = 27; // 18 * 1.5
         textClass = 'text-sm font-bold';
         subtextClass = 'text-[9px]';
         break;
-      case 'md':
-        iconPx = 32;
-        textClass = 'text-lg font-bold';
+      case 'sm':
+        iconPx = 36; // 24 * 1.5
+        textClass = 'text-base font-bold';
         subtextClass = 'text-[10px]';
         break;
-      case 'lg':
-        iconPx = 42;
-        textClass = 'text-2xl font-black';
+      case 'md':
+        iconPx = 48; // 32 * 1.5
+        textClass = 'text-xl font-bold';
         subtextClass = 'text-xs';
         break;
-      case 'xl':
-        iconPx = 56;
+      case 'lg':
+        iconPx = 63; // 42 * 1.5
         textClass = 'text-3xl font-black';
-        subtextClass = 'text-xs tracking-wider';
+        subtextClass = 'text-sm';
+        break;
+      case 'xl':
+        iconPx = 84; // 56 * 1.5
+        textClass = 'text-4xl font-black';
+        subtextClass = 'text-sm tracking-wider';
         break;
     }
   }
