@@ -64,6 +64,7 @@ const sampleBatch: InventoryBatch = {
 describe('BatchRepository & Data Flow Tests', () => {
   beforeEach(() => {
     localStorageMock.clear();
+    localStorageMock.setItem('frostly_active_org_id', 'org-test-batch');
     syncQueue.clear();
   });
 

@@ -31,6 +31,7 @@ import {
 } from '../data/auth';
 import { customerRepository } from '../repositories/customerRepository';
 import { batchRepository } from '../repositories/batchRepository';
+import { OrganizationNotResolvedError } from '../repositories/base';
 import { syncQueue } from '../sync/queue';
 import { Customer, InventoryBatch } from '../types';
 
@@ -211,6 +212,7 @@ describe('Multi-Tenant Migration SQL DDL Contract & Static Syntax Validation', (
   describe('Customer Financial Handlers & Persistence Verification', () => {
     beforeEach(() => {
       localStorage.clear();
+      localStorage.setItem('frostly_active_org_id', 'org-test-financials');
       syncQueue.clear();
     });
 
@@ -312,30 +314,34 @@ describe('Multi-Tenant Migration SQL DDL Contract & Static Syntax Validation', (
       // Setup Tenant A data
       const lotA: InventoryBatch = {
         id: 'LOT-A-999',
-        species: 'Yellowfin Tuna',
+        speciesId: 'sp-tuna',
+        speciesName: 'Yellowfin Tuna',
         scientificName: 'Thunnus albacares',
-        grade: 'Sushi / Sashimi Grade #1',
-        room: 'Blast Freezer 1',
-        weightKg: 4500,
-        tempC: -28.5,
-        daysInStorage: 2,
-        costPerKgUSD: 18.5,
-        totalValueUSD: 83250,
-        supplier: 'Tema Fleet Co',
-        catchDate: '2026-03-01',
+        category: 'Pelagic',
+        harvestDate: '2026-03-01',
+        landingPort: 'Port of Tema',
+        vesselName: 'Tema Explorer',
+        vesselRegistration: 'GH-9912',
+        captainName: 'Capt. Mensah',
+        faoArea: 'FAO 34',
+        coordinates: { lat: 5.6, lng: 0.0, description: 'Gulf of Guinea' },
+        gearType: 'Pole & Line',
+        grade: 'Sashimi AAA',
+        initialWeightKg: 4500,
+        availableWeightKg: 4500,
+        allocatedWeightKg: 0,
+        storageZone: 'Super-Cryo Deep Freeze (-60°C)',
+        currentTempCelsius: -58.5,
+        targetTempCelsius: -60.0,
+        costPerKg: 18.5,
+        wholesalePricePerKg: 24.0,
+        certifications: ['MSC Certified', 'FDA HACCP'],
+        inspectionStatus: 'Passed',
+        receivedDate: '2026-03-01',
         expiryDate: '2027-03-01',
-        status: 'Optimal',
-        qrCode: 'QR-A-999',
-        harvestMethod: 'Pole & Line',
-        rfidTag: 'RFID-A-999',
-        traceabilityHash: 'hash-a',
-        faoZone: 'FAO 34',
-        haccpCertified: true,
-        qualityScore: 98,
-        marketYieldPct: 92,
-        fatContentPct: 14,
-        moisturePct: 70,
-        histamineLevelPpm: 2.1
+        qrCodeSeed: 'QR-A-999',
+        notes: 'Tenant A isolated lot',
+        coreTempCelsius: -58.0
       };
 
       batchRepository.setLocalCache([lotA], tenantA);
@@ -384,6 +390,106 @@ describe('Multi-Tenant Migration SQL DDL Contract & Static Syntax Validation', (
       syncQueue.clearForTenant(tenantA);
       expect(syncQueue.getAll(tenantA)).toHaveLength(0);
       expect(syncQueue.getAll(tenantB)).toHaveLength(1);
+    });
+
+    it('fails closed in getScopedStorageKey when orgId is unresolved, undefined, or sentinel', () => {
+      // Ensure no active organization is set in localStorage
+      localStorageMock.removeItem('frostly_active_org_id');
+
+      // Unresolved/empty org must return null rather than falling back to __demo
+      expect(batchRepository.getScopedStorageKey('')).toBeNull();
+      expect(batchRepository.getScopedStorageKey(undefined)).toBeNull();
+      expect(batchRepository.getScopedStorageKey('org-frostly-hq')).toBeNull();
+      expect(batchRepository.getScopedStorageKey('00000000-0000-0000-0000-000000000001')).toBeNull();
+
+      // Valid tenant ID must return strictly tenant-scoped key
+      expect(batchRepository.getScopedStorageKey('org-acme-seafood')).toBe('frostly_batches_v3__tenant_org-acme-seafood');
+    });
+
+    it('fails closed on cache operations when orgId is unresolved without leaking to shared demo keys', () => {
+      localStorageMock.clear();
+
+      const sampleBatchItem: InventoryBatch = {
+        id: 'LOT-FAIL-CLOSED-01',
+        speciesId: 'sp-cod',
+        speciesName: 'Atlantic Cod',
+        scientificName: 'Gadus morhua',
+        category: 'Groundfish',
+        harvestDate: '2026-03-01',
+        landingPort: 'Port of Tromsø',
+        vesselName: 'Nordic Explorer',
+        vesselRegistration: 'NOR-77492',
+        captainName: 'Capt. Dahl',
+        faoArea: 'FAO 27',
+        coordinates: { lat: 69.6, lng: 18.9, description: 'Offshore Tromsø' },
+        gearType: 'Longline',
+        grade: 'Grade #1',
+        initialWeightKg: 500,
+        availableWeightKg: 500,
+        allocatedWeightKg: 0,
+        storageZone: 'Commercial Cold Storage (-22°C)',
+        currentTempCelsius: -22.0,
+        targetTempCelsius: -22.0,
+        costPerKg: 10.0,
+        wholesalePricePerKg: 15.0,
+        certifications: ['MSC Certified', 'FDA HACCP'],
+        inspectionStatus: 'Passed',
+        receivedDate: '2026-03-01',
+        expiryDate: '2027-03-01',
+        qrCodeSeed: 'QR-TEST',
+        notes: 'Sample batch item',
+        coreTempCelsius: -21.5
+      };
+
+      // Writing to local cache with unresolved org should be safely rejected
+      batchRepository.setLocalCache([sampleBatchItem], '');
+      expect(localStorageMock.getItem('frostly_inventory_batches_v3__demo')).toBeNull();
+
+      // Reading local cache with unresolved org should return fallback
+      const cached = batchRepository.getLocalCache([], '');
+      expect(cached).toEqual([]);
+    });
+
+    it('aborts and throws OrganizationNotResolvedError in save() instead of defaulting to fabricated UUID', async () => {
+      localStorageMock.clear();
+      vi.spyOn(batchRepository, 'canAccessSupabase').mockResolvedValue(false);
+
+      const sampleBatchItem: InventoryBatch = {
+        id: 'LOT-UNRESOLVED-01',
+        speciesId: 'sp-had',
+        speciesName: 'Haddock',
+        scientificName: 'Melanogrammus aeglefinus',
+        category: 'Groundfish',
+        harvestDate: '2026-03-01',
+        landingPort: 'Port of Tromsø',
+        vesselName: 'Nordic Explorer',
+        vesselRegistration: 'NOR-77492',
+        captainName: 'Capt. Dahl',
+        faoArea: 'FAO 27',
+        coordinates: { lat: 69.6, lng: 18.9, description: 'Offshore Tromsø' },
+        gearType: 'Trawl',
+        grade: 'Grade #1',
+        initialWeightKg: 200,
+        availableWeightKg: 200,
+        allocatedWeightKg: 0,
+        storageZone: 'Commercial Cold Storage (-22°C)',
+        currentTempCelsius: -20.0,
+        targetTempCelsius: -22.0,
+        costPerKg: 8.0,
+        wholesalePricePerKg: 12.0,
+        certifications: ['FDA HACCP'],
+        inspectionStatus: 'Passed',
+        receivedDate: '2026-03-01',
+        expiryDate: '2027-03-01',
+        qrCodeSeed: 'QR-TEST-HAD',
+        notes: 'Sample batch item',
+        coreTempCelsius: -19.5
+      };
+
+      // Mock getOrganizationId to return empty string (unresolved)
+      vi.spyOn(batchRepository, 'getOrganizationId').mockResolvedValue('');
+
+      await expect(batchRepository.save(sampleBatchItem, true)).rejects.toThrow(OrganizationNotResolvedError);
     });
   });
 });

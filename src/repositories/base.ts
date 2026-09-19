@@ -4,6 +4,13 @@ import { syncQueue } from '../sync/queue';
 import { SyncOperationType } from '../sync/types';
 import { ensureValidUuid } from '../mappers/notificationMapper';
 
+export class OrganizationNotResolvedError extends Error {
+  constructor(action: string, tableName: string) {
+    super(`[BaseRepository:${tableName}] Organization ID could not be resolved for action '${action}'. Operation aborted to prevent cross-tenant data leakage.`);
+    this.name = 'OrganizationNotResolvedError';
+  }
+}
+
 export interface RepositoryOptions<TDomain, TDatabaseRow> {
   tableName: string;
   storageKey: string;
@@ -50,14 +57,16 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   }
 
   /**
-   * Synchronously compute the scoped localStorage key for a tenant
+   * Synchronously compute the scoped localStorage key for a tenant.
+   * Fails closed: returns null if the organization cannot be resolved,
+   * preventing cross-tenant leakage or fallback into a shared demo namespace.
    */
-  public getScopedStorageKey(orgId?: string): string {
+  public getScopedStorageKey(orgId?: string): string | null {
     const activeOrg = orgId || getCurrentOrganizationId();
     if (activeOrg && activeOrg !== 'org-frostly-hq' && activeOrg !== '00000000-0000-0000-0000-000000000001') {
       return `${this.storageKey}__tenant_${activeOrg}`;
     }
-    return `${this.storageKey}__demo`;
+    return null;
   }
 
   /**
@@ -86,11 +95,15 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   }
 
   /**
-   * Read entities from tenant-scoped local storage cache
+   * Read entities from tenant-scoped local storage cache.
+   * Fails closed: returns fallback if organization is not resolved.
    */
   public getLocalCache(fallback: TDomain[] = [], orgId?: string): TDomain[] {
+    const key = this.getScopedStorageKey(orgId);
+    if (!key) {
+      return fallback;
+    }
     try {
-      const key = this.getScopedStorageKey(orgId);
       const stored = localStorage.getItem(key);
       if (stored) {
         const parsed = JSON.parse(stored);
@@ -105,11 +118,16 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   }
 
   /**
-   * Update entities in tenant-scoped local storage cache
+   * Update entities in tenant-scoped local storage cache.
+   * Fails closed: rejects writes if organization cannot be resolved.
    */
   public setLocalCache(items: TDomain[], orgId?: string): void {
+    const key = this.getScopedStorageKey(orgId);
+    if (!key) {
+      console.warn(`[BaseRepository:${this.tableName}] setLocalCache rejected: organization could not be resolved.`);
+      return;
+    }
     try {
-      const key = this.getScopedStorageKey(orgId);
       localStorage.setItem(key, JSON.stringify(items));
     } catch (e) {
       console.warn(`[BaseRepository:${this.tableName}] Error saving to localStorage:`, e);
@@ -120,8 +138,9 @@ export class BaseRepository<TDomain, TDatabaseRow> {
    * Explicitly purge local storage cache for a given tenant or active tenant
    */
   public clearTenantCache(orgId?: string): void {
+    const key = this.getScopedStorageKey(orgId);
+    if (!key) return;
     try {
-      const key = this.getScopedStorageKey(orgId);
       localStorage.removeItem(key);
     } catch (e) {
       console.warn(`[BaseRepository:${this.tableName}] Error clearing tenant cache:`, e);
@@ -234,7 +253,11 @@ export class BaseRepository<TDomain, TDatabaseRow> {
 
     // Populate organization_id for multi-tenant composite key and complete isolation
     if (this.onConflict.includes('organization_id') || orgId) {
-      dbPayload.organization_id = orgId || getCurrentOrganizationId() || '00000000-0000-0000-0000-000000000001';
+      const resolvedOrg = orgId || (await this.getOrganizationId());
+      if (!resolvedOrg || resolvedOrg === '00000000-0000-0000-0000-000000000001' || resolvedOrg === 'org-frostly-hq') {
+        throw new OrganizationNotResolvedError('save', this.tableName);
+      }
+      dbPayload.organization_id = resolvedOrg;
     }
 
     // 1. Optimistic Tenant-Scoped Local Cache Update
@@ -378,6 +401,10 @@ export class BaseRepository<TDomain, TDatabaseRow> {
         const match = error.message.match(/Could not find the '([^']+)' column of/);
         if (match && match[1]) {
           const missingCol = match[1];
+          console.error(
+            `[CRITICAL SCHEMA DRIFT ALERT] Database table '${this.tableName}' is missing expected column '${missingCol}'. ` +
+            `Please run pending database migrations (e.g. 017_inventory_retail_linking.sql). Dropping column from write payload as temporary runtime fallback.`
+          );
           let set = BaseRepository.unknownColumnsByTable.get(this.tableName);
           if (!set) {
             set = new Set<string>();
@@ -444,7 +471,11 @@ export class BaseRepository<TDomain, TDatabaseRow> {
 
           // Populate organization_id for multi-tenant composite key
           if (this.onConflict.includes('organization_id') || orgId) {
-            payload.organization_id = item.organizationId || orgId || getCurrentOrganizationId() || '00000000-0000-0000-0000-000000000001';
+            const queueOrg = item.organizationId || orgId || (await this.getOrganizationId());
+            if (!queueOrg || queueOrg === '00000000-0000-0000-0000-000000000001' || queueOrg === 'org-frostly-hq') {
+              throw new OrganizationNotResolvedError('flushQueue', this.tableName);
+            }
+            payload.organization_id = queueOrg;
           }
 
           const upsertResult = await this.executeUpsertWithRecovery(payload, this.onConflict);

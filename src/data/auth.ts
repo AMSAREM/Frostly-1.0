@@ -215,9 +215,11 @@ export function getCurrentOrganizationId(): string {
   }
   try {
     const stored = localStorage.getItem('frostly_active_org_id');
-    if (stored) return stored;
+    if (stored && stored !== '00000000-0000-0000-0000-000000000001' && stored !== 'org-frostly-hq') {
+      return stored;
+    }
   } catch {}
-  return '00000000-0000-0000-0000-000000000001';
+  return '';
 }
 
 /**

@@ -46,6 +46,7 @@ const sampleProduct: RetailWholesaleProduct = {
 describe('ProductRepository & Retail Sync Tests', () => {
   beforeEach(() => {
     localStorageMock.clear();
+    localStorageMock.setItem('frostly_active_org_id', 'org-test-retail');
     syncQueue.clear();
     vi.spyOn(productRepository, 'canAccessSupabase').mockResolvedValue(false);
     vi.spyOn(retailTransactionRepository, 'canAccessSupabase').mockResolvedValue(false);

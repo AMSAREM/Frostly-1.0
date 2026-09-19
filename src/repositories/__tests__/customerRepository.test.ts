@@ -49,6 +49,7 @@ const sampleCustomer: Customer = {
 describe('CustomerRepository Unit Suite', () => {
   beforeEach(() => {
     localStorageMock.clear();
+    localStorageMock.setItem('frostly_active_org_id', 'org-test-customer');
     syncQueue.clear();
     // Guarantee test runs offline so BaseRepository exercises local cache and sync queue
     vi.spyOn(customerRepository, 'canAccessSupabase').mockResolvedValue(false);

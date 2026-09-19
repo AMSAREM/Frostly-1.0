@@ -37,6 +37,7 @@ const sampleNotification: SystemNotification = {
 describe('NotificationRepository & Multi-Tenant Sync Tests', () => {
   beforeEach(() => {
     localStorageMock.clear();
+    localStorageMock.setItem('frostly_active_org_id', 'org-test-notif');
     syncQueue.clear();
     vi.spyOn(notificationRepository, 'canAccessSupabase').mockResolvedValue(false);
   });
