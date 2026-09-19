@@ -897,6 +897,7 @@ export async function instantActivateAccount(email: string, password?: string): 
   success: boolean;
   actionLink?: string;
   hashedToken?: string;
+  emailOtp?: string;
   organization_id?: string;
   organization_name?: string;
   error?: string;
@@ -915,6 +916,7 @@ export async function instantActivateAccount(email: string, password?: string): 
       success: true,
       actionLink: data.actionLink,
       hashedToken: data.hashedToken,
+      emailOtp: data.emailOtp,
       organization_id: data.organization_id,
       organization_name: data.organization_name,
     };

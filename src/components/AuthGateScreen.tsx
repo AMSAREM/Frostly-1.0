@@ -181,15 +181,19 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
   };
 
   // Handler for 1-click Instant Activation from verified email links
-  const handleInstantActivate = async (customEmail?: string) => {
-    const targetEmail = customEmail || activationNotice?.email || email || pendingEmail;
-    if (!targetEmail.trim()) return;
+  const handleInstantActivate = async (customEmail?: string | React.MouseEvent) => {
+    const rawEmail = typeof customEmail === 'string' ? customEmail : (activationNotice?.email || email || pendingEmail);
+    const targetEmail = typeof rawEmail === 'string' ? rawEmail.trim() : '';
+    if (!targetEmail) {
+      setErrorMessage('Please provide an email address for activation.');
+      return;
+    }
 
     setIsLoading(true);
     setErrorMessage(null);
 
     try {
-      const res = await instantActivateAccount(targetEmail.trim(), password || undefined);
+      const res = await instantActivateAccount(targetEmail, password || undefined);
       if (!res.success) {
         setErrorMessage(res.error || 'Activation failed. Please try signing in or setting your password below.');
         return;
@@ -199,7 +203,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
 
       // If user has entered password, log in directly
       if (password) {
-        const loginRes = await signIn(targetEmail.trim(), password);
+        const loginRes = await signIn(targetEmail, password);
         if (loginRes.error) {
           setErrorMessage('Account verified and confirmed! Please enter your password to sign in.');
         } else {
@@ -224,13 +228,31 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
         }
       }
 
-      // If no password or token verification, switch to login view with clear prompt
-      setEmail(targetEmail.trim());
+      // If emailOtp is available, verify via OTP code
+      if (res.emailOtp) {
+        try {
+          const { data: otpData, error: otpErr } = await supabase.auth.verifyOtp({
+            email: targetEmail,
+            token: res.emailOtp,
+            type: 'email' as any,
+          });
+          if (!otpErr && otpData?.session) {
+            if (onAuthSuccess) onAuthSuccess();
+            return;
+          }
+        } catch (otpErr) {
+          console.warn('[Activation Email OTP Verification Error]:', otpErr);
+        }
+      }
+
+      // If no session acquired automatically, switch to password set view with clear guidance
+      setEmail(targetEmail);
       setMode('login');
+      setIsSettingPassword(true);
       setActivationNotice({
         isActivated: true,
-        email: targetEmail.trim(),
-        org: res.organization_name || 'Sharp Operations',
+        email: targetEmail,
+        org: res.organization_name || 'Frostly Seafood Operations',
       });
       setErrorMessage(null);
     } catch (err: any) {
@@ -706,7 +728,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
                       type="button"
                       id="btn-instant-activate-launch"
                       disabled={isLoading}
-                      onClick={handleInstantActivate}
+                      onClick={() => handleInstantActivate()}
                       className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50"
                     >
                       {isLoading ? (

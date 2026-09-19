@@ -163,7 +163,7 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-xs">
       <div className="max-w-7xl mx-auto px-2.5 sm:px-4 md:px-6 lg:px-8">
         {/* Main Toolbar Row */}
-        <div className="flex items-center justify-between h-14 sm:h-16 gap-1.5 sm:gap-2.5 md:gap-3 lg:gap-4 min-w-0">
+        <div className="flex items-center justify-between h-13 xs:h-14 sm:h-15 md:h-16 gap-1 xs:gap-1.5 sm:gap-2.5 md:gap-3 lg:gap-4 min-w-0 w-full overflow-hidden sm:overflow-visible">
           
           {/* Left: Brand Identity & Tenant Company Workspace */}
           <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 min-w-0">
@@ -728,7 +728,7 @@ export const Header: React.FC<HeaderProps> = ({
         )}
 
         {/* Primary Navigation Bar (Optimized for Tablet & Desktop) */}
-        <nav className="hidden md:flex items-center gap-1 sm:gap-1.5 overflow-x-auto py-2 no-scrollbar border-t border-slate-100 scroll-smooth">
+        <nav className="hidden md:flex items-center gap-0.5 md:gap-1 lg:gap-1.5 overflow-x-auto py-1.5 md:py-2 no-scrollbar border-t border-slate-100 scroll-smooth touch-pan-x overscroll-x-contain">
           {navItems.map((item) => {
             const isActive = activeTab === item.id;
             return (
@@ -736,7 +736,7 @@ export const Header: React.FC<HeaderProps> = ({
                 key={item.id}
                 id={`nav-tab-${item.id}`}
                 onClick={() => setActiveTab(item.id)}
-                className={`flex items-center gap-1.5 md:gap-2 px-2.5 md:px-3 lg:px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+                className={`flex items-center gap-1 md:gap-1.5 lg:gap-2 px-2 md:px-2.5 lg:px-3.5 py-1 md:py-1.5 rounded-lg md:rounded-xl text-[11px] md:text-xs font-semibold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
                   isActive
                     ? 'bg-slate-900 text-white shadow-xs font-bold'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/90 active:bg-slate-200'

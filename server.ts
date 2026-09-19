@@ -543,24 +543,39 @@ async function startServer() {
 
     try {
       const cleanEmail = email.trim().toLowerCase();
-      const { data: userList } = await adminClient.auth.admin.listUsers();
-      const targetUser = userList?.users?.find(
+      const { data: userList } = await adminClient.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      let targetUser = userList?.users?.find(
         (u) => u.email?.toLowerCase() === cleanEmail
       );
 
       if (!targetUser) {
-        res.status(404).json({ error: `No account found for ${cleanEmail}.` });
-        return;
+        // If user does not exist in Auth, provision directly with confirmed email
+        const { data: newUser, error: createErr } = await adminClient.auth.admin.createUser({
+          email: cleanEmail,
+          password: password,
+          email_confirm: true,
+        });
+        if (createErr || !newUser?.user) {
+          res.status(404).json({ error: createErr?.message || `No account found for ${cleanEmail}.` });
+          return;
+        }
+        targetUser = newUser.user;
+      } else {
+        const { error: updateErr } = await adminClient.auth.admin.updateUserById(targetUser.id, {
+          password: password,
+          email_confirm: true,
+        });
+
+        if (updateErr) {
+          throw updateErr;
+        }
       }
 
-      const { error: updateErr } = await adminClient.auth.admin.updateUserById(targetUser.id, {
-        password: password,
-        email_confirm: true,
-      });
-
-      if (updateErr) {
-        throw updateErr;
-      }
+      // Ensure staff profile is marked active and onboarding complete
+      await adminClient
+        .from('staff_profiles')
+        .update({ is_active: true, needs_onboarding: false, updated_at: new Date().toISOString() })
+        .eq('id', targetUser.id);
 
       res.json({ success: true, message: 'Password updated and account activated successfully.' });
     } catch (err: any) {
@@ -583,14 +598,26 @@ async function startServer() {
 
     try {
       const cleanEmail = email.trim().toLowerCase();
-      const { data: userList } = await adminClient.auth.admin.listUsers();
-      const targetUser = userList?.users?.find(
+      const { data: userList } = await adminClient.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      let targetUser = userList?.users?.find(
         (u) => u.email?.toLowerCase() === cleanEmail
       );
 
       if (!targetUser) {
-        res.status(404).json({ error: `No user account found for ${cleanEmail}.` });
-        return;
+        // Auto-provision user account in Supabase Auth if not yet created
+        const tempPassword = (password && typeof password === 'string' && password.length >= 6)
+          ? password
+          : `Frostly_${Math.random().toString(36).slice(2, 10)}!`;
+        const { data: newUser, error: createErr } = await adminClient.auth.admin.createUser({
+          email: cleanEmail,
+          password: tempPassword,
+          email_confirm: true,
+        });
+        if (createErr || !newUser?.user) {
+          res.status(404).json({ error: createErr?.message || `No user account found for ${cleanEmail}.` });
+          return;
+        }
+        targetUser = newUser.user;
       }
 
       // Mark email confirmed in Supabase Auth (and optionally update password if provided)
@@ -611,6 +638,47 @@ async function startServer() {
 
       let activeOrgId = existingProfile?.organization_id;
       let activeOrgName = '';
+
+      if (!activeOrgId) {
+        // Check if there is an invite in invites table
+        const { data: pendingInvite } = await adminClient
+          .from('invites')
+          .select('*')
+          .ilike('email', cleanEmail)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (pendingInvite) {
+          activeOrgId = pendingInvite.organization_id;
+          const { data: orgData } = await adminClient
+            .from('organizations')
+            .select('name')
+            .eq('id', activeOrgId)
+            .maybeSingle();
+          activeOrgName = orgData?.name || 'Frostly Seafood Operations';
+
+          await adminClient
+            .from('staff_profiles')
+            .upsert({
+              id: targetUser.id,
+              organization_id: activeOrgId,
+              email: cleanEmail,
+              full_name: targetUser.user_metadata?.full_name || cleanEmail.split('@')[0],
+              role: pendingInvite.role || 'ops_staff',
+              department: targetUser.user_metadata?.department || 'Operations',
+              is_active: true,
+              needs_onboarding: false,
+              updated_at: new Date().toISOString(),
+            });
+
+          // Mark invite used
+          await adminClient
+            .from('invites')
+            .update({ used_at: new Date().toISOString() })
+            .eq('id', pendingInvite.id);
+        }
+      }
 
       if (!activeOrgId) {
         // Auto-provision tenant organization from user metadata or fallback
@@ -686,6 +754,7 @@ async function startServer() {
         organization_name: activeOrgName,
         actionLink: linkData?.properties?.action_link,
         hashedToken: linkData?.properties?.hashed_token,
+        emailOtp: linkData?.properties?.email_otp,
         message: 'Account successfully confirmed and activated in Supabase.',
       });
     } catch (err: any) {
