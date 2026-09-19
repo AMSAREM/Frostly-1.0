@@ -50,6 +50,17 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   }
 
   /**
+   * Synchronously compute the scoped localStorage key for a tenant
+   */
+  public getScopedStorageKey(orgId?: string): string {
+    const activeOrg = orgId || getCurrentOrganizationId();
+    if (activeOrg && activeOrg !== 'org-frostly-hq' && activeOrg !== '00000000-0000-0000-0000-000000000001') {
+      return `${this.storageKey}__tenant_${activeOrg}`;
+    }
+    return `${this.storageKey}__demo`;
+  }
+
+  /**
    * Determine if we can safely execute live Supabase calls.
    * Checks:
    * 1. Supabase configured
@@ -75,11 +86,12 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   }
 
   /**
-   * Read entities from local storage cache
+   * Read entities from tenant-scoped local storage cache
    */
-  public getLocalCache(fallback: TDomain[] = []): TDomain[] {
+  public getLocalCache(fallback: TDomain[] = [], orgId?: string): TDomain[] {
     try {
-      const stored = localStorage.getItem(this.storageKey);
+      const key = this.getScopedStorageKey(orgId);
+      const stored = localStorage.getItem(key);
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) {
@@ -93,23 +105,37 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   }
 
   /**
-   * Update entities in local storage cache
+   * Update entities in tenant-scoped local storage cache
    */
-  public setLocalCache(items: TDomain[]): void {
+  public setLocalCache(items: TDomain[], orgId?: string): void {
     try {
-      localStorage.setItem(this.storageKey, JSON.stringify(items));
+      const key = this.getScopedStorageKey(orgId);
+      localStorage.setItem(key, JSON.stringify(items));
     } catch (e) {
       console.warn(`[BaseRepository:${this.tableName}] Error saving to localStorage:`, e);
     }
   }
 
   /**
+   * Explicitly purge local storage cache for a given tenant or active tenant
+   */
+  public clearTenantCache(orgId?: string): void {
+    try {
+      const key = this.getScopedStorageKey(orgId);
+      localStorage.removeItem(key);
+    } catch (e) {
+      console.warn(`[BaseRepository:${this.tableName}] Error clearing tenant cache:`, e);
+    }
+  }
+
+  /**
    * Fetch all records:
-   * 1. Attempts Supabase query if session is valid and online
-   * 2. Automatically syncs result into localStorage
-   * 3. Cleanly falls through to localStorage when unauthenticated or offline
+   * 1. Attempts Supabase query scoped to active tenant organization_id
+   * 2. Automatically syncs result into tenant-scoped localStorage
+   * 3. Cleanly falls through to tenant-scoped localStorage when unauthenticated or offline
    */
   public async getAll(fallback: TDomain[] = []): Promise<TDomain[]> {
+    const orgId = await this.getOrganizationId();
     const canQuery = await this.canAccessSupabase();
 
     if (canQuery) {
@@ -119,8 +145,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
           .select('*')
           .order('created_at', { ascending: false });
 
-        if (this.onConflict.includes('organization_id')) {
-          const orgId = await this.getOrganizationId();
+        if (this.onConflict.includes('organization_id') || orgId) {
           if (orgId) {
             query = query.eq('organization_id', orgId);
           }
@@ -130,12 +155,12 @@ export class BaseRepository<TDomain, TDatabaseRow> {
 
         if (error) {
           console.warn(`[BaseRepository:${this.tableName}] Live query error:`, error.message);
-          return this.getLocalCache(fallback);
+          return this.getLocalCache(fallback, orgId);
         }
 
         if (data && Array.isArray(data)) {
           const domainItems = data.map((row) => this.toDomain(row as unknown as TDatabaseRow));
-          this.setLocalCache(domainItems);
+          this.setLocalCache(domainItems, orgId);
           return domainItems;
         }
       } catch (err) {
@@ -143,13 +168,14 @@ export class BaseRepository<TDomain, TDatabaseRow> {
       }
     }
 
-    return this.getLocalCache(fallback);
+    return this.getLocalCache(fallback, orgId);
   }
 
   /**
-   * Get single record by ID
+   * Get single record by ID scoped to active tenant organization_id
    */
   public async getById(id: string, fallback: TDomain[] = []): Promise<TDomain | null> {
+    const orgId = await this.getOrganizationId();
     const canQuery = await this.canAccessSupabase();
 
     if (canQuery) {
@@ -164,8 +190,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
           .select('*')
           .eq('id', lookupId);
 
-        if (this.onConflict.includes('organization_id')) {
-          const orgId = await this.getOrganizationId();
+        if (this.onConflict.includes('organization_id') || orgId) {
           if (orgId) {
             query = query.eq('organization_id', orgId);
           }
@@ -181,17 +206,18 @@ export class BaseRepository<TDomain, TDatabaseRow> {
       }
     }
 
-    const cached = this.getLocalCache(fallback);
+    const cached = this.getLocalCache(fallback, orgId);
     return cached.find((item) => this.getId(item) === id) || null;
   }
 
   /**
    * Save (insert or update) an entity:
-   * 1. Immediately updates local cache (optimistic response)
-   * 2. Attempts Supabase upsert if authenticated
-   * 3. If unauthenticated, offline, or request fails: enqueues into syncQueue
+   * 1. Immediately updates tenant-scoped local cache (optimistic response)
+   * 2. Attempts Supabase upsert with active organization_id if authenticated
+   * 3. If unauthenticated, offline, or request fails: enqueues into syncQueue with organizationId
    */
   public async save(entity: TDomain, isInsert = false): Promise<TDomain> {
+    const orgId = await this.getOrganizationId();
     const id = this.getId(entity);
     const rawPayload = this.toDatabase(entity);
     const dbPayload: Record<string, any> = { ...rawPayload };
@@ -206,14 +232,13 @@ export class BaseRepository<TDomain, TDatabaseRow> {
       }
     }
 
-    // Populate organization_id for multi-tenant composite key
-    if ((!dbPayload.organization_id || dbPayload.organization_id === 'org-frostly-hq') && this.onConflict.includes('organization_id')) {
-      const orgId = await this.getOrganizationId();
+    // Populate organization_id for multi-tenant composite key and complete isolation
+    if (this.onConflict.includes('organization_id') || orgId) {
       dbPayload.organization_id = orgId || getCurrentOrganizationId() || '00000000-0000-0000-0000-000000000001';
     }
 
-    // 1. Optimistic Local Cache Update
-    const current = this.getLocalCache();
+    // 1. Optimistic Tenant-Scoped Local Cache Update
+    const current = this.getLocalCache([], orgId);
     const existingIndex = current.findIndex((item) => this.getId(item) === id);
 
     let updated: TDomain[];
@@ -223,7 +248,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     } else {
       updated = [entity, ...current];
     }
-    this.setLocalCache(updated);
+    this.setLocalCache(updated, orgId);
 
     // 2. Try Live Supabase
     const canQuery = await this.canAccessSupabase();
@@ -239,12 +264,13 @@ export class BaseRepository<TDomain, TDatabaseRow> {
       }
     }
 
-    // 3. Queue to offline sync queue if offline, unauthenticated, or Supabase call failed
+    // 3. Queue to offline sync queue with organizationId
     const operation: SyncOperationType = isInsert || existingIndex < 0 ? 'INSERT' : 'UPDATE';
     syncQueue.enqueue({
       tableName: this.tableName,
       operation,
       recordId: id,
+      organizationId: orgId,
       payload: dbPayload,
     });
 
@@ -252,13 +278,15 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   }
 
   /**
-   * Delete an entity by ID
+   * Delete an entity by ID scoped to active tenant organization_id
    */
   public async delete(id: string): Promise<void> {
-    // 1. Remove from local cache
-    const current = this.getLocalCache();
+    const orgId = await this.getOrganizationId();
+
+    // 1. Remove from tenant-scoped local cache
+    const current = this.getLocalCache([], orgId);
     const filtered = current.filter((item) => this.getId(item) !== id);
-    this.setLocalCache(filtered);
+    this.setLocalCache(filtered, orgId);
 
     // 2. Try Live Supabase
     const canQuery = await this.canAccessSupabase();
@@ -274,8 +302,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
           .delete()
           .eq('id', lookupId);
 
-        if (this.onConflict.includes('organization_id')) {
-          const orgId = await this.getOrganizationId();
+        if (this.onConflict.includes('organization_id') || orgId) {
           if (orgId) {
             query = query.eq('organization_id', orgId);
           }
@@ -292,11 +319,12 @@ export class BaseRepository<TDomain, TDatabaseRow> {
       }
     }
 
-    // 3. Queue to offline sync queue
+    // 3. Queue to offline sync queue with organizationId
     syncQueue.enqueue({
       tableName: this.tableName,
       operation: 'DELETE',
       recordId: id,
+      organizationId: orgId,
       payload: {},
     });
   }
@@ -304,8 +332,8 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   /**
    * Reset the local cache directly (e.g., during full reset)
    */
-  public resetCache(entities: TDomain[]): void {
-    this.setLocalCache(entities);
+  public resetCache(entities: TDomain[], orgId?: string): void {
+    this.setLocalCache(entities, orgId);
   }
 
   /**
@@ -388,11 +416,16 @@ export class BaseRepository<TDomain, TDatabaseRow> {
       return { processed: 0, failed: 0 };
     }
 
-    const items = syncQueue.getByTable(this.tableName);
+    const orgId = await this.getOrganizationId();
+    const items = syncQueue.getByTable(this.tableName, orgId);
     let processed = 0;
     let failed = 0;
 
     for (const item of items) {
+      // Security guard: ensure queued item belongs to current organization
+      if (item.organizationId && orgId && item.organizationId !== orgId) {
+        continue;
+      }
       try {
         let error: any = null;
 
@@ -410,9 +443,8 @@ export class BaseRepository<TDomain, TDatabaseRow> {
           }
 
           // Populate organization_id for multi-tenant composite key
-          if ((!payload.organization_id || payload.organization_id === 'org-frostly-hq') && this.onConflict.includes('organization_id')) {
-            const orgId = await this.getOrganizationId();
-            payload.organization_id = orgId || getCurrentOrganizationId() || '00000000-0000-0000-0000-000000000001';
+          if (this.onConflict.includes('organization_id') || orgId) {
+            payload.organization_id = item.organizationId || orgId || getCurrentOrganizationId() || '00000000-0000-0000-0000-000000000001';
           }
 
           const upsertResult = await this.executeUpsertWithRecovery(payload, this.onConflict);

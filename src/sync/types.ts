@@ -5,6 +5,7 @@ export interface SyncQueueItem {
   tableName: string;
   operation: SyncOperationType;
   recordId: string;
+  organizationId?: string;
   payload: Record<string, any>;
   timestamp: number;
   retryCount: number;

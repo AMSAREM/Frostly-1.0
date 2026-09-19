@@ -136,11 +136,14 @@ class SyncQueue {
       }
     }
 
+    const orgId = item.organizationId || (item.payload && item.payload.organization_id) || undefined;
+
     const newItem: SyncQueueItem = {
       id: `sync_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       tableName: item.tableName,
       operation: item.operation,
       recordId: item.recordId,
+      organizationId: orgId,
       payload: sanitizedPayload,
       timestamp: Date.now(),
       retryCount: 0,
@@ -167,12 +170,28 @@ class SyncQueue {
     }
   }
 
-  public getAll(): SyncQueueItem[] {
+  public getAll(organizationId?: string): SyncQueueItem[] {
+    if (organizationId) {
+      return this.queue.filter((q) => !q.organizationId || q.organizationId === organizationId);
+    }
     return [...this.queue];
   }
 
-  public getByTable(tableName: string): SyncQueueItem[] {
-    return this.queue.filter((q) => q.tableName === tableName);
+  public getByTable(tableName: string, organizationId?: string): SyncQueueItem[] {
+    return this.queue.filter((q) => {
+      if (q.tableName !== tableName) return false;
+      if (organizationId && q.organizationId && q.organizationId !== organizationId) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  public clearForTenant(organizationId: string): void {
+    this.queue = this.queue.filter(
+      (q) => q.organizationId !== organizationId && q.payload?.organization_id !== organizationId
+    );
+    this.saveToStorage();
   }
 
   public size(): number {

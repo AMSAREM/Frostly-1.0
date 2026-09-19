@@ -284,4 +284,106 @@ describe('Multi-Tenant Migration SQL DDL Contract & Static Syntax Validation', (
       expect(cached?.outstandingBalanceUSD).toBe(8000);
     });
   });
+
+  describe('Tenant Workspace Clean State & Strict Multi-Tenant Data Isolation', () => {
+    const tenantA = 'org-alpha-001';
+    const tenantB = 'org-beta-002';
+
+    beforeEach(() => {
+      localStorage.clear();
+      syncQueue.clear();
+    });
+
+    it('guarantees a newly created tenant workspace starts completely clean with zero data', async () => {
+      // Simulate tenant creation initialization
+      syncQueue.clearForTenant(tenantA);
+      batchRepository.clearTenantCache(tenantA);
+      customerRepository.clearTenantCache(tenantA);
+
+      // Verify that local cache for tenant A returns empty list and no default mock data
+      const cachedBatches = batchRepository.getLocalCache([], tenantA);
+      const cachedCustomers = customerRepository.getLocalCache([], tenantA);
+
+      expect(cachedBatches).toEqual([]);
+      expect(cachedCustomers).toEqual([]);
+    });
+
+    it('prevents data from Tenant A from seeping into Tenant B workspace', async () => {
+      // Setup Tenant A data
+      const lotA: InventoryBatch = {
+        id: 'LOT-A-999',
+        species: 'Yellowfin Tuna',
+        scientificName: 'Thunnus albacares',
+        grade: 'Sushi / Sashimi Grade #1',
+        room: 'Blast Freezer 1',
+        weightKg: 4500,
+        tempC: -28.5,
+        daysInStorage: 2,
+        costPerKgUSD: 18.5,
+        totalValueUSD: 83250,
+        supplier: 'Tema Fleet Co',
+        catchDate: '2026-03-01',
+        expiryDate: '2027-03-01',
+        status: 'Optimal',
+        qrCode: 'QR-A-999',
+        harvestMethod: 'Pole & Line',
+        rfidTag: 'RFID-A-999',
+        traceabilityHash: 'hash-a',
+        faoZone: 'FAO 34',
+        haccpCertified: true,
+        qualityScore: 98,
+        marketYieldPct: 92,
+        fatContentPct: 14,
+        moisturePct: 70,
+        histamineLevelPpm: 2.1
+      };
+
+      batchRepository.setLocalCache([lotA], tenantA);
+
+      // Tenant B accesses their own workspace
+      const tenantBBatches = batchRepository.getLocalCache([], tenantB);
+      expect(tenantBBatches).toEqual([]);
+      expect(tenantBBatches.find(b => b.id === 'LOT-A-999')).toBeUndefined();
+
+      // Tenant A accesses their own workspace
+      const tenantABatches = batchRepository.getLocalCache([], tenantA);
+      expect(tenantABatches).toHaveLength(1);
+      expect(tenantABatches[0].id).toBe('LOT-A-999');
+    });
+
+    it('strictly isolates offline sync queues between tenants', () => {
+      // Enqueue items for Tenant A
+      syncQueue.enqueue({
+        tableName: 'inventory_batches',
+        operation: 'INSERT',
+        recordId: 'LOT-A-100',
+        payload: { id: 'LOT-A-100', species: 'Tuna' },
+        organizationId: tenantA
+      });
+
+      // Enqueue items for Tenant B
+      syncQueue.enqueue({
+        tableName: 'inventory_batches',
+        operation: 'INSERT',
+        recordId: 'LOT-B-200',
+        payload: { id: 'LOT-B-200', species: 'Snapper' },
+        organizationId: tenantB
+      });
+
+      // Verify filtered retrieval
+      const queueA = syncQueue.getAll(tenantA);
+      const queueB = syncQueue.getAll(tenantB);
+
+      expect(queueA).toHaveLength(1);
+      expect(queueA[0].recordId).toBe('LOT-A-100');
+
+      expect(queueB).toHaveLength(1);
+      expect(queueB[0].recordId).toBe('LOT-B-200');
+
+      // Purge Tenant A queue
+      syncQueue.clearForTenant(tenantA);
+      expect(syncQueue.getAll(tenantA)).toHaveLength(0);
+      expect(syncQueue.getAll(tenantB)).toHaveLength(1);
+    });
+  });
 });

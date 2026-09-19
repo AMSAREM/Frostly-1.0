@@ -18,10 +18,18 @@ export class SettingsRepository {
     return getCurrentOrganizationId();
   }
 
+  private getScopedStorageKey(orgId?: string): string {
+    const activeOrg = orgId || getCurrentOrganizationId();
+    if (activeOrg && activeOrg !== 'org-frostly-hq' && activeOrg !== '00000000-0000-0000-0000-000000000001') {
+      return `${STORAGE_KEY}__tenant_${activeOrg}`;
+    }
+    return `${STORAGE_KEY}__demo`;
+  }
+
   public async getSettings(fallback: AppSettings): Promise<AppSettings> {
+    const orgId = await this.getOrganizationId();
     if (isSupabaseConfigured) {
       try {
-        const orgId = await this.getOrganizationId();
         const { data, error } = await supabase
           .from('app_settings')
           .select('*')
@@ -31,7 +39,7 @@ export class SettingsRepository {
 
         if (!error && data) {
           const domainSettings = settingsMapper.toDomain(data as DatabaseAppSettingsRow);
-          this.setLocalCache(domainSettings);
+          this.setLocalCache(domainSettings, orgId);
           return domainSettings;
         }
       } catch (err) {
@@ -39,16 +47,16 @@ export class SettingsRepository {
       }
     }
 
-    const cached = this.getLocalCache();
+    const cached = this.getLocalCache(orgId);
     return cached || fallback;
   }
 
   public async saveSettings(settings: AppSettings): Promise<AppSettings> {
-    this.setLocalCache(settings);
+    const orgId = await this.getOrganizationId();
+    this.setLocalCache(settings, orgId);
 
     if (isSupabaseConfigured) {
       try {
-        const orgId = await this.getOrganizationId();
         const dbPayload: Record<string, any> = { ...settingsMapper.toDatabase(settings) };
         if (!dbPayload.organization_id) {
           dbPayload.organization_id = orgId;
@@ -69,18 +77,20 @@ export class SettingsRepository {
     return settings;
   }
 
-  private getLocalCache(): AppSettings | null {
+  private getLocalCache(orgId?: string): AppSettings | null {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const key = this.getScopedStorageKey(orgId);
+      const raw = localStorage.getItem(key);
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
     }
   }
 
-  private setLocalCache(settings: AppSettings): void {
+  private setLocalCache(settings: AppSettings, orgId?: string): void {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      const key = this.getScopedStorageKey(orgId);
+      localStorage.setItem(key, JSON.stringify(settings));
     } catch (e) {
       console.warn('[SettingsRepository] Error writing local cache:', e);
     }

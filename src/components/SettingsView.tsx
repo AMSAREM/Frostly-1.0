@@ -26,12 +26,15 @@ import {
   Check,
   RotateCcw,
   CreditCard,
-  Cloud
+  Cloud,
+  Sparkles,
+  Users
 } from 'lucide-react';
 import { AppSettings, InventoryBatch, ClientOrder, Customer, Supplier, RetailWholesaleProduct, RetailTransaction, PurchaseOrderLanding, FinancialLedgerEntry } from '../types';
 import { StaffProfile } from '../data/auth';
 import { SubscriptionBillingPanel } from './SubscriptionBillingPanel';
 import { PlatformConsoleView } from './PlatformConsoleView';
+import { WorkersManagementTab } from './WorkersManagementTab';
 import { syncManager, SyncState } from '../sync/syncManager';
 
 interface SettingsViewProps {
@@ -48,6 +51,8 @@ interface SettingsViewProps {
   staffProfile?: StaffProfile | null;
   onRefreshProfile?: () => Promise<void>;
   showPlatformConsole?: boolean;
+  onOpenOnboardingWizard?: () => void;
+  initialCategory?: 'profile' | 'workers' | 'subscription' | 'platform' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data';
   onRestoreAllData: (importedData: {
     batches?: InventoryBatch[];
     orders?: ClientOrder[];
@@ -76,10 +81,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   staffProfile,
   onRefreshProfile,
   showPlatformConsole = false,
+  onOpenOnboardingWizard,
+  initialCategory,
   onRestoreAllData,
   onResetToDefaults
 }) => {
-  const [activeCategory, setActiveCategory] = useState<'profile' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data' | 'subscription' | 'platform'>('profile');
+  const [activeCategory, setActiveCategory] = useState<'profile' | 'workers' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data' | 'subscription' | 'platform'>(
+    initialCategory || 'profile'
+  );
+
+  React.useEffect(() => {
+    if (initialCategory) {
+      setActiveCategory(initialCategory);
+    }
+  }, [initialCategory]);
 
   // If activeCategory is 'platform' but user is not a platform creator, fallback to 'profile'
   React.useEffect(() => {
@@ -203,6 +218,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const navCategories = [
     { id: 'profile', label: 'Plant & Profile', icon: Building2, desc: 'Enterprise registration & facility specs' },
+    { id: 'workers', label: 'Workers & Team', icon: Users, desc: 'Add workers, manage roles & seats' },
     { id: 'subscription', label: 'Subscription & Licensing', icon: CreditCard, desc: 'Plan tiers, staff seats & Stripe billing' },
     ...(showPlatformConsole ? [{ id: 'platform', label: 'Platform Console', icon: ShieldCheck, desc: 'Cross-tenant oversight & manual MoMo billing' }] : []),
     { id: 'coldchain', label: 'Cold-Chain & HACCP', icon: ThermometerSnowflake, desc: 'Temperature alerts & critical limits' },
@@ -238,7 +254,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           )}
 
-          {activeCategory !== 'subscription' && activeCategory !== 'platform' && (
+          {activeCategory !== 'subscription' && activeCategory !== 'platform' && activeCategory !== 'workers' && (
             <button
               id="settings-save-top-btn"
               onClick={handleSave}
@@ -304,6 +320,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               </div>
             </div>
+
+            {onOpenOnboardingWizard && (
+              <button
+                type="button"
+                id="btn-open-onboarding-wizard"
+                onClick={onOpenOnboardingWizard}
+                className="w-full mt-2 py-2 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold border border-indigo-200 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Launch Onboarding Wizard</span>
+              </button>
+            )}
           </div>
 
           {/* Quick System Diagnostics Widget - Flat slate-50/white surface, no gradients */}
@@ -949,6 +977,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             )}
 
+            {/* Category: Workers & Team Management */}
+            {activeCategory === 'workers' && (
+              <div className="animate-in fade-in space-y-6">
+                <WorkersManagementTab
+                  staffProfile={staffProfile ?? null}
+                  onNavigateToSubscription={() => setActiveCategory('subscription')}
+                />
+              </div>
+            )}
+
             {/* Category: Subscription & Licensing */}
             {activeCategory === 'subscription' && (
               <div className="animate-in fade-in space-y-6">
@@ -967,7 +1005,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             )}
 
             {/* Bottom Save Action Bar */}
-            {activeCategory !== 'subscription' && activeCategory !== 'platform' && (
+            {activeCategory !== 'subscription' && activeCategory !== 'platform' && activeCategory !== 'workers' && (
               <div className="flex items-center justify-between pt-2">
                 <span className="text-xs text-slate-400">
                   All changes take effect immediately across all POS and reporting views.

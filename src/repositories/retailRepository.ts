@@ -33,17 +33,24 @@ export class RetailTransactionRepository extends BaseRepository<RetailTransactio
   }
 
   public async getTransactions(fallback: RetailTransaction[] = []): Promise<RetailTransaction[]> {
+    const orgId = await this.getOrganizationId();
     const canQuery = await this.canAccessSupabase();
     if (canQuery) {
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from('retail_transactions')
           .select('*, retail_sale_items(*)')
           .order('created_at', { ascending: false });
 
-        if (!error && data && data.length > 0) {
+        if (orgId) {
+          query = query.eq('organization_id', orgId);
+        }
+
+        const { data, error } = await query;
+
+        if (!error && data) {
           const domainItems = data.map((row: any) => this.toDomain(row));
-          this.setLocalCache(domainItems);
+          this.setLocalCache(domainItems, orgId);
           return domainItems;
         }
       } catch (e) {

@@ -407,6 +407,79 @@ export async function createOrganizationAndAdmin(
     });
 
     if (error) {
+      // If the user already has an organization, update their organization rather than failing
+      if (error.message?.includes('already registered with an organization') || error.message?.includes('violates unique constraint')) {
+        const currentProfile = await getStaffProfile();
+        const activeOrgId = currentProfile?.organization_id;
+        if (activeOrgId) {
+          try {
+            await supabase
+              .from('organizations')
+              .update({
+                name: orgName,
+                billing_currency: options?.currency || 'GHS',
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', activeOrgId);
+
+            if (currentProfile?.id) {
+              await supabase
+                .from('staff_profiles')
+                .update({
+                  full_name: adminFullName || currentProfile.full_name,
+                  department: adminDepartment || currentProfile.department,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', currentProfile.id);
+            }
+
+            const existingSettingsStr = localStorage.getItem('frostly_settings_v2');
+            const existingSettings = existingSettingsStr ? JSON.parse(existingSettingsStr) : {};
+            localStorage.setItem('frostly_settings_v2', JSON.stringify({
+              ...existingSettings,
+              companyName: orgName,
+              facilityCode: options?.facilityCode || `FAC-${orgName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase()}-01`,
+              currency: options?.currency || existingSettings.currency || 'GHS',
+              primaryPort: options?.primaryPort || existingSettings.primaryPort || 'Port of Tema & Pier 38 Fishing Harbour',
+            }));
+
+            await getStaffProfile(true);
+            return { success: true, data: { organization_id: activeOrgId, reconfigured: true } };
+          } catch (updErr: any) {
+            console.warn('[Auth] Update existing org error:', updErr);
+          }
+        }
+      }
+
+      // Fallback: Use server-side admin bootstrap to ensure onboarding completes reliably
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        const resp = await fetch('/api/tenant/bootstrap-onboarding', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: user?.id,
+            email: user?.email,
+            orgName,
+            adminFullName,
+            adminDepartment,
+            options,
+          }),
+        });
+        const serverData = await resp.json();
+        if (resp.ok && serverData.success) {
+          if (serverData.organization_id) {
+            try {
+              localStorage.setItem('frostly_active_org_id', serverData.organization_id);
+            } catch {}
+          }
+          await getStaffProfile(true);
+          return { success: true, data: serverData };
+        }
+      } catch (srvErr) {
+        console.warn('[Auth] Server bootstrap onboarding fallback error:', srvErr);
+      }
+
       return { success: false, error: error.message };
     }
 
@@ -814,4 +887,385 @@ export async function signUpAndAcceptInvite(
     return { session: null, profile: null, error: e?.message || 'Invite registration failed' };
   }
 }
+
+/**
+ * 1-Click Instant Activation helper for email links or direct admin confirmation
+ */
+export async function instantActivateAccount(email: string, password?: string): Promise<{
+  success: boolean;
+  actionLink?: string;
+  hashedToken?: string;
+  organization_id?: string;
+  organization_name?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/auth/instant-activate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim(), password }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Failed to activate account' };
+    }
+    return {
+      success: true,
+      actionLink: data.actionLink,
+      hashedToken: data.hashedToken,
+      organization_id: data.organization_id,
+      organization_name: data.organization_name,
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error during activation' };
+  }
+}
+
+/**
+ * =========================================================================
+ * TENANT WORKSPACE: WORKER & TEAM MANAGEMENT SERVICES
+ * =========================================================================
+ */
+
+export interface WorkspaceWorker {
+  id: string;
+  organization_id: string;
+  email: string;
+  full_name: string;
+  role: 'admin' | 'ops_staff' | 'sales_staff' | 'dispatch_staff' | 'viewer';
+  department: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface WorkspacePendingInvite {
+  id: string;
+  organization_id: string;
+  email: string;
+  role: 'admin' | 'ops_staff' | 'sales_staff' | 'dispatch_staff' | 'viewer';
+  token: string;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface WorkspaceWorkerListResult {
+  success: boolean;
+  workers: WorkspaceWorker[];
+  pendingInvites: WorkspacePendingInvite[];
+  seats: {
+    used: number;
+    max: number;
+    available: number;
+    activeWorkers: number;
+    pendingInvites: number;
+  };
+  organization?: any;
+  error?: string;
+}
+
+export interface AddWorkerParams {
+  organizationId: string;
+  email: string;
+  fullName: string;
+  role?: 'admin' | 'ops_staff' | 'sales_staff' | 'dispatch_staff' | 'viewer';
+  department?: string;
+  password?: string;
+  sendEmail?: boolean;
+}
+
+/**
+ * Retrieves all active/suspended workers and pending invites for the given tenant workspace.
+ */
+export async function listWorkspaceWorkers(organizationId: string): Promise<WorkspaceWorkerListResult> {
+  if (!organizationId) {
+    return {
+      success: false,
+      workers: [],
+      pendingInvites: [],
+      seats: { used: 0, max: 5, available: 5, activeWorkers: 0, pendingInvites: 0 },
+      error: 'Organization ID is required.',
+    };
+  }
+
+  // 1. Try server-side endpoint first (has service-role visibility into users & invites)
+  try {
+    const res = await fetch(`/api/tenant/workers?organizationId=${encodeURIComponent(organizationId)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success) {
+        try {
+          localStorage.setItem(`frostly_workers_cache_${organizationId}`, JSON.stringify(data));
+        } catch {}
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('[listWorkspaceWorkers] API call failed, falling back to Supabase client / cache:', err);
+  }
+
+  // 2. Direct Supabase Client Query fallback
+  if (isSupabaseConfigured) {
+    try {
+      const { data: staffData } = await supabase
+        .from('staff_profiles')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .order('created_at', { ascending: false });
+
+      const { data: inviteData } = await supabase
+        .from('invites')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .is('used_at', null)
+        .gt('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false });
+
+      const workers: WorkspaceWorker[] = (staffData || []).map((s) => ({
+        id: s.id,
+        organization_id: s.organization_id,
+        email: s.email,
+        full_name: s.full_name,
+        role: s.role,
+        department: s.department || 'Operations',
+        is_active: s.is_active ?? true,
+        created_at: s.created_at || new Date().toISOString(),
+        updated_at: s.updated_at,
+      }));
+
+      const pendingInvites: WorkspacePendingInvite[] = (inviteData || []).map((i) => ({
+        id: i.id,
+        organization_id: i.organization_id,
+        email: i.email,
+        role: i.role,
+        token: i.token,
+        expires_at: i.expires_at,
+        created_at: i.created_at || new Date().toISOString(),
+      }));
+
+      const activeCount = workers.filter((w) => w.is_active).length;
+      const totalUsed = activeCount + pendingInvites.length;
+
+      return {
+        success: true,
+        workers,
+        pendingInvites,
+        seats: {
+          used: totalUsed,
+          max: 5,
+          available: Math.max(0, 5 - totalUsed),
+          activeWorkers: activeCount,
+          pendingInvites: pendingInvites.length,
+        },
+      };
+    } catch (err: any) {
+      console.warn('[listWorkspaceWorkers] Supabase direct query error:', err);
+    }
+  }
+
+  // 3. Local Storage Cache / Demo Mode fallback
+  try {
+    const cached = localStorage.getItem(`frostly_workers_cache_${organizationId}`);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch {}
+
+  // Fallback demo workers
+  const demoWorkers: WorkspaceWorker[] = [
+    {
+      id: 'demo-worker-1',
+      organization_id: organizationId,
+      email: 'kofi.asante@frostly.io',
+      full_name: 'Kofi Asante',
+      role: 'ops_staff',
+      department: 'Cold Storage Bay #1',
+      is_active: true,
+      created_at: new Date(Date.now() - 14 * 86400000).toISOString(),
+    },
+    {
+      id: 'demo-worker-2',
+      organization_id: organizationId,
+      email: 'abena.mensah@frostly.io',
+      full_name: 'Abena Mensah',
+      role: 'dispatch_staff',
+      department: 'Reefer Fleet Logistics',
+      is_active: true,
+      created_at: new Date(Date.now() - 7 * 86400000).toISOString(),
+    },
+  ];
+
+  return {
+    success: true,
+    workers: demoWorkers,
+    pendingInvites: [],
+    seats: {
+      used: 2,
+      max: 5,
+      available: 3,
+      activeWorkers: 2,
+      pendingInvites: 0,
+    },
+  };
+}
+
+/**
+ * Adds a user / worker to the tenant workspace.
+ * Supports direct account provisioning (password set) or workspace invitation token.
+ */
+export async function addWorkerToWorkspace(params: AddWorkerParams): Promise<{
+  success: boolean;
+  mode?: 'direct_provisioned' | 'invite_issued' | 'reactivated';
+  worker?: WorkspaceWorker;
+  invite?: WorkspacePendingInvite;
+  credentials?: { email: string; password?: string; role: string };
+  inviteToken?: string;
+  inviteAcceptUrl?: string;
+  error?: string;
+  message?: string;
+}> {
+  try {
+    const res = await fetch('/api/tenant/workers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Failed to add worker to workspace' };
+    }
+
+    return data;
+  } catch (err: any) {
+    console.warn('[addWorkerToWorkspace] Backend endpoint error, attempting client fallback:', err);
+    
+    // Fallback: If invite mode or client-side mode
+    if (!params.password) {
+      const inviteRes = await createInvite(params.email, params.role || 'ops_staff', 7);
+      if (inviteRes.success) {
+        return {
+          success: true,
+          mode: 'invite_issued',
+          message: `Workspace invite generated for ${params.email}`,
+          inviteToken: inviteRes.data?.token,
+        };
+      }
+      return { success: false, error: inviteRes.error || 'Failed to issue invite' };
+    }
+
+    return { success: false, error: err?.message || 'Failed to communicate with server.' };
+  }
+}
+
+/**
+ * Updates worker role, department, or active status in tenant workspace.
+ */
+export async function updateWorkspaceWorker(
+  workerId: string,
+  organizationId: string,
+  updates: {
+    role?: 'admin' | 'ops_staff' | 'sales_staff' | 'dispatch_staff' | 'viewer';
+    department?: string;
+    full_name?: string;
+    is_active?: boolean;
+  }
+): Promise<{ success: boolean; worker?: WorkspaceWorker; error?: string }> {
+  try {
+    const res = await fetch(`/api/tenant/workers/${encodeURIComponent(workerId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ organizationId, ...updates }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Failed to update worker profile' };
+    }
+
+    return data;
+  } catch (err: any) {
+    if (isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase
+          .from('staff_profiles')
+          .update({ ...updates, updated_at: new Date().toISOString() })
+          .eq('id', workerId)
+          .eq('organization_id', organizationId)
+          .select()
+          .single();
+
+        if (error) throw error;
+        return { success: true, worker: data };
+      } catch (clientErr: any) {
+        return { success: false, error: clientErr?.message || 'Update failed' };
+      }
+    }
+    return { success: false, error: err?.message || 'Network error updating worker' };
+  }
+}
+
+/**
+ * Removes a worker or revokes a pending invite from tenant workspace.
+ */
+export async function removeWorkerOrInvite(
+  id: string,
+  organizationId: string,
+  isInvite: boolean
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(
+      `/api/tenant/workers/${encodeURIComponent(id)}?organizationId=${encodeURIComponent(organizationId)}&isInvite=${isInvite}`,
+      { method: 'DELETE' }
+    );
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Failed to remove from workspace' };
+    }
+    return { success: true };
+  } catch (err: any) {
+    if (isSupabaseConfigured) {
+      try {
+        if (isInvite) {
+          const { error } = await supabase.from('invites').delete().eq('id', id).eq('organization_id', organizationId);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('staff_profiles').update({ is_active: false }).eq('id', id).eq('organization_id', organizationId);
+          if (error) throw error;
+        }
+        return { success: true };
+      } catch (clientErr: any) {
+        return { success: false, error: clientErr?.message };
+      }
+    }
+    return { success: false, error: err?.message };
+  }
+}
+
+/**
+ * Resets a worker's password.
+ */
+export async function resetWorkerPassword(
+  workerId: string,
+  email: string,
+  newPassword: string,
+  organizationName?: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(`/api/tenant/workers/${encodeURIComponent(workerId)}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: newPassword, organizationName }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Failed to reset password' };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error' };
+  }
+}
+
+
 

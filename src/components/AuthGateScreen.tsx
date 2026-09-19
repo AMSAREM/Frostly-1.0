@@ -23,6 +23,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { FacilityOperationType } from '../types';
+import { supabase } from '../utils/supabase';
 import { GoogleSmtpModal } from './GoogleSmtpModal';
 import { sendDirectGoogleSmtpConfirmation } from '../services/googleSmtpService';
 import { 
@@ -33,6 +34,7 @@ import {
   signUpAndAcceptInvite,
   resendConfirmationEmail,
   setPasswordAndActivate,
+  instantActivateAccount,
   DEFAULT_TEST_USER_EMAIL,
   DEFAULT_TEST_USER_PASSWORD,
   DEFAULT_CREATOR_EMAIL,
@@ -173,6 +175,66 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
       }
     } catch (err: any) {
       setErrorMessage(err?.message || 'Failed to set password and sign in.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handler for 1-click Instant Activation from verified email links
+  const handleInstantActivate = async (customEmail?: string) => {
+    const targetEmail = customEmail || activationNotice?.email || email || pendingEmail;
+    if (!targetEmail.trim()) return;
+
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await instantActivateAccount(targetEmail.trim(), password || undefined);
+      if (!res.success) {
+        setErrorMessage(res.error || 'Activation failed. Please try signing in or setting your password below.');
+        return;
+      }
+
+      setPasswordUpdatedSuccess(true);
+
+      // If user has entered password, log in directly
+      if (password) {
+        const loginRes = await signIn(targetEmail.trim(), password);
+        if (loginRes.error) {
+          setErrorMessage('Account verified and confirmed! Please enter your password to sign in.');
+        } else {
+          if (onAuthSuccess) onAuthSuccess();
+          return;
+        }
+      }
+
+      // If hashedToken is available, verify OTP in-browser without external redirect
+      if (res.hashedToken) {
+        try {
+          const { data: verifyData, error: verifyErr } = await supabase.auth.verifyOtp({
+            token_hash: res.hashedToken,
+            type: 'magiclink' as any,
+          });
+          if (!verifyErr && verifyData?.session) {
+            if (onAuthSuccess) onAuthSuccess();
+            return;
+          }
+        } catch (otpErr) {
+          console.warn('[Activation OTP Verification Error]:', otpErr);
+        }
+      }
+
+      // If no password or token verification, switch to login view with clear prompt
+      setEmail(targetEmail.trim());
+      setMode('login');
+      setActivationNotice({
+        isActivated: true,
+        email: targetEmail.trim(),
+        org: res.organization_name || 'Sharp Operations',
+      });
+      setErrorMessage(null);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Error during activation.');
     } finally {
       setIsLoading(false);
     }
@@ -541,6 +603,26 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
 
                 <div className="pt-2 border-t border-slate-100 flex flex-col gap-2">
                   <button
+                    id="btn-instant-activate-direct"
+                    type="button"
+                    onClick={() => handleInstantActivate(pendingEmail)}
+                    disabled={isLoading}
+                    className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                        <span>Activating &amp; Provisioning Workspace...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck className="w-4 h-4 text-emerald-100" />
+                        <span>Instant 1-Click Activate &amp; Enter Workspace</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
                     id="btn-resend-confirmation-email"
                     type="button"
                     onClick={handleResendConfirmation}
@@ -603,18 +685,50 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ onAuthSuccess })
             <form onSubmit={handleLogin} className="space-y-4">
               {/* Activation Notice Banner if arrived via email link */}
               {activationNotice?.isActivated && (
-                <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-950 space-y-1.5 animate-in fade-in duration-300">
-                  <div className="flex items-center gap-2 font-bold text-emerald-800">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>Website Activation Link Verified</span>
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-950 space-y-2.5 animate-in fade-in duration-300">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-bold text-emerald-800">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Website Activation Link Verified</span>
+                    </div>
+                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      Verified
+                    </span>
                   </div>
-                  <p className="text-[11px] text-emerald-800 leading-relaxed">
-                    Your account for <strong>{activationNotice.email}</strong> is activated!
-                    {activationNotice.org ? ` Organization "${activationNotice.org}" is ready in Supabase.` : ''}
+
+                  <p className="text-xs text-emerald-900 leading-relaxed">
+                    Your account for <strong>{activationNotice.email}</strong> is ready.
+                    {activationNotice.org ? ` Your workspace "${activationNotice.org}" has been provisioned.` : ''}
                   </p>
+
+                  <div className="pt-1 flex flex-col sm:flex-row gap-2">
+                    <button
+                      type="button"
+                      id="btn-instant-activate-launch"
+                      disabled={isLoading}
+                      onClick={handleInstantActivate}
+                      className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50"
+                    >
+                      {isLoading ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                      )}
+                      <span>1-Click Activate &amp; Launch</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsSettingPassword(!isSettingPassword)}
+                      className="px-3 py-2 bg-white hover:bg-emerald-100/60 text-emerald-800 border border-emerald-200 font-semibold text-xs rounded-xl transition-colors cursor-pointer text-center"
+                    >
+                      {isSettingPassword ? 'Sign In with Existing Password' : 'Set / Reset Password'}
+                    </button>
+                  </div>
+
                   {passwordUpdatedSuccess && (
-                    <p className="text-[11px] font-semibold text-emerald-700 bg-emerald-100/70 px-2 py-1 rounded-md">
-                      ✓ Password saved! You can now log in below.
+                    <p className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-lg">
+                      ✓ Password updated successfully! Please sign in below.
                     </p>
                   )}
                 </div>

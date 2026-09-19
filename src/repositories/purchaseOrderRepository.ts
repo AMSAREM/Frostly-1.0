@@ -17,17 +17,24 @@ export class PurchaseOrderRepository extends BaseRepository<PurchaseOrderLanding
   }
 
   public async getPurchaseOrders(fallback: PurchaseOrderLanding[] = []): Promise<PurchaseOrderLanding[]> {
+    const orgId = await this.getOrganizationId();
     const canQuery = await this.canAccessSupabase();
     if (canQuery) {
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from('purchase_order_landings')
           .select('*, purchase_order_items(*)')
           .order('order_date', { ascending: false });
 
-        if (!error && data && data.length > 0) {
+        if (orgId) {
+          query = query.eq('organization_id', orgId);
+        }
+
+        const { data, error } = await query;
+
+        if (!error && data) {
           const domainItems = data.map((row: any) => this.toDomain(row));
-          this.setLocalCache(domainItems);
+          this.setLocalCache(domainItems, orgId);
           return domainItems;
         }
       } catch (e) {

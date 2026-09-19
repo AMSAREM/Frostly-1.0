@@ -11,6 +11,7 @@ export class HaccpRepository extends BaseRepository<HaccpAuditRecord, DatabaseHa
       toDomain: haccpMapper.toDomain,
       toDatabase: haccpMapper.toDatabase,
       getId: (record) => record.id,
+      onConflict: 'organization_id,id',
     });
   }
 
@@ -22,10 +23,14 @@ export class HaccpRepository extends BaseRepository<HaccpAuditRecord, DatabaseHa
    * Save record to insert-only haccp_audit_records table
    */
   public async addRecord(record: HaccpAuditRecord): Promise<HaccpAuditRecord> {
+    const orgId = await this.getOrganizationId();
     const canQuery = await this.canAccessSupabase();
     if (canQuery) {
       try {
-        const payload = this.toDatabase(record);
+        const payload: any = this.toDatabase(record);
+        if (orgId) {
+          payload.organization_id = orgId;
+        }
         const { data, error } = await supabase
           .from(this.tableName)
           .insert(payload)
@@ -34,8 +39,8 @@ export class HaccpRepository extends BaseRepository<HaccpAuditRecord, DatabaseHa
 
         if (!error && data) {
           const created = this.toDomain(data);
-          const current = this.getLocalCache();
-          this.setLocalCache([created, ...current]);
+          const current = this.getLocalCache([], orgId);
+          this.setLocalCache([created, ...current], orgId);
           return created;
         } else if (error) {
           console.warn('[HaccpRepository] Insert error:', error.message);

@@ -14,6 +14,7 @@ import { CatchWeightWeigherModal } from './components/Modals/CatchWeightWeigherM
 import { InvoiceModal } from './components/Modals/InvoiceModal';
 import { NewBatchModal } from './components/Modals/NewBatchModal';
 import { NewOrderModal } from './components/Modals/NewOrderModal';
+import { TenantOnboardingScreen } from './components/TenantOnboardingScreen';
 
 import { PWAInstallModal } from './components/PWAInstallModal';
 import { PWAStatusBanner } from './components/PWAStatusBanner';
@@ -70,6 +71,12 @@ import {
 import { User } from '@supabase/supabase-js';
 
 export default function App() {
+  // Single authoritative source of truth for session and staff profile from AuthGate
+  const { session, user: currentUser, staffProfile, refreshProfile: handleRefreshProfile, signOut: handleSignOut } = useAuth();
+
+  const activeOrgId = staffProfile?.organization_id || null;
+  const isTenantUser = Boolean(activeOrgId);
+
   // PWA and Network state
   const { isInstallable, isInstalled, isIOS, isStandalone, triggerInstall } = usePWAInstall();
   const { isOnline } = useNetworkStatus();
@@ -107,96 +114,106 @@ export default function App() {
     return formatCurrency(amount, settings.currency || 'GHS');
   };
 
-  // Safe local storage load helper (Purges previous v2 seeded mock data)
+  // Safe tenant-scoped local storage load helper
+  // Newly created or active tenant workspaces are initialized completely clean without demo data
   const [batches, setBatches] = useState<InventoryBatch[]>(() => {
     try {
-      localStorage.removeItem('frostly_batches_v2');
-      const saved = localStorage.getItem('frostly_batches_v3');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : INITIAL_BATCHES;
+      if (activeOrgId) {
+        return batchRepository.getLocalCache([], activeOrgId);
+      }
+      return batchRepository.getLocalCache(INITIAL_BATCHES);
     } catch {
-      return INITIAL_BATCHES;
+      return activeOrgId ? [] : INITIAL_BATCHES;
     }
   });
 
   const [orders, setOrders] = useState<ClientOrder[]>(() => {
     try {
-      localStorage.removeItem('frostly_orders_v2');
-      const saved = localStorage.getItem('frostly_orders_v3');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : INITIAL_ORDERS;
+      if (activeOrgId) {
+        return orderRepository.getLocalCache([], activeOrgId);
+      }
+      return orderRepository.getLocalCache(INITIAL_ORDERS);
     } catch {
-      return INITIAL_ORDERS;
+      return activeOrgId ? [] : INITIAL_ORDERS;
     }
   });
 
   const [customers, setCustomers] = useState<Customer[]>(() => {
     try {
-      localStorage.removeItem('frostly_customers_v2');
-      const saved = localStorage.getItem('frostly_customers_v3');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : INITIAL_CUSTOMERS;
+      if (activeOrgId) {
+        return customerRepository.getLocalCache([], activeOrgId);
+      }
+      return customerRepository.getLocalCache(INITIAL_CUSTOMERS);
     } catch {
-      return INITIAL_CUSTOMERS;
+      return activeOrgId ? [] : INITIAL_CUSTOMERS;
     }
   });
 
   const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
     try {
-      localStorage.removeItem('frostly_suppliers_v2');
-      const saved = localStorage.getItem('frostly_suppliers_v3');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : INITIAL_SUPPLIERS;
+      if (activeOrgId) {
+        return supplierRepository.getLocalCache([], activeOrgId);
+      }
+      return supplierRepository.getLocalCache(INITIAL_SUPPLIERS);
     } catch {
-      return INITIAL_SUPPLIERS;
+      return activeOrgId ? [] : INITIAL_SUPPLIERS;
     }
   });
 
   const [products, setProducts] = useState<RetailWholesaleProduct[]>(() => {
     try {
-      localStorage.removeItem('frostly_products_v2');
-      const saved = localStorage.getItem('frostly_products_v3');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : INITIAL_PRODUCTS;
+      if (activeOrgId) {
+        return productRepository.getLocalCache([], activeOrgId);
+      }
+      return productRepository.getLocalCache(INITIAL_PRODUCTS);
     } catch {
-      return INITIAL_PRODUCTS;
+      return activeOrgId ? [] : INITIAL_PRODUCTS;
     }
   });
 
   const [retailSales, setRetailSales] = useState<RetailTransaction[]>(() => {
     try {
-      localStorage.removeItem('frostly_retail_sales_v2');
-      const saved = localStorage.getItem('frostly_retail_sales_v3');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : INITIAL_RETAIL_TRANSACTIONS;
+      if (activeOrgId) {
+        return retailTransactionRepository.getLocalCache([], activeOrgId);
+      }
+      return retailTransactionRepository.getLocalCache(INITIAL_RETAIL_TRANSACTIONS);
     } catch {
-      return INITIAL_RETAIL_TRANSACTIONS;
+      return activeOrgId ? [] : INITIAL_RETAIL_TRANSACTIONS;
     }
   });
 
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderLanding[]>(() => {
     try {
-      localStorage.removeItem('frostly_purchase_orders_v2');
-      const saved = localStorage.getItem('frostly_purchase_orders_v3');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : INITIAL_PURCHASE_ORDERS;
+      if (activeOrgId) {
+        return purchaseOrderRepository.getLocalCache([], activeOrgId);
+      }
+      return purchaseOrderRepository.getLocalCache(INITIAL_PURCHASE_ORDERS);
     } catch {
-      return INITIAL_PURCHASE_ORDERS;
+      return activeOrgId ? [] : INITIAL_PURCHASE_ORDERS;
     }
   });
 
   const [financialEntries, setFinancialEntries] = useState<FinancialLedgerEntry[]>(() => {
     try {
-      localStorage.removeItem('frostly_financial_entries_v2');
-      const saved = localStorage.getItem('frostly_financial_entries_v3');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) ? parsed : INITIAL_FINANCIAL_ENTRIES;
+      if (activeOrgId) {
+        return financialRepository.getLocalCache([], activeOrgId);
+      }
+      return financialRepository.getLocalCache(INITIAL_FINANCIAL_ENTRIES);
     } catch {
-      return INITIAL_FINANCIAL_ENTRIES;
+      return activeOrgId ? [] : INITIAL_FINANCIAL_ENTRIES;
     }
   });
 
-  const [notifications, setNotifications] = useState<SystemNotification[]>(INITIAL_NOTIFICATIONS);
+  const [notifications, setNotifications] = useState<SystemNotification[]>(() => {
+    try {
+      if (activeOrgId) {
+        return notificationRepository.getLocalCache([], activeOrgId);
+      }
+      return notificationRepository.getLocalCache(INITIAL_NOTIFICATIONS);
+    } catch {
+      return activeOrgId ? [] : INITIAL_NOTIFICATIONS;
+    }
+  });
 
   // Modals state
   const [passportBatch, setPassportBatch] = useState<InventoryBatch | null>(null);
@@ -204,16 +221,17 @@ export default function App() {
   const [invoiceOrder, setInvoiceOrder] = useState<ClientOrder | null>(null);
   const [isNewBatchModalOpen, setIsNewBatchModalOpen] = useState(false);
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
+  const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState(false);
   const [preselectedCustomerId, setPreselectedCustomerId] = useState<string | null>(null);
+  const [settingsCategory, setSettingsCategory] = useState<'profile' | 'workers' | 'subscription' | 'platform' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data'>('profile');
 
-  // Single authoritative source of truth for session and staff profile from AuthGate
-  const { session, user: currentUser, staffProfile, refreshProfile: handleRefreshProfile, signOut: handleSignOut } = useAuth();
+  const handleNavigateToSettingsCategory = (category: any) => {
+    setSettingsCategory(category);
+    setActiveTab('settings');
+  };
 
   const configuredCreatorEmail = typeof import.meta !== 'undefined' ? import.meta.env?.VITE_DEV_CREATOR_EMAIL : undefined;
   
-  // A user is a tenant if they belong to an organization workspace
-  const isTenantUser = Boolean(staffProfile?.organization_id);
-
   // Platform creator console is ONLY for platform owners who do NOT belong to an isolated tenant organization
   const isPlatformCreator = Boolean(
     !isTenantUser &&
@@ -259,13 +277,15 @@ export default function App() {
     }
   }, [isPlatformCreator, isTenantUser, staffProfile]);
 
-  // Hydrate batches from repository on mount and when authenticated session changes
+  // Hydrate batches and workspace data from repository on mount and when authenticated session or active tenant changes
   useEffect(() => {
     let isMounted = true;
+    const currentOrgId = staffProfile?.organization_id;
+    const fallbackList = isTenantUser ? [] : undefined;
 
-    batchRepository.getBatches(batches).then(fresh => {
-      if (isMounted && fresh && fresh.length > 0) {
-        setBatches(fresh);
+    batchRepository.getBatches(fallbackList).then(fresh => {
+      if (isMounted) {
+        setBatches(fresh || []);
       }
       // Drains offline sync queue immediately if network and session are active
       syncManager.flushAll().catch(console.warn);
@@ -273,57 +293,57 @@ export default function App() {
       console.warn('[App] Batch repository load error:', err);
     });
 
-    customerRepository.getCustomers(customers).then(fresh => {
-      if (isMounted && fresh && fresh.length > 0) {
-        setCustomers(fresh);
+    customerRepository.getCustomers(fallbackList).then(fresh => {
+      if (isMounted) {
+        setCustomers(fresh || []);
       }
     }).catch(err => {
       console.warn('[App] Customer repository load error:', err);
     });
 
-    orderRepository.getOrders(orders).then(fresh => {
-      if (isMounted && fresh && fresh.length > 0) {
-        setOrders(fresh);
+    orderRepository.getOrders(fallbackList).then(fresh => {
+      if (isMounted) {
+        setOrders(fresh || []);
       }
     }).catch(err => {
       console.warn('[App] Order repository load error:', err);
     });
 
-    supplierRepository.getSuppliers(suppliers).then(fresh => {
-      if (isMounted && fresh && fresh.length > 0) {
-        setSuppliers(fresh);
+    supplierRepository.getSuppliers(fallbackList).then(fresh => {
+      if (isMounted) {
+        setSuppliers(fresh || []);
       }
     }).catch(err => {
       console.warn('[App] Supplier repository load error:', err);
     });
 
-    financialRepository.getEntries(financialEntries).then(fresh => {
-      if (isMounted && fresh && fresh.length > 0) {
-        setFinancialEntries(fresh);
+    financialRepository.getEntries(fallbackList).then(fresh => {
+      if (isMounted) {
+        setFinancialEntries(fresh || []);
       }
     }).catch(err => {
       console.warn('[App] Financial repository load error:', err);
     });
 
-    purchaseOrderRepository.getPurchaseOrders(purchaseOrders).then(fresh => {
-      if (isMounted && fresh && fresh.length > 0) {
-        setPurchaseOrders(fresh);
+    purchaseOrderRepository.getPurchaseOrders(fallbackList).then(fresh => {
+      if (isMounted) {
+        setPurchaseOrders(fresh || []);
       }
     }).catch(err => {
       console.warn('[App] Purchase Order repository load error:', err);
     });
 
-    productRepository.getProducts(products).then(fresh => {
-      if (isMounted && fresh && fresh.length > 0) {
-        setProducts(fresh);
+    productRepository.getProducts(fallbackList).then(fresh => {
+      if (isMounted) {
+        setProducts(fresh || []);
       }
     }).catch(err => {
       console.warn('[App] Product repository load error:', err);
     });
 
-    retailTransactionRepository.getTransactions(retailSales).then(fresh => {
-      if (isMounted && fresh && fresh.length > 0) {
-        setRetailSales(fresh);
+    retailTransactionRepository.getTransactions(fallbackList).then(fresh => {
+      if (isMounted) {
+        setRetailSales(fresh || []);
       }
     }).catch(err => {
       console.warn('[App] Retail transaction repository load error:', err);
@@ -338,47 +358,44 @@ export default function App() {
       console.warn('[App] Settings repository load error:', err);
     });
 
-    notificationRepository.getNotifications(notifications).then(fresh => {
-      if (isMounted && fresh && fresh.length > 0) {
-        setNotifications(fresh);
+    notificationRepository.getNotifications(fallbackList).then(fresh => {
+      if (isMounted) {
+        setNotifications(fresh || []);
       }
     }).catch(err => {
       console.warn('[App] Notification repository load error:', err);
     });
 
     return () => { isMounted = false; };
-  }, [session?.user?.id]);
+  }, [session?.user?.id, staffProfile?.organization_id, isTenantUser]);
 
-  // Persistence Effects
-  // ARCHITECTURAL MANDATE: All batch and customer mutations MUST go through batchRepository or customerRepository.
-  // Direct writes to 'frostly_batches_v3' and 'frostly_customers_v3' are managed exclusively by the repositories to ensure sync queue integrity.
+  // Scoped Tenant Cache Effects - Keep repository caches strictly scoped by tenant
+  useEffect(() => {
+    orderRepository.setLocalCache(orders, staffProfile?.organization_id);
+  }, [orders, staffProfile?.organization_id]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_orders_v3', JSON.stringify(orders));
-  }, [orders]);
+    supplierRepository.setLocalCache(suppliers, staffProfile?.organization_id);
+  }, [suppliers, staffProfile?.organization_id]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_suppliers_v3', JSON.stringify(suppliers));
-  }, [suppliers]);
+    productRepository.setLocalCache(products, staffProfile?.organization_id);
+  }, [products, staffProfile?.organization_id]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_products_v3', JSON.stringify(products));
-  }, [products]);
+    retailTransactionRepository.setLocalCache(retailSales, staffProfile?.organization_id);
+  }, [retailSales, staffProfile?.organization_id]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_retail_sales_v3', JSON.stringify(retailSales));
-  }, [retailSales]);
+    purchaseOrderRepository.setLocalCache(purchaseOrders, staffProfile?.organization_id);
+  }, [purchaseOrders, staffProfile?.organization_id]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_purchase_orders_v3', JSON.stringify(purchaseOrders));
-  }, [purchaseOrders]);
+    financialRepository.setLocalCache(financialEntries, staffProfile?.organization_id);
+  }, [financialEntries, staffProfile?.organization_id]);
 
   useEffect(() => {
-    localStorage.setItem('frostly_financial_entries_v3', JSON.stringify(financialEntries));
-  }, [financialEntries]);
-
-  useEffect(() => {
-    localStorage.setItem('frostly_settings_v3', JSON.stringify(settings));
+    settingsRepository.saveSettings(settings).catch(console.warn);
   }, [settings]);
 
   // Helper to reconcile Dual-Price & Retail catalog products with cold-chain inventory lots
@@ -1425,6 +1442,7 @@ export default function App() {
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
+        onNavigateToSettingsTab={handleNavigateToSettingsCategory}
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         useImperial={useImperial}
@@ -1587,6 +1605,7 @@ export default function App() {
           <SettingsView
             settings={settings}
             onUpdateSettings={handleUpdateSettings}
+            initialCategory={settingsCategory}
             batches={batches}
             orders={orders}
             customers={customers}
@@ -1598,6 +1617,7 @@ export default function App() {
             staffProfile={staffProfile}
             onRefreshProfile={handleRefreshProfile}
             showPlatformConsole={showPlatformConsole}
+            onOpenOnboardingWizard={() => setIsOnboardingModalOpen(true)}
             onRestoreAllData={handleRestoreAllData}
             onResetToDefaults={handleResetToDefaults}
           />
@@ -1609,6 +1629,40 @@ export default function App() {
       </main>
 
       {/* Modals */}
+      {isOnboardingModalOpen && (
+        <TenantOnboardingScreen
+          user={currentUser || ({ id: 'local-admin', email: staffProfile?.email || 'admin@frostly.io', app_metadata: {}, user_metadata: {}, aud: 'authenticated', created_at: '' } as any)}
+          isModal={true}
+          onClose={() => setIsOnboardingModalOpen(false)}
+          onCompleted={async () => {
+            setIsOnboardingModalOpen(false);
+            if (handleRefreshProfile) await handleRefreshProfile();
+            // Ensure newly created workspace immediately resets to clean state
+            setBatches([]);
+            setOrders([]);
+            setCustomers([]);
+            setSuppliers([]);
+            setProducts([]);
+            setRetailSales([]);
+            setPurchaseOrders([]);
+            setFinancialEntries([]);
+            setNotifications([]);
+            try {
+              const savedStr = localStorage.getItem('frostly_settings_v2');
+              if (savedStr) {
+                const parsed = JSON.parse(savedStr);
+                setSettings(prev => ({
+                  ...prev,
+                  companyName: parsed.companyName || prev.companyName,
+                  currency: parsed.currency || prev.currency,
+                  primaryPort: parsed.primaryPort || prev.primaryPort,
+                  commercialFreezeMaxAlertC: parsed.commercialFreezeMaxAlertC ?? prev.commercialFreezeMaxAlertC
+                }));
+              }
+            } catch {}
+          }}
+        />
+      )}
       {passportBatch && (
         <TraceabilityPassportModal
           batch={passportBatch}

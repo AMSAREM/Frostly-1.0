@@ -32,9 +32,9 @@ export class NotificationRepository extends BaseRepository<SystemNotification, D
 
         const { data, error } = await query;
 
-        if (!error && data && data.length > 0) {
+        if (!error && data) {
           const domainItems = data.map((row: any) => this.toDomain(row));
-          this.setLocalCache(domainItems);
+          this.setLocalCache(domainItems, orgId);
           return domainItems;
         }
       } catch (e) {

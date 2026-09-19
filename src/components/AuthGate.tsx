@@ -160,7 +160,11 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
         user={session.user}
         onCompleted={async () => {
           const profile = await getStaffProfile(true);
-          setStaffProfile(profile);
+          if (profile) {
+            setStaffProfile({ ...profile, needs_onboarding: false });
+          } else {
+            setStaffProfile(null);
+          }
         }}
         onSignOut={handleSignOut}
       />

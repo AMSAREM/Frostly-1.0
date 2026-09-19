@@ -33,6 +33,7 @@ export type ActiveTab = 'dashboard' | 'retail_wholesale' | 'customers' | 'suppli
 interface HeaderProps {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
+  onNavigateToSettingsTab?: (category: 'profile' | 'workers' | 'subscription' | 'platform') => void;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   useImperial: boolean;
@@ -58,6 +59,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   activeTab,
   setActiveTab,
+  onNavigateToSettingsTab,
   searchQuery,
   setSearchQuery,
   useImperial,
@@ -507,8 +509,29 @@ export const Header: React.FC<HeaderProps> = ({
 
                     <button
                       type="button"
+                      id="header-menu-workers-btn"
                       onClick={() => {
-                        setActiveTab('settings');
+                        setShowUserMenu(false);
+                        if (onNavigateToSettingsTab) {
+                          onNavigateToSettingsTab('workers');
+                        } else {
+                          setActiveTab('settings');
+                        }
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 rounded-xl transition-colors cursor-pointer text-left"
+                    >
+                      <Users className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Workers &amp; Team</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onNavigateToSettingsTab) {
+                          onNavigateToSettingsTab('profile');
+                        } else {
+                          setActiveTab('settings');
+                        }
                         setShowUserMenu(false);
                       }}
                       className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 rounded-xl transition-colors cursor-pointer text-left"
