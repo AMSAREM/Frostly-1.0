@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="64" height="64" fill="none">
-  <rect width="500" height="500" rx="0" fill="#0F172A"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="500" height="500" fill="none">
+  <rect width="500" height="500" rx="0" fill="white"/>
   
   <defs>
     <!-- Single Quadrant with precise curvature (Top-Right / NE quadrant) -->

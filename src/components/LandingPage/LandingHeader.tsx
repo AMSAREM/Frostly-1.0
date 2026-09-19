@@ -10,6 +10,7 @@ import {
   Download,
   LogIn
 } from 'lucide-react';
+import { FrostlyLogo } from '../FrostlyLogo';
 
 interface LandingHeaderProps {
   onSignIn: () => void;
@@ -43,15 +44,9 @@ export const LandingHeader: React.FC<LandingHeaderProps> = ({
               onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
               className="flex items-center gap-3 cursor-pointer group"
             >
-              {/* Microsoft-style 4-tile geometric emblem for Frostly */}
-              <div className="grid grid-cols-2 gap-0.5 w-6 h-6">
-                <div className="bg-sky-500 rounded-tl-sm transition-transform group-hover:scale-105" />
-                <div className="bg-blue-600 rounded-tr-sm transition-transform group-hover:scale-105" />
-                <div className="bg-indigo-600 rounded-bl-sm transition-transform group-hover:scale-105" />
-                <div className="bg-cyan-400 rounded-br-sm transition-transform group-hover:scale-105" />
-              </div>
+              <FrostlyLogo size={28} iconOnly variant="blue" />
               <div className="flex items-center">
-                <span className="font-semibold text-xl tracking-tight text-slate-900">
+                <span className="font-semibold text-xl tracking-tight text-slate-900 group-hover:text-blue-600 transition-colors">
                   Frostly
                 </span>
                 <span className="mx-2.5 text-slate-300 font-light hidden sm:inline">|</span>

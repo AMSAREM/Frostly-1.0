@@ -1,5 +1,6 @@
 import React from 'react';
 import { Globe, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { FrostlyLogo } from '../FrostlyLogo';
 
 interface LandingFooterProps {
   onSignIn: () => void;
@@ -48,12 +49,7 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({
           {/* Col 1: Brand & Overview */}
           <div className="col-span-2 md:col-span-1">
             <div className="flex items-center gap-2 mb-3">
-              <div className="grid grid-cols-2 gap-0.5 w-5 h-5">
-                <div className="bg-sky-500 rounded-tl-sm" />
-                <div className="bg-blue-600 rounded-tr-sm" />
-                <div className="bg-indigo-600 rounded-bl-sm" />
-                <div className="bg-cyan-400 rounded-br-sm" />
-              </div>
+              <FrostlyLogo size={22} iconOnly variant="blue" />
               <span className="font-bold text-base text-slate-900">Frostly</span>
             </div>
             <p className="text-xs text-slate-500 leading-relaxed">

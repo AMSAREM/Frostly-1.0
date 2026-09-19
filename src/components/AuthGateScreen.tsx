@@ -26,6 +26,7 @@ import { FacilityOperationType } from '../types';
 import { supabase } from '../utils/supabase';
 import { GoogleSmtpModal } from './GoogleSmtpModal';
 import { sendDirectGoogleSmtpConfirmation } from '../services/googleSmtpService';
+import { FrostlyLogo } from './FrostlyLogo';
 import { 
   signIn, 
   signInAsTestUser, 
@@ -466,10 +467,8 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                 <span>Back to Frostly Overview</span>
               </button>
             )}
-            <div className="flex items-center gap-2.5">
-              <span className="p-2 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
-                <Snowflake className="w-5 h-5 text-indigo-600" />
-              </span>
+            <div className="flex items-center gap-3">
+              <FrostlyLogo size={36} iconOnly variant="blue" />
               <span className="text-2xl font-black font-heading tracking-tight text-slate-900">
                 Frostly
               </span>

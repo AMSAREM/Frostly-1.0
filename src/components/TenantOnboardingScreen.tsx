@@ -23,6 +23,7 @@ import {
   Radio
 } from 'lucide-react';
 import { User } from '@supabase/supabase-js';
+import { FrostlyLogo } from './FrostlyLogo';
 import { createOrganizationAndAdmin } from '../data/auth';
 import { FacilityOperationType } from '../types';
 import { INITIAL_BATCHES } from '../data/mockData';
@@ -318,8 +319,8 @@ export const TenantOnboardingScreen: React.FC<TenantOnboardingScreenProps> = ({
       {/* Top Header */}
       <header className="max-w-4xl w-full mx-auto flex items-center justify-between py-3 border-b border-slate-800">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center shadow-md shadow-indigo-600/30">
-            <Snowflake className="w-5 h-5 text-white" />
+          <div className="w-9 h-9 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center p-1 shadow-md">
+            <FrostlyLogo size={24} iconOnly variant="blue" />
           </div>
           <div>
             <div className="font-bold text-sm text-white flex items-center gap-2">

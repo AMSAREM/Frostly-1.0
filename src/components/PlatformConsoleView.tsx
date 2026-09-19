@@ -28,6 +28,8 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { GoogleSmtpModal } from './GoogleSmtpModal';
+import { PlatformPricingPlansManager } from './PlatformPricingPlansManager';
+import { FrostlyLogo } from './FrostlyLogo';
 import { 
   PlatformOrganization, 
   PlatformAuditLog, 
@@ -50,7 +52,7 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'trial' | 'active' | 'past_due' | 'suspended'>('all');
-  const [activeSubTab, setActiveSubTab] = useState<'tenants' | 'audit' | 'security'>('tenants');
+  const [activeSubTab, setActiveSubTab] = useState<'tenants' | 'pricing' | 'audit' | 'security'>('tenants');
 
   // Edit Modal State
   const [selectedOrg, setSelectedOrg] = useState<PlatformOrganization | null>(null);
@@ -301,8 +303,9 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
                 <ShieldCheck className="w-3.5 h-3.5" /> RLS Isolated
               </span>
             </div>
-            <h1 className="text-2xl font-black font-heading tracking-tight text-white flex items-center gap-2">
-              Platform Creator Console
+            <h1 className="text-2xl font-black font-heading tracking-tight text-white flex items-center gap-2.5">
+              <FrostlyLogo size={28} iconOnly variant="blue" />
+              <span>Platform Creator Console</span>
             </h1>
             <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
               Global multi-tenant governance, interim manual subscription licensing (direct MoMo / bank transfer), seat quota management, and immutable audit logging.
@@ -344,6 +347,18 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
           >
             <Building2 className="w-4 h-4" />
             <span>Tenant Directory ({organizations.length})</span>
+          </button>
+          <button
+            id="tab-platform-pricing"
+            onClick={() => setActiveSubTab('pricing')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeSubTab === 'pricing'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/50'
+                : 'text-slate-300 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <DollarSign className="w-4 h-4" />
+            <span>Pricing &amp; Plans (Home Page)</span>
           </button>
           <button
             id="tab-platform-audit"
@@ -546,6 +561,11 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
             </div>
           </div>
         </div>
+      )}
+
+      {/* SUB-TAB: PRICING & PLANS (HOME PAGE) */}
+      {activeSubTab === 'pricing' && (
+        <PlatformPricingPlansManager />
       )}
 
       {/* SUB-TAB 2: AUDIT TRAIL */}

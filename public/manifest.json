@@ -8,9 +8,15 @@
   "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "orientation": "any",
   "background_color": "#0f172a",
-  "theme_color": "#4f46e5",
+  "theme_color": "#0052FF",
   "categories": ["business", "finance", "productivity", "utilities"],
   "icons": [
+    {
+      "src": "/logofrostly1.png",
+      "sizes": "1402x1122",
+      "type": "image/png",
+      "purpose": "any"
+    },
     {
       "src": "/icons/icon-192.svg",
       "sizes": "192x192",
