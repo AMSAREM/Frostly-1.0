@@ -128,6 +128,24 @@ export default function App() {
     return formatCurrency(amount, settings.currency || 'GHS');
   };
 
+  // Track feature usage telemetry across user workspace navigations
+  useEffect(() => {
+    const tabFeatureMap: Record<string, string> = {
+      dashboard: 'cold_room_telemetry',
+      inventory: 'catch_inward',
+      retail_wholesale: 'sales_orders',
+      customers: 'customers_clients',
+      suppliers: 'suppliers_vessels',
+      financials: 'financial_ledger',
+      settings: 'settings_permissions',
+      platform: 'platform_console',
+    };
+    const featureKey = tabFeatureMap[activeTab] || activeTab;
+    import('./services/activityTrackingService').then(({ trackFeatureAction }) => {
+      trackFeatureAction(featureKey, 'view', { tab: activeTab }).catch(() => {});
+    }).catch(() => {});
+  }, [activeTab]);
+
   // Safe tenant-scoped local storage load helper
   // Newly created or active tenant workspaces are initialized completely clean without demo data
   const [batches, setBatches] = useState<InventoryBatch[]>(() => {

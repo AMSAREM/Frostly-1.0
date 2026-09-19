@@ -199,6 +199,17 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       } catch {}
     }
 
+    // Record login activity telemetry (non-blocking)
+    if (user && user.email) {
+      import('../services/activityTrackingService').then(({ recordUserLogin }) => {
+        recordUserLogin(
+          { id: user.id, email: user.email || '' },
+          cachedStaffProfile,
+          cachedStaffProfile?.organization
+        ).catch(() => {});
+      }).catch(() => {});
+    }
+
     return cachedStaffProfile;
   } catch (e) {
     console.warn('[Auth] Exception fetching staff profile:', e);

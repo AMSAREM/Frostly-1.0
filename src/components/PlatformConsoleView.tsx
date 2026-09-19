@@ -25,10 +25,12 @@ import {
   Trash2,
   RotateCcw,
   AlertOctagon,
-  ShieldAlert
+  ShieldAlert,
+  BarChart3
 } from 'lucide-react';
 import { GoogleSmtpModal } from './GoogleSmtpModal';
 import { PlatformPricingPlansManager } from './PlatformPricingPlansManager';
+import { PlatformAnalyticsView } from './PlatformAnalyticsView';
 import { FrostlyLogo } from './FrostlyLogo';
 import { 
   PlatformOrganization, 
@@ -52,7 +54,7 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'trial' | 'active' | 'past_due' | 'suspended'>('all');
-  const [activeSubTab, setActiveSubTab] = useState<'tenants' | 'pricing' | 'audit' | 'security'>('tenants');
+  const [activeSubTab, setActiveSubTab] = useState<'analytics' | 'tenants' | 'pricing' | 'audit' | 'security'>('analytics');
 
   // Edit Modal State
   const [selectedOrg, setSelectedOrg] = useState<PlatformOrganization | null>(null);
@@ -335,11 +337,23 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
         </div>
 
         {/* Console Navigation Tabs */}
-        <div className="flex items-center gap-2 mt-6 pt-4 border-t border-white/10">
+        <div className="flex items-center gap-2 mt-6 pt-4 border-t border-white/10 overflow-x-auto">
+          <button
+            id="tab-platform-analytics"
+            onClick={() => setActiveSubTab('analytics')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeSubTab === 'analytics'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/50'
+                : 'text-slate-300 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span>Platform Analytics</span>
+          </button>
           <button
             id="tab-platform-tenants"
             onClick={() => setActiveSubTab('tenants')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeSubTab === 'tenants'
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/50'
                 : 'text-slate-300 hover:text-white hover:bg-white/5'
@@ -398,6 +412,16 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
             <X className="w-4 h-4" />
           </button>
         </div>
+      )}
+
+      {/* SUB-TAB 0: PLATFORM ANALYTICS */}
+      {activeSubTab === 'analytics' && (
+        <PlatformAnalyticsView
+          organizations={organizations}
+          auditLogs={auditLogs}
+          onRefresh={handleRefresh}
+          isRefreshing={refreshing}
+        />
       )}
 
       {/* SUB-TAB 1: TENANTS DIRECTORY */}

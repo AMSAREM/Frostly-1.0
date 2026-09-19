@@ -56,7 +56,10 @@ const defaultMigrationFiles = [
   '014_platform_admin_console.sql',
   '015_creator_bootstrap.sql',
   '016_revoke_delete_tenant.sql',
-  '017_inventory_retail_linking.sql'
+  '017_inventory_retail_linking.sql',
+  '018_seed_landed_catch_species.sql',
+  '019_platform_pricing_plans.sql',
+  '020_user_login_and_feature_telemetry.sql'
 ];
 
 // Support running a single target migration if specified via CLI argument (e.g. node scripts/migrate.mjs 011_multi_tenant.sql)
