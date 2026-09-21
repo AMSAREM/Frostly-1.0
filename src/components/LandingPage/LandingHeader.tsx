@@ -16,12 +16,16 @@ interface LandingHeaderProps {
   onSignIn: () => void;
   onGetStarted: () => void;
   onExploreDemo: () => void;
+  onInstallApp?: () => void;
+  isInstalled?: boolean;
 }
 
 export const LandingHeader: React.FC<LandingHeaderProps> = ({
   onSignIn,
   onGetStarted,
-  onExploreDemo
+  onExploreDemo,
+  onInstallApp,
+  isInstalled = false
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
@@ -95,7 +99,19 @@ export const LandingHeader: React.FC<LandingHeaderProps> = ({
           </div>
 
           {/* Right Header Actions */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {!isInstalled && onInstallApp && (
+              <button
+                id="landing-header-install-app-btn"
+                onClick={onInstallApp}
+                className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 px-2.5 sm:px-3 py-1.5 rounded-lg shadow-2xs transition-colors cursor-pointer"
+                title="Install Frostly App on Desktop or Mobile"
+              >
+                <Download className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <span>Install App</span>
+              </button>
+            )}
+
             <button
               onClick={onExploreDemo}
               className="hidden md:inline-flex items-center text-sm font-medium text-slate-700 hover:text-slate-900 px-3 py-1.5 rounded-md hover:bg-slate-100 transition-colors"
@@ -164,6 +180,19 @@ export const LandingHeader: React.FC<LandingHeaderProps> = ({
                 FAQ
               </button>
               <div className="pt-3 border-t border-slate-200 flex flex-col gap-2">
+                {!isInstalled && onInstallApp && (
+                  <button
+                    id="landing-mobile-install-app-btn"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      onInstallApp();
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-bold bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-md hover:bg-indigo-100 transition-colors"
+                  >
+                    <Download className="w-4 h-4 text-indigo-600" />
+                    <span>Install Frostly App</span>
+                  </button>
+                )}
                 <button
                   onClick={onExploreDemo}
                   className="w-full text-center py-2.5 text-sm font-medium border border-slate-300 text-slate-700 rounded-md hover:bg-slate-50"

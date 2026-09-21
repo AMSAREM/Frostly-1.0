@@ -1340,6 +1340,88 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
     }
   });
 
+  // User Feedback Endpoint (Connected to DB & SMTP Alerts)
+  const inMemoryFeedbackStore: any[] = [];
+
+  app.post('/api/feedback', async (req, res) => {
+    try {
+      const { rating, category, message, email, name } = req.body;
+
+      if (!message || typeof message !== 'string' || !message.trim()) {
+        res.status(400).json({ success: false, error: 'Feedback message is required.' });
+        return;
+      }
+
+      const feedbackEntry = {
+        id: crypto.randomUUID(),
+        rating: Math.min(5, Math.max(1, Number(rating) || 5)),
+        category: typeof category === 'string' && category.trim() ? category.trim() : 'General',
+        message: message.trim(),
+        email: email && typeof email === 'string' && email.trim() ? email.trim() : null,
+        name: name && typeof name === 'string' && name.trim() ? name.trim() : null,
+        created_at: new Date().toISOString(),
+        user_agent: (req.headers['user-agent'] as string) || null,
+        ip: (req.ip as string) || null,
+      };
+
+      inMemoryFeedbackStore.unshift(feedbackEntry);
+      if (inMemoryFeedbackStore.length > 200) inMemoryFeedbackStore.pop();
+
+      // 1. Persist to Supabase if configured
+      const adminClient = adminClientGetter();
+      if (adminClient) {
+        try {
+          await adminClient.from('feedbacks').insert([feedbackEntry]).catch((insertErr: any) => {
+            console.warn('[Feedback Supabase fallback]:', insertErr?.message);
+          });
+        } catch (dbErr: any) {
+          console.warn('[Feedback DB Exception]:', dbErr?.message);
+        }
+      }
+
+      // 2. Dispatch email notification via Google SMTP if configured
+      const transporter = getGoogleSmtpTransporter();
+      if (transporter) {
+        const adminEmail = process.env.GOOGLE_SMTP_USER || process.env.CREATOR_EMAIL || 'amoakoimml@gmail.com';
+        const fromUser = process.env.GOOGLE_SMTP_FROM_EMAIL || process.env.GOOGLE_SMTP_USER;
+        const fromName = process.env.GOOGLE_SMTP_FROM_NAME || 'Frostly Platform Feedback';
+
+        transporter.sendMail({
+          from: `"${fromName}" <${fromUser}>`,
+          to: adminEmail,
+          subject: `📣 [Frostly Feedback] ${feedbackEntry.category} (${feedbackEntry.rating}/5 stars)`,
+          text: `New User Feedback Received for Frostly:\n\n` +
+            `Rating: ${feedbackEntry.rating} / 5\n` +
+            `Category: ${feedbackEntry.category}\n` +
+            `Name: ${feedbackEntry.name || 'Anonymous'}\n` +
+            `Email: ${feedbackEntry.email || 'None provided'}\n` +
+            `Timestamp: ${feedbackEntry.created_at}\n\n` +
+            `Message:\n${feedbackEntry.message}\n\n` +
+            `User Agent: ${feedbackEntry.user_agent}`,
+        }).catch((mailErr: any) => {
+          console.warn('[Feedback Email Dispatch Notice]:', mailErr?.message);
+        });
+      }
+
+      res.status(200).json({
+        success: true,
+        message: 'Feedback received successfully. Thank you for helping improve Frostly!',
+        id: feedbackEntry.id,
+      });
+    } catch (err: any) {
+      console.error('[Feedback Submission Error]:', err);
+      res.status(500).json({ success: false, error: err?.message || 'Failed to submit feedback.' });
+    }
+  });
+
+  app.get('/api/feedback', (req, res) => {
+    res.json({
+      success: true,
+      count: inMemoryFeedbackStore.length,
+      feedbacks: inMemoryFeedbackStore.slice(0, 50),
+    });
+  });
+
   // Vite middleware for development
   if (options.withVite !== false) {
     if (process.env.NODE_ENV !== 'production') {

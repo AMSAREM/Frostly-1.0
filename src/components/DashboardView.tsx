@@ -94,8 +94,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="space-y-6 animate-in fade-in duration-300 max-w-full overflow-x-hidden min-w-0">
       {/* Top Welcome Banner & Quick Action Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-6 bg-white p-4 sm:p-6 lg:p-7 rounded-2xl border border-slate-200/90 shadow-xs">
-        <div className="min-w-0">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-6 bg-white p-4 sm:p-6 lg:p-7 rounded-2xl border border-slate-200/90 shadow-xs max-w-full overflow-hidden">
+        <div className="min-w-0 max-w-full">
           <div className="flex flex-wrap items-center gap-2">
             <span 
               id="dashboard-company-name-pill"
@@ -120,24 +120,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </p>
         </div>
 
-        <div className="flex flex-wrap sm:flex-nowrap lg:flex-wrap xl:flex-nowrap items-stretch sm:items-center gap-2 sm:gap-2.5 shrink-0 w-full lg:w-auto max-w-full">
+        <div className="grid grid-cols-1 sm:grid-cols-3 lg:flex lg:flex-wrap xl:flex-nowrap items-center gap-2 sm:gap-2.5 w-full lg:w-auto shrink-0 min-w-0">
           <button
             onClick={() => onSelectTab('retail_wholesale')}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2.5 rounded-xl sm:rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0"
+            className="w-full lg:w-auto flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0 whitespace-nowrap"
           >
             <ShoppingBag className="w-4 h-4 shrink-0" />
             <span className="truncate">Retail POS</span>
           </button>
           <button
             onClick={() => onSelectTab('suppliers')}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2.5 rounded-xl sm:rounded-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0"
+            className="w-full lg:w-auto flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0 whitespace-nowrap"
           >
             <Ship className="w-4 h-4 shrink-0" />
             <span className="truncate">Harvester Catch</span>
           </button>
           <button
             onClick={() => onSelectTab('financials')}
-            className="w-full sm:w-auto flex-none flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl sm:rounded-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0"
+            className="w-full lg:w-auto flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0 whitespace-nowrap"
           >
             <DollarSign className="w-4 h-4 shrink-0" />
             <span className="truncate">Financials &amp; P&amp;L</span>

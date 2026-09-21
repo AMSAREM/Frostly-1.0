@@ -1,5 +1,6 @@
 import { Session, User } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../utils/supabase';
+import { validateEmail } from '../utils/emailValidation';
 
 export type PlanTier = 'starter' | 'standard' | 'enterprise';
 export type SubscriptionStatus = 'trial' | 'active' | 'past_due' | 'canceled' | 'suspended';
@@ -240,13 +241,18 @@ export async function signIn(
   email: string,
   password: string
 ): Promise<{ session: Session | null; error: string | null }> {
+  const emailCheck = validateEmail(email);
+  if (!emailCheck.isValid) {
+    return { session: null, error: emailCheck.error || 'Please provide a valid authentic email address.' };
+  }
+
   if (!isSupabaseConfigured) {
     return { session: null, error: 'Supabase client is not configured' };
   }
 
   try {
     const { data, error } = await supabase.auth.signInWithPassword({
-      email,
+      email: emailCheck.normalizedEmail,
       password,
     });
 
@@ -255,7 +261,19 @@ export async function signIn(
     }
 
     cachedSession = data.session;
-    await getStaffProfile(true);
+    const profile = await getStaffProfile(true);
+
+    // Record login activity in real-time
+    if (data.session?.user && data.session.user.email) {
+      import('../services/activityTrackingService').then(({ recordUserLogin }) => {
+        recordUserLogin(
+          { id: data.session.user.id, email: data.session.user.email || '' },
+          profile,
+          profile?.organization
+        ).catch(() => {});
+      }).catch(() => {});
+    }
+
     return { session: data.session, error: null };
   } catch (err: any) {
     return { session: null, error: err?.message || 'Authentication failed' };
@@ -324,6 +342,12 @@ export async function signInAsCreator(
  * Sign out
  */
 export async function signOut(): Promise<void> {
+  const currentSession = cachedSession;
+  if (currentSession?.user) {
+    import('../services/activityTrackingService').then(({ recordUserLogout }) => {
+      recordUserLogout(currentSession.user.id, currentSession.user.email || '').catch(() => {});
+    }).catch(() => {});
+  }
   cachedSession = null;
   cachedStaffProfile = null;
 
@@ -576,14 +600,16 @@ export async function createInvite(
   role: StaffProfile['role'] = 'viewer',
   validityDays = 7
 ): Promise<{ success: boolean; data?: any; error?: string }> {
+  const emailCheck = validateEmail(email);
+  if (!emailCheck.isValid) {
+    return { success: false, error: emailCheck.error || 'A valid authentic work email address is required.' };
+  }
+
   if (!isSupabaseConfigured) {
     return { success: false, error: 'Supabase client is not configured' };
   }
 
-  const cleanEmail = email.trim().toLowerCase();
-  if (!cleanEmail || !cleanEmail.includes('@')) {
-    return { success: false, error: 'A valid email address is required.' };
-  }
+  const cleanEmail = emailCheck.normalizedEmail;
 
   try {
     // Enforce unique email: check if a staff member already exists with this email
@@ -653,6 +679,12 @@ export async function signUpAndCreateOrganization(
   adminDepartment = 'Executive',
   options?: CreateOrgCustomOptions
 ): Promise<{ session: Session | null; profile: StaffProfile | null; error: string | null }> {
+  const emailCheck = validateEmail(email);
+  if (!emailCheck.isValid) {
+    return { session: null, profile: null, error: emailCheck.error || 'Please provide a valid authentic email address.' };
+  }
+  const cleanEmail = emailCheck.normalizedEmail;
+
   if (!isSupabaseConfigured) {
     const orgRes = await createOrganizationAndAdmin(orgName, adminFullName, adminDepartment, options);
     if (!orgRes.success) {
@@ -662,8 +694,8 @@ export async function signUpAndCreateOrganization(
       id: 'usr-local-' + Math.random().toString(36).substring(2, 9),
       organization_id: orgRes.data?.organization_id || 'org-local-1',
       organization_name: orgName,
-      email,
-      full_name: adminFullName || email.split('@')[0],
+      email: cleanEmail,
+      full_name: adminFullName || cleanEmail.split('@')[0],
       role: 'admin',
       department: adminDepartment,
       is_active: true,
@@ -681,10 +713,10 @@ export async function signUpAndCreateOrganization(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: email.trim(),
+          email: cleanEmail,
           password,
           orgName: orgName.trim(),
-          adminFullName: adminFullName.trim() || email.trim().split('@')[0],
+          adminFullName: adminFullName.trim() || cleanEmail.split('@')[0],
           adminDepartment,
           facilityType: options?.facilityType || 'cold_storage',
           facilityCode: options?.facilityCode,
@@ -707,7 +739,7 @@ export async function signUpAndCreateOrganization(
       if (regData.success) {
         // Immediately sign in with the configured credentials to acquire user session
         const signInRes = await supabase.auth.signInWithPassword({
-          email: email.trim(),
+          email: cleanEmail,
           password,
         });
 
@@ -727,7 +759,7 @@ export async function signUpAndCreateOrganization(
     // 2. Client-side fallback if server-side endpoint is unreachable
     const redirectUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
     const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
-      email,
+      email: cleanEmail,
       password,
       options: {
         emailRedirectTo: redirectUrl,
@@ -870,13 +902,19 @@ export async function signUpAndAcceptInvite(
   fullName: string,
   department = 'Operations'
 ): Promise<{ session: Session | null; profile: StaffProfile | null; error: string | null }> {
+  const emailCheck = validateEmail(email);
+  if (!emailCheck.isValid) {
+    return { session: null, profile: null, error: emailCheck.error || 'Please provide a valid authentic email address.' };
+  }
+  const cleanEmail = emailCheck.normalizedEmail;
+
   if (!isSupabaseConfigured) {
     return { session: null, profile: null, error: 'Supabase client is not configured' };
   }
 
   try {
     const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
-      email,
+      email: cleanEmail,
       password,
       options: {
         data: {
@@ -1154,12 +1192,19 @@ export async function addWorkerToWorkspace(params: AddWorkerParams): Promise<{
   error?: string;
   message?: string;
 }> {
+  const emailCheck = validateEmail(params.email);
+  if (!emailCheck.isValid) {
+    return { success: false, error: emailCheck.error || 'Please provide a valid authentic work email address.' };
+  }
+  const cleanEmail = emailCheck.normalizedEmail;
+  const sanitizedParams = { ...params, email: cleanEmail };
+
   try {
     const headers = await getAuthHeaders(true);
     const res = await fetch('/api/tenant/workers', {
       method: 'POST',
       headers,
-      body: JSON.stringify(params),
+      body: JSON.stringify(sanitizedParams),
     });
 
     const data = await res.json();

@@ -71,6 +71,189 @@ export const FEATURE_CATALOG: Record<string, { name: string; category: FeatureUs
 const STORAGE_KEY_LOGINS = 'frostly_telemetry_logins';
 const STORAGE_KEY_FEATURES = 'frostly_telemetry_features';
 
+// Realtime listeners and channel reference
+type LoginCallback = (record: UserLoginRecord) => void;
+type PresenceCallback = (onlineUsers: ActiveSessionPresence[]) => void;
+
+export interface ActiveSessionPresence {
+  userId: string;
+  email: string;
+  fullName: string;
+  role: string;
+  orgName: string;
+  deviceType: string;
+  onlineAt: string;
+}
+
+const loginListeners = new Set<LoginCallback>();
+const presenceListeners = new Set<PresenceCallback>();
+let realtimeSessionChannel: ReturnType<typeof supabase.channel> | null = null;
+let currentPresencePayload: ActiveSessionPresence | null = null;
+
+/**
+ * Initialize or get the Supabase Realtime Channel for live user sessions
+ */
+function getOrCreateSessionChannel() {
+  if (!isSupabaseConfigured) return null;
+  if (realtimeSessionChannel) return realtimeSessionChannel;
+
+  try {
+    const channel = supabase.channel('frostly_live_sessions', {
+      config: {
+        broadcast: { ack: true },
+        presence: { key: currentPresencePayload?.userId || 'anonymous-' + Math.random().toString(36).substring(2, 7) },
+      },
+    });
+
+    // 1. Listen for database changes on user_login_logs
+    channel
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'user_login_logs' },
+        (payload) => {
+          const newRow = payload.new as any;
+          if (newRow && newRow.user_id) {
+            const formattedRecord: UserLoginRecord = {
+              id: newRow.id || 'log-' + Date.now(),
+              user_id: newRow.user_id,
+              organization_id: newRow.organization_id || '',
+              organization_name: newRow.organization_name || 'Frostly Facility',
+              email: newRow.email,
+              full_name: newRow.full_name || newRow.email.split('@')[0],
+              role: newRow.role || 'staff',
+              login_at: newRow.login_at || newRow.created_at || new Date().toISOString(),
+              device_type: (newRow.device_type as any) || 'desktop',
+              user_agent: newRow.user_agent || 'Web Client',
+              session_status: (newRow.session_status as any) || 'active',
+            };
+            // Notify all subscribers
+            loginListeners.forEach((fn) => fn(formattedRecord));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'user_login_logs' },
+        (payload) => {
+          const updatedRow = payload.new as any;
+          if (updatedRow && updatedRow.id) {
+            const formattedRecord: UserLoginRecord = {
+              id: updatedRow.id,
+              user_id: updatedRow.user_id,
+              organization_id: updatedRow.organization_id || '',
+              organization_name: updatedRow.organization_name || 'Frostly Facility',
+              email: updatedRow.email,
+              full_name: updatedRow.full_name || updatedRow.email.split('@')[0],
+              role: updatedRow.role || 'staff',
+              login_at: updatedRow.login_at || new Date().toISOString(),
+              device_type: (updatedRow.device_type as any) || 'desktop',
+              user_agent: updatedRow.user_agent || 'Web Client',
+              session_status: (updatedRow.session_status as any) || 'active',
+            };
+            loginListeners.forEach((fn) => fn(formattedRecord));
+          }
+        }
+      )
+      // 2. Listen for instantaneous broadcast events
+      .on('broadcast', { event: 'user_session:login' }, (event) => {
+        if (event.payload && event.payload.record) {
+          loginListeners.forEach((fn) => fn(event.payload.record));
+        }
+      })
+      .on('broadcast', { event: 'user_session:logout' }, (event) => {
+        if (event.payload && event.payload.userId) {
+          // Trigger updates
+          loginListeners.forEach((fn) =>
+            fn({
+              id: 'logout-' + Date.now(),
+              user_id: event.payload.userId,
+              organization_id: '',
+              organization_name: '',
+              email: event.payload.email || '',
+              full_name: '',
+              role: '',
+              login_at: new Date().toISOString(),
+              device_type: 'desktop',
+              user_agent: '',
+              session_status: 'expired',
+            })
+          );
+        }
+      })
+      // 3. Listen for presence sync (who is currently online)
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState<ActiveSessionPresence>();
+        const onlineList: ActiveSessionPresence[] = [];
+        Object.values(state).forEach((presences) => {
+          presences.forEach((p) => {
+            if (p && p.userId) onlineList.push(p);
+          });
+        });
+        presenceListeners.forEach((fn) => fn(onlineList));
+      });
+
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED' && currentPresencePayload) {
+        channel.track(currentPresencePayload).catch(() => {});
+      }
+    });
+
+    realtimeSessionChannel = channel;
+    return channel;
+  } catch (err) {
+    console.warn('[ActivityTracking] Failed to initialize realtime channel:', err);
+    return null;
+  }
+}
+
+/**
+ * Subscribe to realtime user login and session events
+ */
+export function subscribeToRealtimeLogins(onLogin: LoginCallback): () => void {
+  loginListeners.add(onLogin);
+  getOrCreateSessionChannel();
+
+  return () => {
+    loginListeners.delete(onLogin);
+  };
+}
+
+/**
+ * Subscribe to realtime online user presence
+ */
+export function subscribeToRealtimePresence(onPresence: PresenceCallback): () => void {
+  presenceListeners.add(onPresence);
+  const ch = getOrCreateSessionChannel();
+  if (ch) {
+    const state = ch.presenceState<ActiveSessionPresence>();
+    const onlineList: ActiveSessionPresence[] = [];
+    Object.values(state).forEach((presences) => {
+      presences.forEach((p) => {
+        if (p && p.userId) onlineList.push(p);
+      });
+    });
+    onPresence(onlineList);
+  }
+
+  return () => {
+    presenceListeners.delete(onPresence);
+  };
+}
+
+/**
+ * Update current client's presence on the realtime channel
+ */
+export function updateClientSessionPresence(presence: ActiveSessionPresence | null) {
+  currentPresencePayload = presence;
+  if (realtimeSessionChannel && isSupabaseConfigured) {
+    if (presence) {
+      realtimeSessionChannel.track(presence).catch(() => {});
+    } else {
+      realtimeSessionChannel.untrack().catch(() => {});
+    }
+  }
+}
+
 // Realistic pre-seeded demo telemetry for rich instant visualization
 const DEMO_LOGINS: UserLoginRecord[] = [
   {
@@ -352,6 +535,62 @@ export async function recordUserLogin(
     } catch (err) {
       console.warn('[ActivityTracking] Supabase login log failed (fallback to local cache):', err);
     }
+  }
+
+  // 3. Update realtime presence and broadcast event to all connected sessions
+  try {
+    updateClientSessionPresence({
+      userId: user.id,
+      email: user.email,
+      fullName: loginRecord.full_name,
+      role: loginRecord.role,
+      orgName: orgName,
+      deviceType: device,
+      onlineAt: loginRecord.login_at,
+    });
+
+    const ch = getOrCreateSessionChannel();
+    if (ch) {
+      ch.send({
+        type: 'broadcast',
+        event: 'user_session:login',
+        payload: { record: loginRecord },
+      }).catch(() => {});
+    }
+
+    // Local listeners notification
+    loginListeners.forEach((fn) => fn(loginRecord));
+  } catch (err) {
+    console.warn('[ActivityTracking] Realtime login broadcast failed:', err);
+  }
+}
+
+/**
+ * Record a user logout event, clearing presence and notifying peers
+ */
+export async function recordUserLogout(userId: string, email: string): Promise<void> {
+  try {
+    updateClientSessionPresence(null);
+
+    const ch = getOrCreateSessionChannel();
+    if (ch) {
+      ch.send({
+        type: 'broadcast',
+        event: 'user_session:logout',
+        payload: { userId, email },
+      }).catch(() => {});
+    }
+
+    if (isSupabaseConfigured) {
+      // Mark active logs as expired
+      await supabase
+        .from('user_login_logs')
+        .update({ session_status: 'expired' })
+        .eq('user_id', userId)
+        .eq('session_status', 'active');
+    }
+  } catch (err) {
+    console.warn('[ActivityTracking] User logout recording error:', err);
   }
 }
 

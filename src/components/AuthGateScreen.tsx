@@ -27,6 +27,8 @@ import { supabase } from '../utils/supabase';
 import { GoogleSmtpModal } from './GoogleSmtpModal';
 import { sendDirectGoogleSmtpConfirmation } from '../services/googleSmtpService';
 import { FrostlyLogo } from './FrostlyLogo';
+import { EmailValidationFeedback } from './EmailValidationFeedback';
+import { validateEmail } from '../utils/emailValidation';
 import { 
   signIn, 
   signInAsTestUser, 
@@ -239,8 +241,13 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
   // Sign In Handler
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim() || !password) {
-      setErrorMessage('Please enter both your work email and password.');
+    const emailCheck = validateEmail(email);
+    if (!emailCheck.isValid) {
+      setErrorMessage(emailCheck.error || 'Please enter a valid work email address.');
+      return;
+    }
+    if (!password) {
+      setErrorMessage('Please enter your password.');
       return;
     }
 
@@ -248,7 +255,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
     setErrorMessage(null);
 
     try {
-      const result = await signIn(email.trim(), password);
+      const result = await signIn(emailCheck.normalizedEmail, password);
       if (result.error) {
         if (result.error.toLowerCase().includes('invalid login credentials')) {
           setErrorMessage(
@@ -324,8 +331,13 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
       setErrorMessage('Please provide an organization name.');
       return;
     }
-    if (!email.trim() || !password) {
-      setErrorMessage('Please enter an admin email and password.');
+    const emailCheck = validateEmail(email);
+    if (!emailCheck.isValid) {
+      setErrorMessage(emailCheck.error || 'Please enter a valid administrator work email address.');
+      return;
+    }
+    if (!password) {
+      setErrorMessage('Please enter an admin password.');
       return;
     }
 
@@ -334,10 +346,10 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
 
     try {
       const res = await signUpAndCreateOrganization(
-        email.trim(),
+        emailCheck.normalizedEmail,
         password,
         orgName.trim(),
-        adminFullName.trim() || email.trim().split('@')[0],
+        adminFullName.trim() || emailCheck.normalizedEmail.split('@')[0],
         adminDepartment.trim() || 'Executive',
         {
           facilityType,
@@ -415,8 +427,13 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
       setErrorMessage('Please paste the invitation token.');
       return;
     }
-    if (!email.trim() || !password) {
-      setErrorMessage('Please enter your work email and create a password.');
+    const emailCheck = validateEmail(email);
+    if (!emailCheck.isValid) {
+      setErrorMessage(emailCheck.error || 'Please enter a valid work email address.');
+      return;
+    }
+    if (!password) {
+      setErrorMessage('Please enter a password.');
       return;
     }
 
@@ -425,10 +442,10 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
 
     try {
       const res = await signUpAndAcceptInvite(
-        email.trim(),
+        emailCheck.normalizedEmail,
         password,
         inviteToken.trim(),
-        inviteFullName.trim() || email.trim().split('@')[0],
+        inviteFullName.trim() || emailCheck.normalizedEmail.split('@')[0],
         inviteDepartment.trim() || 'Operations'
       );
 
@@ -709,6 +726,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                   disabled={isLoading}
                   className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 focus:border-indigo-600 transition-colors disabled:opacity-50"
                 />
+                <EmailValidationFeedback email={email} onApplySuggestion={(s) => setEmail(s)} />
               </div>
 
               {!isSettingPassword ? (
@@ -1112,6 +1130,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                   disabled={isLoading}
                   className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 focus:border-indigo-600 transition-colors disabled:opacity-50"
                 />
+                <EmailValidationFeedback email={email} onApplySuggestion={(s) => setEmail(s)} />
               </div>
 
               <div>
@@ -1270,6 +1289,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                   disabled={isLoading}
                   className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 focus:border-indigo-600 transition-colors disabled:opacity-50"
                 />
+                <EmailValidationFeedback email={email} onApplySuggestion={(s) => setEmail(s)} />
               </div>
 
               <div>

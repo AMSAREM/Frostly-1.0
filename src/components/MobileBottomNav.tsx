@@ -9,7 +9,8 @@ import {
   Settings,
   Menu,
   X,
-  ChevronRight
+  ChevronRight,
+  Download
 } from 'lucide-react';
 import { ActiveTab } from './Header';
 
@@ -17,12 +18,16 @@ interface MobileBottomNavProps {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
   activeAlertCount: number;
+  onOpenInstallModal?: () => void;
+  isInstalled?: boolean;
 }
 
 export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   activeTab,
   setActiveTab,
-  activeAlertCount
+  activeAlertCount,
+  onOpenInstallModal,
+  isInstalled = false
 }) => {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
 
@@ -71,6 +76,33 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
             </div>
 
             <div className="space-y-2">
+              {onOpenInstallModal && !isInstalled && (
+                <button
+                  id="mobile-more-install-btn"
+                  onClick={() => {
+                    setShowMoreMenu(false);
+                    onOpenInstallModal();
+                  }}
+                  className="w-full flex items-center justify-between p-3.5 rounded-2xl text-left transition-all cursor-pointer border bg-indigo-50/90 hover:bg-indigo-100/90 border-indigo-200 text-indigo-950"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-xl bg-white shadow-2xs border border-indigo-200 text-indigo-600">
+                      <Download className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                        <span>Install Frostly App</span>
+                        <span className="text-[10px] bg-indigo-200 text-indigo-800 font-extrabold px-1.5 py-0.5 rounded-full">
+                          PWA
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-indigo-700">Add to home screen for offline &amp; native access</div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-indigo-400" />
+                </button>
+              )}
+
               {moreItems.map((item) => {
                 const isSelected = activeTab === item.id;
                 return (

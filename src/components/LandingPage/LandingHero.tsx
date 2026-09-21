@@ -19,7 +19,8 @@ import {
   MapPin,
   Check,
   Search,
-  MessageSquare
+  MessageSquare,
+  Download
 } from 'lucide-react';
 
 interface LandingHeroProps {
@@ -27,13 +28,17 @@ interface LandingHeroProps {
   onGetStarted: () => void;
   onExploreDemo: () => void;
   onOpenFeedback: () => void;
+  onInstallApp?: () => void;
+  isInstalled?: boolean;
 }
 
 export const LandingHero: React.FC<LandingHeroProps> = ({
   onSignIn,
   onGetStarted,
   onExploreDemo,
-  onOpenFeedback
+  onOpenFeedback,
+  onInstallApp,
+  isInstalled = false
 }) => {
   const [activePromptIndex, setActivePromptIndex] = useState(0);
   const [promptSubmitted, setPromptSubmitted] = useState(false);
@@ -88,11 +93,11 @@ export const LandingHero: React.FC<LandingHeroProps> = ({
             </p>
 
             {/* Action Buttons Row */}
-            <div className="mt-8 flex flex-wrap items-center gap-3.5">
+            <div className="mt-8 flex flex-wrap items-center gap-3 sm:gap-3.5">
               <button
                 onClick={onSignIn}
                 id="hero-signin-btn"
-                className="bg-[#0f172a] hover:bg-[#1e293b] text-white font-medium text-sm sm:text-base px-7 py-3 rounded-md shadow-sm hover:shadow transition-all duration-150 active:scale-[0.98]"
+                className="bg-[#0f172a] hover:bg-[#1e293b] text-white font-medium text-sm sm:text-base px-6 sm:px-7 py-3 rounded-md shadow-sm hover:shadow transition-all duration-150 active:scale-[0.98] cursor-pointer"
               >
                 Sign in
               </button>
@@ -100,10 +105,22 @@ export const LandingHero: React.FC<LandingHeroProps> = ({
               <button
                 onClick={onExploreDemo}
                 id="hero-explore-btn"
-                className="border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-50 text-slate-900 font-medium text-sm sm:text-base px-6 py-3 rounded-md shadow-xs transition-all duration-150 active:scale-[0.98]"
+                className="border border-slate-300 hover:border-slate-400 bg-white hover:bg-slate-50 text-slate-900 font-medium text-sm sm:text-base px-5 sm:px-6 py-3 rounded-md shadow-xs transition-all duration-150 active:scale-[0.98] cursor-pointer"
               >
                 Explore Live Demo
               </button>
+
+              {!isInstalled && onInstallApp && (
+                <button
+                  onClick={onInstallApp}
+                  id="hero-install-app-btn"
+                  className="border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 font-semibold text-sm sm:text-base px-4 sm:px-5 py-3 rounded-md shadow-xs transition-all duration-150 active:scale-[0.98] flex items-center gap-2 cursor-pointer"
+                  title="Install Frostly on Desktop or Mobile"
+                >
+                  <Download className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>Install App</span>
+                </button>
+              )}
             </div>
 
             {/* Tertiary Link: Create free account (matching reference with square chevron) */}

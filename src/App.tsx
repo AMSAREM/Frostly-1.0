@@ -1474,7 +1474,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f8f9fc] flex flex-col selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen bg-[#f8f9fc] flex flex-col selection:bg-indigo-500 selection:text-white w-full max-w-full overflow-x-hidden">
       {/* Offline Status & PWA Banner */}
       <PWAStatusBanner
         isOnline={isOnline}
@@ -1564,8 +1564,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Content Area - with mobile bottom safe area padding */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24 md:pb-8">
+      {/* Main Content Area - with mobile bottom safe area padding and overflow protection */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-24 md:pb-8 min-w-0 max-w-full overflow-x-hidden">
         {activeTab === 'dashboard' && (
           <DashboardView
             batches={batches}
@@ -1774,6 +1774,8 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         activeAlertCount={0}
+        onOpenInstallModal={() => setIsInstallModalOpen(true)}
+        isInstalled={isInstalled}
       />
 
       {/* PWA Cross-Platform Install Modal */}

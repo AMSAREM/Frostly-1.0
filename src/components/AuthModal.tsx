@@ -38,6 +38,8 @@ import { sendDirectGoogleSmtpConfirmation } from '../services/googleSmtpService'
 import { isSupabaseConfigured } from '../utils/supabase';
 import { syncManager } from '../sync/syncManager';
 import { Session } from '@supabase/supabase-js';
+import { validateEmail } from '../utils/emailValidation';
+import { EmailValidationFeedback } from './EmailValidationFeedback';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -134,8 +136,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
 
   const handleCustomSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
-      setError('Please provide both email and password');
+    const emailCheck = validateEmail(email);
+    if (!emailCheck.isValid) {
+      setError(emailCheck.error || 'Please enter a valid work email address');
+      return;
+    }
+    if (!password) {
+      setError('Please provide your password');
       return;
     }
 
@@ -144,7 +151,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
     setSuccessMsg(null);
 
     try {
-      const result = await signIn(email, password);
+      const result = await signIn(emailCheck.normalizedEmail, password);
       if (result.error) {
         setError(result.error);
       } else {
@@ -165,8 +172,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
       setError('Please provide an organization name');
       return;
     }
-    if (!email || !password) {
-      setError('Please enter admin credentials (email & password)');
+    const emailCheck = validateEmail(email);
+    if (!emailCheck.isValid) {
+      setError(emailCheck.error || 'Please enter a valid administrator work email address');
+      return;
+    }
+    if (!password) {
+      setError('Please enter admin password');
       return;
     }
 
@@ -176,10 +188,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
 
     try {
       const res = await signUpAndCreateOrganization(
-        email,
+        emailCheck.normalizedEmail,
         password,
         orgName,
-        adminFullName || email.split('@')[0],
+        adminFullName || emailCheck.normalizedEmail.split('@')[0],
         adminDepartment
       );
       if (res.error) {
@@ -226,8 +238,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
       setError('Please paste your invitation token');
       return;
     }
-    if (!email || !password) {
-      setError('Please enter your staff email and desired password');
+    const emailCheck = validateEmail(email);
+    if (!emailCheck.isValid) {
+      setError(emailCheck.error || 'Please enter a valid work email address');
+      return;
+    }
+    if (!password) {
+      setError('Please enter your desired password');
       return;
     }
 
@@ -237,10 +254,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
 
     try {
       const res = await signUpAndAcceptInvite(
-        email,
+        emailCheck.normalizedEmail,
         password,
         inviteToken,
-        inviteFullName || email.split('@')[0],
+        inviteFullName || emailCheck.normalizedEmail.split('@')[0],
         inviteDepartment
       );
       if (res.error) {
@@ -259,8 +276,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
 
   const handleGenerateInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newInviteEmail.trim()) {
-      setError('Please provide recipient email');
+    const inviteEmailCheck = validateEmail(newInviteEmail);
+    if (!inviteEmailCheck.isValid) {
+      setError(inviteEmailCheck.error || 'Please provide a valid recipient work email');
       return;
     }
 
@@ -268,12 +286,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
     setError(null);
 
     try {
-      const res = await createInvite(newInviteEmail, newInviteRole);
+      const res = await createInvite(inviteEmailCheck.normalizedEmail, newInviteRole);
       if (!res.success) {
         setError(res.error || 'Failed to generate invite');
       } else {
         setCreatedInviteToken(res.data?.token || null);
-        setSuccessMsg(`Invite generated for ${newInviteEmail}`);
+        setSuccessMsg(`Invite generated for ${inviteEmailCheck.normalizedEmail}`);
       }
     } catch (err: any) {
       setError(err?.message || 'Error creating invite');
@@ -451,6 +469,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                         <option value="admin">Administrator</option>
                       </select>
                     </div>
+                    <EmailValidationFeedback email={newInviteEmail} onApplySuggestion={(s) => setNewInviteEmail(s)} />
 
                     <button
                       id="generate-invite-button"
@@ -606,6 +625,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                           className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                         />
                       </div>
+                      <EmailValidationFeedback email={email} onApplySuggestion={(s) => setEmail(s)} />
                     </div>
 
                     <div>
@@ -696,6 +716,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                       onChange={(e) => setEmail(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                     />
+                    <EmailValidationFeedback email={email} onApplySuggestion={(s) => setEmail(s)} />
                   </div>
 
                   <div>
@@ -786,6 +807,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
                       onChange={(e) => setEmail(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                     />
+                    <EmailValidationFeedback email={email} onApplySuggestion={(s) => setEmail(s)} />
                   </div>
 
                   <div>

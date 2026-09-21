@@ -37,12 +37,13 @@ export const PWAInstallModal: React.FC<PWAInstallModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-200">
       <div 
-        className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-900 animate-in zoom-in-95 duration-200"
+        className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden text-slate-900 animate-in zoom-in-95 duration-200 max-h-[92vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
         <div className="p-6 bg-gradient-to-br from-indigo-900 via-indigo-800 to-slate-900 text-white relative">
           <button 
+            id="pwa-modal-close-btn"
             onClick={onClose}
             className="absolute top-5 right-5 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
             aria-label="Close"
@@ -52,8 +53,8 @@ export const PWAInstallModal: React.FC<PWAInstallModalProps> = ({
 
           <div className="flex items-center gap-3 mb-2">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-500 to-sky-400 p-0.5 shadow-lg flex items-center justify-center">
-              <div className="w-full h-full bg-indigo-950 rounded-[14px] flex items-center justify-center">
-                <img src="/icons/icon-192.svg" alt="Frostly Icon" className="w-8 h-8 rounded-lg" />
+              <div className="w-full h-full bg-indigo-950 rounded-[14px] flex items-center justify-center overflow-hidden p-1.5">
+                <img src="/logofrostly1.png" alt="Frostly Icon" className="w-full h-full object-contain" />
               </div>
             </div>
             <div>

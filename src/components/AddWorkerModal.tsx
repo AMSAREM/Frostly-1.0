@@ -20,6 +20,8 @@ import {
   Eye,
 } from 'lucide-react';
 import { addWorkerToWorkspace, WorkspaceWorker, WorkspacePendingInvite } from '../data/auth';
+import { validateEmail } from '../utils/emailValidation';
+import { EmailValidationFeedback } from './EmailValidationFeedback';
 
 interface AddWorkerModalProps {
   isOpen: boolean;
@@ -88,8 +90,9 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
     e.preventDefault();
     setError(null);
 
-    if (!email.trim() || !email.includes('@')) {
-      setError('Please provide a valid worker email address.');
+    const emailCheck = validateEmail(email);
+    if (!emailCheck.isValid) {
+      setError(emailCheck.error || 'Please provide a valid worker email address.');
       return;
     }
 
@@ -102,8 +105,8 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
     try {
       const payload = {
         organizationId,
-        email: email.trim(),
-        fullName: fullName.trim() || email.split('@')[0],
+        email: emailCheck.normalizedEmail,
+        fullName: fullName.trim() || emailCheck.normalizedEmail.split('@')[0],
         role,
         department: department.trim() || 'Operations',
         password: mode === 'direct_password' ? password : undefined,
@@ -474,6 +477,7 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-900 placeholder:text-slate-400"
                 />
+                <EmailValidationFeedback email={email} onApplySuggestion={(s) => setEmail(s)} />
               </div>
             </div>
 

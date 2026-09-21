@@ -10,6 +10,8 @@ import { LandingFaq } from './LandingFaq';
 import { LandingFooter } from './LandingFooter';
 import { FeedbackModal } from './FeedbackModal';
 import { LegalModal } from '../LegalModal';
+import { PWAInstallModal } from '../PWAInstallModal';
+import { usePWAInstall } from '../../utils/pwa';
 
 export interface LandingPageProps {
   onSignIn: () => void;
@@ -23,6 +25,20 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onExploreDemo
 }) => {
   const [feedbackOpen, setFeedbackOpen] = useState<boolean>(false);
+  const [pwaModalOpen, setPwaModalOpen] = useState<boolean>(false);
+  const { isInstallable, isInstalled, isIOS, isStandalone, triggerInstall } = usePWAInstall();
+
+  const handleInstallClick = async () => {
+    if (isInstallable) {
+      const accepted = await triggerInstall();
+      if (!accepted) {
+        setPwaModalOpen(true);
+      }
+    } else {
+      setPwaModalOpen(true);
+    }
+  };
+
   const [legalModal, setLegalModal] = useState<{
     isOpen: boolean;
     type: 'privacy' | 'terms' | 'sitemap';
@@ -39,6 +55,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         onSignIn={onSignIn}
         onGetStarted={onGetStarted}
         onExploreDemo={onExploreDemo}
+        onInstallApp={handleInstallClick}
+        isInstalled={isInstalled}
       />
 
       {/* Hero Section (Matching Microsoft 365 Outlook Reference) */}
@@ -47,6 +65,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         onGetStarted={onGetStarted}
         onExploreDemo={onExploreDemo}
         onOpenFeedback={() => setFeedbackOpen(true)}
+        onInstallApp={handleInstallClick}
+        isInstalled={isInstalled}
       />
 
       {/* Core Feature Showcase */}
@@ -89,6 +109,19 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         isOpen={legalModal.isOpen}
         type={legalModal.type}
         onClose={() => setLegalModal({ ...legalModal, isOpen: false })}
+      />
+
+      {/* PWA Install Modal */}
+      <PWAInstallModal
+        isOpen={pwaModalOpen}
+        onClose={() => setPwaModalOpen(false)}
+        onInstall={async () => {
+          await triggerInstall();
+          setPwaModalOpen(false);
+        }}
+        isIOS={isIOS}
+        isInstallable={isInstallable}
+        isStandalone={isStandalone}
       />
 
     </div>
