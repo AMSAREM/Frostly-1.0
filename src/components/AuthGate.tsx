@@ -1,8 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { Loader2 } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '../utils/supabase';
-import { getStaffProfile, signOut as authSignOut, StaffProfile } from '../data/auth';
+import { 
+  getSession, 
+  getStaffProfile, 
+  signOut as authSignOut, 
+  signInAsTestUser,
+  onAuthStateChange,
+  StaffProfile 
+} from '../data/auth';
 import { AuthGateScreen } from './AuthGateScreen';
 import { TenantOnboardingScreen } from './TenantOnboardingScreen';
 import { LandingPage } from './LandingPage';
@@ -34,10 +40,10 @@ interface AuthGateProps {
  * AuthGate - The single, authoritative boundary for session enforcement in Frostly.
  * 
  * Enforces:
- * 1. Single source of truth for Supabase Auth session via getSession() + onAuthStateChange.
+ * 1. Single source of truth for session via getSession() + onAuthStateChange.
  * 2. Instant unmount of protected tenant tree upon sign-out, token revocation, or session expiration.
  * 3. Smooth, flash-free session checking with a minimal centered loader.
- * 4. Renders full-screen AuthGateScreen when unauthenticated.
+ * 4. Renders full-screen AuthGateScreen or LandingPage when unauthenticated.
  */
 export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
@@ -92,26 +98,13 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   };
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setIsCheckingSession(false);
-      return;
-    }
-
     let isMounted = true;
 
-    // 1. Initial synchronous/asynchronous session retrieval
-    supabase.auth.getSession().then(({ data, error }) => {
+    // 1. Initial session retrieval (handles both Supabase and offline/demo sessions)
+    getSession().then((initialSession) => {
       if (!isMounted) return;
-      if (error) {
-        console.warn('[AuthGate] Error retrieving initial session:', error.message);
-        setSession(null);
-        setStaffProfile(null);
-        setIsCheckingSession(false);
-        return;
-      }
-
-      setSession(data.session);
-      if (data.session) {
+      setSession(initialSession);
+      if (initialSession) {
         getStaffProfile(true).then((profile) => {
           if (isMounted) {
             setStaffProfile(profile);
@@ -128,9 +121,8 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
       if (isMounted) setIsCheckingSession(false);
     });
 
-    // 2. Authoritative auth state listener: fires on SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED, USER_UPDATED
-    // When tokens expire and fail to refresh or are revoked, newSession will be null or event will be SIGNED_OUT
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+    // 2. Authoritative auth state listener: fires on SIGNED_IN, SIGNED_OUT, or local demo auth
+    const unsubscribe = onAuthStateChange(async (newSession) => {
       if (!isMounted) return;
 
       setSession(newSession);
@@ -151,7 +143,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
 
     return () => {
       isMounted = false;
-      authListener?.subscription.unsubscribe();
+      unsubscribe();
     };
   }, []);
 
@@ -184,9 +176,18 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
             window.location.hash = '#signup';
             setUnauthView('create_org');
           }}
-          onExploreDemo={() => {
-            window.location.hash = '#login';
-            setUnauthView('login');
+          onExploreDemo={async () => {
+            setIsCheckingSession(true);
+            const res = await signInAsTestUser();
+            if (res.session) {
+              setSession(res.session);
+              const profile = await getStaffProfile(true);
+              setStaffProfile(profile);
+            } else {
+              window.location.hash = '#login';
+              setUnauthView('login');
+            }
+            setIsCheckingSession(false);
           }}
         />
       );
@@ -202,8 +203,13 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
           window.location.hash = '';
           setUnauthView('landing');
         }}
-        onAuthSuccess={() => {
-          // Profile & session update is reactively handled by onAuthStateChange
+        onAuthSuccess={async () => {
+          const s = await getSession();
+          setSession(s);
+          if (s) {
+            const p = await getStaffProfile(true);
+            setStaffProfile(p);
+          }
         }} 
       />
     );

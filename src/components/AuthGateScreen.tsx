@@ -276,17 +276,15 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
 
   // Tenant Admin Quick-Login Handler
   const handleDevQuickLogin = async () => {
-    if (!DEFAULT_TEST_USER_EMAIL || !DEFAULT_TEST_USER_PASSWORD) {
-      setErrorMessage('Development test credentials are not configured in environment variables (VITE_DEV_TEST_USER_EMAIL / VITE_DEV_TEST_USER_PASSWORD).');
-      return;
-    }
-    setEmail(DEFAULT_TEST_USER_EMAIL);
-    setPassword(DEFAULT_TEST_USER_PASSWORD);
+    const targetEmail = DEFAULT_TEST_USER_EMAIL || 'admin@frostly.io';
+    const targetPass = DEFAULT_TEST_USER_PASSWORD || 'frostly2026';
+    setEmail(targetEmail);
+    setPassword(targetPass);
     setIsLoading(true);
     setErrorMessage(null);
 
     try {
-      const result = await signIn(DEFAULT_TEST_USER_EMAIL, DEFAULT_TEST_USER_PASSWORD);
+      const result = await signInAsTestUser(targetEmail, targetPass);
       if (result.error) {
         setErrorMessage(result.error);
       } else {
@@ -301,17 +299,15 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
 
   // Creator Quick-Login Handler (Platform Owner)
   const handleCreatorQuickLogin = async () => {
-    if (!DEFAULT_CREATOR_EMAIL || !DEFAULT_CREATOR_PASSWORD) {
-      setErrorMessage('Platform creator credentials are not configured in environment variables (VITE_DEV_CREATOR_EMAIL / VITE_DEV_CREATOR_PASSWORD).');
-      return;
-    }
-    setEmail(DEFAULT_CREATOR_EMAIL);
-    setPassword(DEFAULT_CREATOR_PASSWORD);
+    const targetEmail = DEFAULT_CREATOR_EMAIL || 'creator@frostly.io';
+    const targetPass = DEFAULT_CREATOR_PASSWORD || 'frostly2026';
+    setEmail(targetEmail);
+    setPassword(targetPass);
     setIsLoading(true);
     setErrorMessage(null);
 
     try {
-      const result = await signIn(DEFAULT_CREATOR_EMAIL, DEFAULT_CREATOR_PASSWORD);
+      const result = await signInAsCreator(targetEmail, targetPass);
       if (result.error) {
         setErrorMessage(result.error);
       } else {
@@ -786,6 +782,26 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                       <span>Log In to Workspace</span>
                     )}
                   </button>
+
+                  <div className="relative my-3">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-slate-200"></div>
+                    </div>
+                    <div className="relative flex justify-center text-[10px] uppercase font-bold tracking-wider">
+                      <span className="bg-white px-2 text-slate-400">or explore without credentials</span>
+                    </div>
+                  </div>
+
+                  <button
+                    id="auth-gate-instant-demo-btn"
+                    type="button"
+                    onClick={handleDevQuickLogin}
+                    disabled={isLoading}
+                    className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Explore Demo Mode (Instant Access)</span>
+                  </button>
                 </>
               ) : (
                 /* Sub-form: Secure Password Recovery */
@@ -852,8 +868,8 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                 </div>
               )}
 
-              {/* Dev-Only Quick Login Buttons & Credentials Box (Strictly Local DEV guarded) */}
-              {import.meta.env.DEV && Boolean(DEFAULT_CREATOR_EMAIL || DEFAULT_TEST_USER_EMAIL) && (
+              {/* Quick Login Buttons & Credentials Box */}
+              {Boolean(DEFAULT_CREATOR_EMAIL || DEFAULT_TEST_USER_EMAIL) && (
                 <div className="mt-3 space-y-2">
                   {DEFAULT_CREATOR_EMAIL && DEFAULT_CREATOR_PASSWORD && (
                     <button

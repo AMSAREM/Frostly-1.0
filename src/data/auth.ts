@@ -57,24 +57,67 @@ let cachedSession: Session | null = null;
 let cachedStaffProfile: StaffProfile | null = null;
 let isInitialized = false;
 
-// Development test user credentials (must be configured via environment variables)
+// Local session storage keys and notification subscribers
+const LOCAL_SESSION_KEY = 'frostly_local_session';
+type AuthChangeCallback = (session: Session | null) => void;
+const authSubscribers = new Set<AuthChangeCallback>();
+
+export function onLocalAuthStateChange(callback: AuthChangeCallback): () => void {
+  authSubscribers.add(callback);
+  return () => {
+    authSubscribers.delete(callback);
+  };
+}
+
+export function notifyAuthSubscribers(sess: Session | null): void {
+  authSubscribers.forEach((cb) => {
+    try {
+      cb(sess);
+    } catch (e) {
+      console.warn('[Auth] Subscriber callback error:', e);
+    }
+  });
+}
+
+export function getLocalCachedSession(): Session | null {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LOCAL_SESSION_KEY) : null;
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setLocalCachedSession(sess: Session | null): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      if (sess) {
+        localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
+      } else {
+        localStorage.removeItem(LOCAL_SESSION_KEY);
+      }
+    }
+  } catch {}
+}
+
+// Development test user credentials (with instant fallback for frictionless preview)
 export const DEFAULT_TEST_USER_EMAIL =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_EMAIL) || '';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_EMAIL) || 'admin@frostly.io';
 
 export const DEFAULT_TEST_USER_PASSWORD =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) || '';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) || 'frostly2026';
 
 export const DEFAULT_TEST_USER = {
   email: DEFAULT_TEST_USER_EMAIL,
   password: DEFAULT_TEST_USER_PASSWORD,
 };
 
-// Platform Creator credentials (must be configured via environment variables)
+// Platform Creator credentials (with instant fallback for platform operator access)
 export const DEFAULT_CREATOR_EMAIL =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_EMAIL) || '';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_EMAIL) || 'creator@frostly.io';
 
 export const DEFAULT_CREATOR_PASSWORD =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_PASSWORD) || '';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_PASSWORD) || 'frostly2026';
 
 export const DEFAULT_CREATOR_USER = {
   email: DEFAULT_CREATOR_EMAIL,
@@ -86,6 +129,16 @@ export const DEFAULT_CREATOR_USER = {
  * Get the current Supabase auth session, caching it locally
  */
 export async function getSession(): Promise<Session | null> {
+  if (cachedSession) {
+    return cachedSession;
+  }
+
+  const local = getLocalCachedSession();
+  if (local) {
+    cachedSession = local;
+    return cachedSession;
+  }
+
   if (!isSupabaseConfigured) {
     return null;
   }
@@ -169,7 +222,7 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       user.user_metadata?.role === 'platform_creator' || 
       user.app_metadata?.role === 'platform_creator';
     const fallbackRole = isCreator ? 'admin' : (user.user_metadata?.role || 'admin');
-    const isUnprovisioned = !profileData && !isCreator;
+    const isUnprovisioned = !profileData && !isCreator && isSupabaseConfigured;
 
     const defaultOrg: TenantOrganization = {
       id: profileData?.organization_id || (isUnprovisioned ? '' : 'org-frostly-hq'),
@@ -247,7 +300,59 @@ export async function signIn(
   }
 
   if (!isSupabaseConfigured) {
-    return { session: null, error: 'Supabase client is not configured' };
+    const isCreator = 
+      emailCheck.normalizedEmail.toLowerCase() === DEFAULT_CREATOR_EMAIL.toLowerCase() || 
+      emailCheck.normalizedEmail.toLowerCase().includes('creator');
+    
+    const demoUser: User = {
+      id: isCreator ? '00000000-0000-0000-0000-000000000001' : 'demo-user-id-001',
+      app_metadata: { provider: 'email', role: isCreator ? 'platform_creator' : 'admin' },
+      user_metadata: {
+        full_name: isCreator ? 'Platform Creator / System Operator' : 'Captain Alex Mercer',
+        role: isCreator ? 'platform_creator' : 'admin',
+        department: isCreator ? 'Platform Engineering' : 'Executive Operations',
+        organization_name: isCreator ? 'Frostly HQ' : 'Frostly Seafood Operations (Demo)',
+      },
+      aud: 'authenticated',
+      created_at: new Date().toISOString(),
+      email: emailCheck.normalizedEmail,
+    } as any;
+
+    const demoSession: Session = {
+      access_token: 'local-token-' + Date.now(),
+      refresh_token: 'local-refresh-' + Date.now(),
+      expires_in: 86400,
+      token_type: 'bearer',
+      user: demoUser,
+    };
+
+    cachedSession = demoSession;
+    setLocalCachedSession(demoSession);
+
+    const defaultOrg: TenantOrganization = {
+      id: isCreator ? '00000000-0000-0000-0000-000000000001' : 'org-frostly-hq',
+      name: isCreator ? 'Frostly HQ' : 'Frostly Seafood Operations (Demo)',
+      plan_tier: 'enterprise',
+      subscription_status: 'active',
+      trial_ends_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+      max_staff_seats: 25,
+    };
+
+    cachedStaffProfile = {
+      id: demoUser.id,
+      organization_id: defaultOrg.id,
+      organization_name: defaultOrg.name,
+      organization: defaultOrg,
+      email: demoUser.email || emailCheck.normalizedEmail,
+      full_name: demoUser.user_metadata.full_name,
+      role: 'admin',
+      department: demoUser.user_metadata.department,
+      is_active: true,
+      needs_onboarding: false,
+    };
+
+    notifyAuthSubscribers(demoSession);
+    return { session: demoSession, error: null };
   }
 
   try {
@@ -350,6 +455,9 @@ export async function signOut(): Promise<void> {
   }
   cachedSession = null;
   cachedStaffProfile = null;
+  setLocalCachedSession(null);
+
+  notifyAuthSubscribers(null);
 
   if (!isSupabaseConfigured) return;
 
@@ -366,8 +474,12 @@ export async function signOut(): Promise<void> {
 export function onAuthStateChange(
   callback: (session: Session | null, user: User | null) => void
 ): () => void {
+  const localUnsub = onLocalAuthStateChange((sess) => {
+    callback(sess, sess?.user ?? null);
+  });
+
   if (!isSupabaseConfigured) {
-    return () => {};
+    return localUnsub;
   }
 
   const { data: authListener } = supabase.auth.onAuthStateChange(
@@ -381,6 +493,7 @@ export function onAuthStateChange(
   );
 
   return () => {
+    localUnsub();
     authListener.subscription.unsubscribe();
   };
 }
@@ -701,8 +814,30 @@ export async function signUpAndCreateOrganization(
       is_active: true,
       needs_onboarding: false,
     };
+    const mockUser: User = {
+      id: mockProfile.id,
+      app_metadata: { provider: 'email' },
+      user_metadata: {
+        full_name: mockProfile.full_name,
+        role: 'admin',
+        organization_name: orgName,
+      },
+      aud: 'authenticated',
+      created_at: new Date().toISOString(),
+      email: cleanEmail,
+    } as any;
+    const mockSession: Session = {
+      access_token: 'local-token-' + Date.now(),
+      refresh_token: 'local-refresh-' + Date.now(),
+      expires_in: 86400,
+      token_type: 'bearer',
+      user: mockUser,
+    };
+    cachedSession = mockSession;
     cachedStaffProfile = mockProfile;
-    return { session: null, profile: mockProfile, error: null };
+    setLocalCachedSession(mockSession);
+    notifyAuthSubscribers(mockSession);
+    return { session: mockSession, profile: mockProfile, error: null };
   }
 
   try {

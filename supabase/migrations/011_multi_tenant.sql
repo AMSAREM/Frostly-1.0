@@ -15,9 +15,21 @@ CREATE TABLE IF NOT EXISTS public.organizations (
 );
 
 -- Seed default enterprise organization for existing records & backfill
-INSERT INTO public.organizations (id, name, plan)
-VALUES ('00000000-0000-0000-0000-000000000001', 'Frostly Cold-Chain Operations (Default)', 'enterprise')
-ON CONFLICT (id) DO NOTHING;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM public.organizations WHERE id = '00000000-0000-0000-0000-000000000001') THEN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_schema = 'public' AND table_name = 'organizations' AND column_name = 'plan'
+        ) THEN
+            INSERT INTO public.organizations (id, name, plan)
+            VALUES ('00000000-0000-0000-0000-000000000001', 'Frostly Cold-Chain Operations (Default)', 'enterprise');
+        ELSE
+            INSERT INTO public.organizations (id, name)
+            VALUES ('00000000-0000-0000-0000-000000000001', 'Frostly Cold-Chain Operations (Default)');
+        END IF;
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS public.invites (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

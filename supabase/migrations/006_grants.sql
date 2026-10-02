@@ -46,6 +46,7 @@ GRANT EXECUTE ON FUNCTION public.fn_fulfill_order_line_item(UUID, NUMERIC) TO au
 
 -- 4. Cross-Table Aggregated Reporting Views
 -- (A) Customer Outstanding Receivables Summary (security_invoker = true to respect querying user RLS)
+DROP VIEW IF EXISTS public.view_customer_receivables_summary CASCADE;
 CREATE OR REPLACE VIEW public.view_customer_receivables_summary
 WITH (security_invoker = true) AS
 SELECT 
@@ -65,6 +66,7 @@ WHERE c.is_active = TRUE
 GROUP BY c.id, c.name, c.company_name, c.tier, c.credit_limit_usd, c.outstanding_balance_usd, c.payment_terms, c.status;
 
 -- (B) Daily Financial Operations & Revenue Ledger Aggregation (security_invoker = true to respect querying user RLS)
+DROP VIEW IF EXISTS public.view_daily_financial_summary CASCADE;
 CREATE OR REPLACE VIEW public.view_daily_financial_summary
 WITH (security_invoker = true) AS
 SELECT 
