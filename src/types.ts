@@ -58,6 +58,7 @@ export interface InventoryBatch {
   linkedProductId?: string;
   productSku?: string;
   isRetailCutLot?: boolean;
+  imageUrl?: string;
 }
 
 export type OrderStatus = 
@@ -346,7 +347,50 @@ export interface PurchaseOrderLanding {
   notes?: string;
 }
 
-export type FinancialEntryCategory = 'Revenue (Wholesale)' | 'Revenue (Retail POS)' | 'COGS (Catch Intake)' | 'Logistics & Reefer Freight' | 'Cold Storage Utilities' | 'Packaging & Ice' | 'Labor & Cutting Crew' | 'Dock Fees & Port Taxes';
+export type FinancialEntryCategory = 
+  | 'Revenue (Wholesale)' 
+  | 'Revenue (Retail POS)' 
+  | 'COGS (Catch Intake)' 
+  | 'Inventory Adjustment'
+  | 'Logistics & Reefer Freight' 
+  | 'Cold Storage Utilities' 
+  | 'Packaging & Ice' 
+  | 'Labor & Cutting Crew' 
+  | 'Dock Fees & Port Taxes';
+
+export interface InventoryAdjustmentAccount {
+  id: string;
+  accountCode: string;
+  accountName: string;
+  accountType: 'COGS' | 'OpEx' | 'Contra-Asset' | 'Income';
+  description: string;
+  isDefault: boolean;
+  isActive: boolean;
+  balanceUSD: number;
+  organizationId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface InventoryStockAdjustment {
+  id: string;
+  batchId: string;
+  speciesName: string;
+  previousWeightKg: number;
+  newWeightKg: number;
+  deltaWeightKg: number;
+  unitCostUSD: number;
+  valuationVarianceUSD: number; // deltaWeightKg * unitCostUSD. Negative = write-off/loss, Positive = recovery/found stock
+  reason: string;
+  adjustmentAccountId?: string;
+  adjustmentAccountCode: string;
+  adjustmentAccountName: string;
+  financialLedgerId?: string;
+  notes?: string;
+  createdBy?: string;
+  createdAt: string;
+  organizationId?: string;
+}
 
 export interface FinancialLedgerEntry {
   id: string;
@@ -400,6 +444,10 @@ export interface AppSettings {
   notifyOverdueInvoices: boolean;
   notifyVesselArrivals: boolean;
   lowStockThresholdKg: number;
+
+  // Inventory Adjustment & Financial Integration
+  defaultAdjustmentAccountCode?: string;
+  autoPostAdjustmentToLedger?: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -431,7 +479,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyLowInventory: true,
   notifyOverdueInvoices: true,
   notifyVesselArrivals: true,
-  lowStockThresholdKg: 200
+  lowStockThresholdKg: 200,
+  defaultAdjustmentAccountCode: '5150',
+  autoPostAdjustmentToLedger: true
 };
 
 // -------------------------------------------------------------

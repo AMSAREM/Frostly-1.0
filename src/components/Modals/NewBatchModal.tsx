@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   X, 
   Plus, 
@@ -8,10 +8,16 @@ import {
   MapPin, 
   Calendar,
   Layers,
-  Sparkles
+  Sparkles,
+  Camera,
+  Upload,
+  Image as ImageIcon,
+  Trash2,
+  Loader2
 } from 'lucide-react';
 import { InventoryBatch, Species, QualityGrade, StorageZone } from '../../types';
 import { SPECIES_CATALOG } from '../../data/mockData';
+import { processImageFile } from '../../utils/imageUpload';
 
 interface NewBatchModalProps {
   onClose: () => void;
@@ -61,6 +67,27 @@ export const NewBatchModal: React.FC<NewBatchModalProps> = ({
   const [wholesalePrice, setWholesalePrice] = useState<number>(selectedSpecies.standardPricePerKg);
   const [certifications, setCertifications] = useState<string[]>(['FDA HACCP Title 21']);
   const [notes, setNotes] = useState('');
+  const [imageUrl, setImageUrl] = useState<string>('');
+  const [isProcessingImg, setIsProcessingImg] = useState<boolean>(false);
+  const [imgError, setImgError] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImgError('');
+    setIsProcessingImg(true);
+
+    try {
+      const dataUrl = await processImageFile(file, 1200, 1200, 0.85);
+      setImageUrl(dataUrl);
+    } catch (err: any) {
+      setImgError(err.message || 'Failed to process image');
+    } finally {
+      setIsProcessingImg(false);
+    }
+  };
 
   const availableCerts = ['MSC Certified', 'ASC Certified', 'FDA HACCP Title 21', 'Friend of the Sea', 'Iki-Jime Humane Seal', 'GlobalG.A.P.'];
 
@@ -124,7 +151,8 @@ export const NewBatchModal: React.FC<NewBatchModalProps> = ({
       receivedDate: new Date().toISOString().split('T')[0],
       expiryDate: '2027-08-20',
       qrCodeSeed: `FROST-PASS-${lotId}-${Date.now()}`,
-      notes
+      notes,
+      imageUrl: imageUrl.trim() || undefined
     };
 
     onAddBatch(newBatch);
@@ -347,6 +375,90 @@ export const NewBatchModal: React.FC<NewBatchModalProps> = ({
                 );
               })}
             </div>
+          </div>
+
+          {/* Custom User Batch Photo (Stored in Supabase database) */}
+          <div className="pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block font-semibold text-slate-700 text-xs">
+                Catch Lot Photo (User Added &bull; Stored in Database)
+              </label>
+              {imageUrl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImageUrl('');
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                  }}
+                  className="text-xs text-rose-600 hover:text-rose-700 flex items-center gap-1 font-semibold cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Remove Photo</span>
+                </button>
+              )}
+            </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleImageFileChange}
+              className="hidden"
+            />
+
+            {imageUrl ? (
+              <div className="relative h-28 w-full rounded-2xl bg-slate-900 border border-slate-200 overflow-hidden flex items-center justify-center group">
+                <img
+                  src={imageUrl}
+                  alt="Catch Lot Preview"
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-3 py-1.5 rounded-xl bg-white text-slate-900 text-xs font-bold shadow-md hover:bg-slate-100 transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Change Photo</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isProcessingImg}
+                  className="flex-1 flex items-center justify-center gap-2 p-3 rounded-2xl border-2 border-dashed border-slate-300 hover:border-indigo-400 bg-slate-50 hover:bg-indigo-50/40 text-slate-600 hover:text-indigo-600 transition-all cursor-pointer text-xs font-semibold"
+                >
+                  {isProcessingImg ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+                      <span>Optimizing image...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="w-4 h-4 text-slate-500" />
+                      <span>Upload Photo from Device</span>
+                    </>
+                  )}
+                </button>
+                <div className="flex-1 flex items-center gap-1.5">
+                  <input
+                    type="url"
+                    placeholder="Or paste image URL"
+                    value={imageUrl}
+                    onChange={(e) => setImageUrl(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+            )}
+            {imgError && (
+              <p className="text-[11px] text-rose-600 mt-1">{imgError}</p>
+            )}
           </div>
 
           {/* Notes */}

@@ -197,8 +197,15 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
     const retailRev = retailSales.reduce((sum, r) => sum + r.totalAmount, 0);
     const totRev = wholesaleRev + retailRev;
 
-    // Current COGS
-    const cogsTotal = purchaseOrders.reduce((sum, po) => sum + po.totalCostUSD, 0);
+    // Current COGS (Landed Catch Purchases + Inventory Adjustments/Shrinkage - Surplus Recoveries)
+    const poCogs = purchaseOrders.reduce((sum, po) => sum + po.totalCostUSD, 0);
+    const invAdjLoss = financialEntries
+      .filter(e => e.category === 'Inventory Adjustment' && e.type === 'COGS')
+      .reduce((sum, e) => sum + e.amount, 0);
+    const invAdjGain = financialEntries
+      .filter(e => e.category === 'Inventory Adjustment' && e.type === 'Income')
+      .reduce((sum, e) => sum + e.amount, 0);
+    const cogsTotal = poCogs + (invAdjLoss - invAdjGain);
     const grossProf = totRev - cogsTotal;
     const grossMargin = totRev > 0 ? (grossProf / totRev) * 100 : 0;
 

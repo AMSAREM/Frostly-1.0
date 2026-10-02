@@ -19,11 +19,12 @@ import {
   ShoppingBag,
   Store,
   Truck,
-  ArrowRight
+  ArrowRight,
+  Camera,
+  Upload
 } from 'lucide-react';
 import { InventoryBatch } from '../../types';
 import { formatCurrency, formatWeight, formatTemp } from '../../utils/formatters';
-import { SPECIES_CATALOG } from '../../data/mockData';
 
 interface LotDetailsModalProps {
   batch: InventoryBatch | null;
@@ -31,6 +32,8 @@ interface LotDetailsModalProps {
   onOpenPassport: (batch: InventoryBatch) => void;
   onOpenAdjustment: (batch: InventoryBatch) => void;
   onNavigateToRetail?: () => void;
+  onUpdateBatch?: (updatedBatch: InventoryBatch) => void;
+  onOpenImageUpload?: (batch: InventoryBatch) => void;
   useImperial: boolean;
 }
 
@@ -40,14 +43,14 @@ export const LotDetailsModal: React.FC<LotDetailsModalProps> = ({
   onOpenPassport,
   onOpenAdjustment,
   onNavigateToRetail,
+  onUpdateBatch,
+  onOpenImageUpload,
   useImperial
 }) => {
   if (!batch) return null;
 
-  const speciesInfo = SPECIES_CATALOG.find(s => s.id === batch.speciesId) ||
-    SPECIES_CATALOG.find(s => s.name.toLowerCase() === batch.speciesName.toLowerCase());
-  
-  const speciesImage = speciesInfo?.image || 'https://images.unsplash.com/photo-1534482421-64566f976cfa?auto=format&fit=crop&w=600&q=80';
+  // User-provided image only - never auto-generate stock images
+  const userImage = batch.imageUrl?.trim() || null;
 
   const totalIntake = batch.initialWeightKg;
   const available = batch.availableWeightKg;
@@ -70,14 +73,18 @@ export const LotDetailsModal: React.FC<LotDetailsModalProps> = ({
         id="lot-details-modal-card"
         className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden my-6 animate-in fade-in zoom-in-95 duration-200"
       >
-        {/* Header Hero with Species Image */}
-        <div className="relative bg-slate-900 text-white overflow-hidden">
-          <img 
-            src={speciesImage} 
-            alt={batch.speciesName}
-            referrerPolicy="no-referrer"
-            className="absolute inset-0 w-full h-full object-cover opacity-25 mix-blend-luminosity filter saturate-150"
-          />
+        {/* Header Hero with User Image or Solid Cold-Chain Background */}
+        <div className="relative bg-slate-950 text-white overflow-hidden">
+          {userImage ? (
+            <img 
+              src={userImage} 
+              alt={batch.speciesName}
+              referrerPolicy="no-referrer"
+              className="absolute inset-0 w-full h-full object-cover opacity-35 mix-blend-luminosity filter saturate-150"
+            />
+          ) : (
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-900/40 via-slate-950/80 to-slate-950" />
+          )}
           <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-900/80 to-slate-900/40" />
 
           {/* Close button */}
@@ -99,6 +106,17 @@ export const LotDetailsModal: React.FC<LotDetailsModalProps> = ({
               <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700">
                 {batch.category}
               </span>
+
+              {onOpenImageUpload && (
+                <button
+                  type="button"
+                  onClick={() => onOpenImageUpload(batch)}
+                  className="px-3 py-1 rounded-full text-xs font-bold bg-white/15 hover:bg-white/25 text-white border border-white/25 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>{userImage ? 'Change Photo' : 'Upload Lot Photo'}</span>
+                </button>
+              )}
 
               {isDepleted ? (
                 <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">

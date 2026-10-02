@@ -94,50 +94,50 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="space-y-6 animate-in fade-in duration-300 max-w-full overflow-x-hidden min-w-0">
       {/* Top Welcome Banner & Quick Action Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-6 bg-white p-4 sm:p-6 lg:p-7 rounded-2xl border border-slate-200/90 shadow-xs max-w-full overflow-hidden">
-        <div className="min-w-0 max-w-full">
-          <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-6 bg-white p-3.5 sm:p-5 md:p-6 lg:p-7 rounded-2xl border border-slate-200/90 shadow-xs w-full max-w-full min-w-0 box-border overflow-hidden">
+        <div className="flex-1 min-w-0 max-w-full">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 max-w-full min-w-0">
             <span 
               id="dashboard-company-name-pill"
-              className="px-2.5 sm:px-3 py-1 rounded-full bg-indigo-50 text-indigo-900 text-[11px] sm:text-xs font-black uppercase tracking-wider border border-indigo-200 flex items-center gap-1.5 shadow-2xs max-w-full truncate"
+              className="px-2.5 sm:px-3 py-1 rounded-full bg-indigo-50 text-indigo-900 text-[11px] sm:text-xs font-black uppercase tracking-wider border border-indigo-200 flex items-center gap-1.5 shadow-2xs max-w-full min-w-0"
             >
               <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-              <span className="truncate">{displayCompanyName}</span>
+              <span className="truncate max-w-[160px] xs:max-w-[220px] sm:max-w-xs md:max-w-md">{displayCompanyName}</span>
             </span>
             <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[11px] sm:text-xs font-bold border border-emerald-200 flex items-center gap-1 shrink-0">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Facility Active</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+              <span className="whitespace-nowrap">Facility Active</span>
             </span>
-            <span className="text-xs text-slate-400 font-mono-code hidden xl:inline">
+            <span className="text-xs text-slate-400 font-mono-code hidden xl:inline truncate">
               Cold-Chain Operations Hub
             </span>
           </div>
-          <h1 className="text-xl sm:text-2xl lg:text-3xl font-heading font-extrabold text-slate-900 tracking-tight mt-2 truncate">
+          <h1 className="text-lg xs:text-xl sm:text-2xl lg:text-3xl font-heading font-extrabold text-slate-900 tracking-tight mt-2 truncate max-w-full break-words">
             {displayCompanyName}
           </h1>
-          <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
-            Integrated commercial cold-chain ERP, multi-channel wholesale and retail POS, customer CRM, and automated inventory ledger for <strong>{displayCompanyName}</strong>.
+          <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed break-words [overflow-wrap:anywhere]">
+            Integrated commercial cold-chain ERP, multi-channel wholesale and retail POS, customer CRM, and automated inventory ledger for <strong className="font-semibold text-slate-700">{displayCompanyName}</strong>.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 lg:flex lg:flex-wrap xl:flex-nowrap items-center gap-2 sm:gap-2.5 w-full lg:w-auto shrink-0 min-w-0">
+        <div className="grid grid-cols-1 sm:grid-cols-3 lg:flex lg:flex-wrap xl:flex-nowrap items-stretch sm:items-center gap-2 sm:gap-2.5 w-full lg:w-auto min-w-0 flex-initial">
           <button
             onClick={() => onSelectTab('retail_wholesale')}
-            className="w-full lg:w-auto flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0 whitespace-nowrap"
+            className="w-full lg:w-auto flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0"
           >
             <ShoppingBag className="w-4 h-4 shrink-0" />
             <span className="truncate">Retail POS</span>
           </button>
           <button
             onClick={() => onSelectTab('suppliers')}
-            className="w-full lg:w-auto flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0 whitespace-nowrap"
+            className="w-full lg:w-auto flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0"
           >
             <Ship className="w-4 h-4 shrink-0" />
             <span className="truncate">Harvester Catch</span>
           </button>
           <button
             onClick={() => onSelectTab('financials')}
-            className="w-full lg:w-auto flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0 whitespace-nowrap"
+            className="w-full lg:w-auto flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0"
           >
             <DollarSign className="w-4 h-4 shrink-0" />
             <span className="truncate">Financials &amp; P&amp;L</span>

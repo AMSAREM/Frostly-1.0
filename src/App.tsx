@@ -35,6 +35,8 @@ import {
   INITIAL_PURCHASE_ORDERS,
   INITIAL_FINANCIAL_ENTRIES,
   INITIAL_NOTIFICATIONS,
+  INITIAL_ADJUSTMENT_ACCOUNTS,
+  INITIAL_STOCK_ADJUSTMENTS,
   SPECIES_CATALOG
 } from './data/mockData';
 
@@ -51,7 +53,9 @@ import {
   OrderStatus,
   AppSettings,
   DEFAULT_SETTINGS,
-  StorageZone
+  StorageZone,
+  InventoryAdjustmentAccount,
+  InventoryStockAdjustment
 } from './types';
 import { formatCurrency } from './utils/formatters';
 import { getSpeciesIdFromName, getSpeciesTaxonomy } from './utils/speciesHelper';
@@ -64,6 +68,8 @@ import { purchaseOrderRepository } from './repositories/purchaseOrderRepository'
 import { productRepository, retailTransactionRepository } from './repositories/retailRepository';
 import { settingsRepository } from './repositories/settingsRepository';
 import { notificationRepository } from './repositories/notificationRepository';
+import { adjustmentAccountRepository, stockAdjustmentRepository } from './repositories/adjustmentRepository';
+import { StockAdjustmentData } from './components/Inventory/StockAdjustmentModal';
 import { syncManager } from './sync/syncManager';
 import { useAuth } from './components/AuthGate';
 import { 
@@ -236,6 +242,28 @@ export default function App() {
     }
   });
 
+  const [adjustmentAccounts, setAdjustmentAccounts] = useState<InventoryAdjustmentAccount[]>(() => {
+    try {
+      if (activeOrgId) {
+        return adjustmentAccountRepository.getLocalCache([], activeOrgId);
+      }
+      return adjustmentAccountRepository.getLocalCache(INITIAL_ADJUSTMENT_ACCOUNTS);
+    } catch {
+      return activeOrgId ? [] : INITIAL_ADJUSTMENT_ACCOUNTS;
+    }
+  });
+
+  const [stockAdjustments, setStockAdjustments] = useState<InventoryStockAdjustment[]>(() => {
+    try {
+      if (activeOrgId) {
+        return stockAdjustmentRepository.getLocalCache([], activeOrgId);
+      }
+      return stockAdjustmentRepository.getLocalCache(INITIAL_STOCK_ADJUSTMENTS);
+    } catch {
+      return activeOrgId ? [] : INITIAL_STOCK_ADJUSTMENTS;
+    }
+  });
+
   const [notifications, setNotifications] = useState<SystemNotification[]>(() => {
     try {
       if (activeOrgId) {
@@ -371,6 +399,22 @@ export default function App() {
       console.warn('[App] Financial repository load error:', err);
     });
 
+    adjustmentAccountRepository.getAccounts(INITIAL_ADJUSTMENT_ACCOUNTS).then(fresh => {
+      if (isMounted) {
+        setAdjustmentAccounts(fresh && fresh.length > 0 ? fresh : INITIAL_ADJUSTMENT_ACCOUNTS);
+      }
+    }).catch(err => {
+      console.warn('[App] Adjustment account repository load error:', err);
+    });
+
+    stockAdjustmentRepository.getAdjustments(INITIAL_STOCK_ADJUSTMENTS).then(fresh => {
+      if (isMounted) {
+        setStockAdjustments(fresh || []);
+      }
+    }).catch(err => {
+      console.warn('[App] Stock adjustment repository load error:', err);
+    });
+
     purchaseOrderRepository.getPurchaseOrders(fallbackList).then(fresh => {
       if (isMounted) {
         setPurchaseOrders(fresh || []);
@@ -439,6 +483,14 @@ export default function App() {
   useEffect(() => {
     financialRepository.setLocalCache(financialEntries, staffProfile?.organization_id);
   }, [financialEntries, staffProfile?.organization_id]);
+
+  useEffect(() => {
+    adjustmentAccountRepository.setLocalCache(adjustmentAccounts, staffProfile?.organization_id);
+  }, [adjustmentAccounts, staffProfile?.organization_id]);
+
+  useEffect(() => {
+    stockAdjustmentRepository.setLocalCache(stockAdjustments, staffProfile?.organization_id);
+  }, [stockAdjustments, staffProfile?.organization_id]);
 
   useEffect(() => {
     settingsRepository.saveSettings(settings).catch(console.warn);
@@ -660,15 +712,85 @@ export default function App() {
   };
 
   // Update Batch Handler (Stock Adjustment / Audit / Calibration)
-  const handleUpdateBatch = (updatedBatch: InventoryBatch) => {
+  const handleUpdateBatch = (updatedBatch: InventoryBatch, adjustmentData?: StockAdjustmentData) => {
     setBatches(prev => prev.map(b => b.id === updatedBatch.id ? updatedBatch : b));
     batchRepository.save(updatedBatch, false).catch(err => {
       console.warn('[App] batchRepository save error on update:', err);
     });
+
+    if (adjustmentData) {
+      const newAdjustment: InventoryStockAdjustment = {
+        id: `ADJ-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        batchId: updatedBatch.id,
+        speciesName: updatedBatch.speciesName,
+        previousWeightKg: adjustmentData.previousWeightKg,
+        newWeightKg: adjustmentData.newWeightKg,
+        deltaWeightKg: adjustmentData.deltaWeightKg,
+        unitCostUSD: adjustmentData.unitCostUSD,
+        valuationVarianceUSD: adjustmentData.valuationVarianceUSD,
+        reason: adjustmentData.reason,
+        adjustmentAccountId: adjustmentData.adjustmentAccountId,
+        adjustmentAccountCode: adjustmentData.adjustmentAccountCode,
+        adjustmentAccountName: adjustmentData.adjustmentAccountName,
+        notes: adjustmentData.notes,
+        createdBy: staffProfile?.email || staffProfile?.full_name || 'Staff User',
+        createdAt: new Date().toISOString()
+      };
+
+      setStockAdjustments(prev => [newAdjustment, ...prev]);
+
+      // Record adjustment into Supabase + update adjustment account balance + post to financial ledger
+      stockAdjustmentRepository.recordAdjustment(newAdjustment, adjustmentData.autoPostLedger).then(result => {
+        if (result.financialEntry) {
+          setFinancialEntries(prev => [result.financialEntry!, ...prev]);
+        }
+        // Update account balance in local state
+        setAdjustmentAccounts(prev => prev.map(acc => {
+          if (acc.accountCode === adjustmentData.adjustmentAccountCode) {
+            return {
+              ...acc,
+              balanceUSD: Number(((acc.balanceUSD || 0) + Math.abs(adjustmentData.valuationVarianceUSD)).toFixed(2))
+            };
+          }
+          return acc;
+        }));
+      }).catch(err => {
+        console.warn('[App] stockAdjustmentRepository record error:', err);
+      });
+    }
+
+    const deltaWeight = adjustmentData 
+      ? adjustmentData.deltaWeightKg 
+      : (updatedBatch.availableWeightKg - (batches.find(b => b.id === updatedBatch.id)?.availableWeightKg || 0));
+
     addNotification({
       type: 'system',
       title: `Stock Calibrated: Lot ${updatedBatch.id}`,
-      message: `Available stock updated to ${updatedBatch.availableWeightKg} kg for ${updatedBatch.speciesName}.`,
+      message: `Stock updated to ${updatedBatch.availableWeightKg} kg (${deltaWeight >= 0 ? '+' : ''}${deltaWeight.toFixed(1)} kg) [Acc ${adjustmentData?.adjustmentAccountCode || '5150'}].`,
+      urgency: 'low'
+    });
+  };
+
+  // Add / Update Adjustment Account Handler
+  const handleSaveAdjustmentAccount = (account: InventoryAdjustmentAccount) => {
+    setAdjustmentAccounts(prev => {
+      const idx = prev.findIndex(a => a.accountCode === account.accountCode);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = account;
+        return copy;
+      }
+      return [...prev, account];
+    });
+
+    adjustmentAccountRepository.saveAccount(account).catch(err => {
+      console.warn('[App] adjustmentAccountRepository save error:', err);
+    });
+
+    addNotification({
+      type: 'system',
+      title: `Account Saved: [${account.accountCode}]`,
+      message: `${account.accountName} (${account.accountType}) configured in Supabase Chart of Accounts.`,
       urgency: 'low'
     });
   };
@@ -1635,8 +1757,11 @@ export default function App() {
             customers={customers}
             suppliers={suppliers}
             financialEntries={financialEntries}
+            adjustmentAccounts={adjustmentAccounts}
+            stockAdjustments={stockAdjustments}
             onRecordPayment={handleRecordPayment}
             onAddExpense={handleAddExpense}
+            onSaveAdjustmentAccount={handleSaveAdjustmentAccount}
             formatCurrency={formatAppCurrency}
           />
         )}
@@ -1645,9 +1770,13 @@ export default function App() {
           <InventoryLedgerView
             batches={batches}
             products={products}
+            adjustmentAccounts={adjustmentAccounts}
+            stockAdjustments={stockAdjustments}
             onOpenPassport={(b) => setPassportBatch(b)}
             onOpenNewBatch={() => setIsNewBatchModalOpen(true)}
             onUpdateBatch={handleUpdateBatch}
+            onSaveAdjustmentAccount={handleSaveAdjustmentAccount}
+            defaultAdjustmentAccountCode={settings.defaultAdjustmentAccountCode || '5150'}
             onNavigateToRetail={() => setActiveTab('retail_wholesale')}
             onReconcileCatalog={handleReconcileCatalog}
             searchQuery={searchQuery}

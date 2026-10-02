@@ -321,12 +321,18 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                   className="bg-white rounded-3xl border border-slate-200 p-4 shadow-xs hover:border-emerald-400 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between space-y-3 group"
                 >
                   <div className="flex items-start gap-3">
-                    <img 
-                      src={prod.imageUrl || 'https://images.unsplash.com/photo-1534483509719-3feaee7c30da?auto=format&fit=crop&q=80&w=200'} 
-                      alt={prod.name} 
-                      className="w-16 h-16 rounded-2xl object-cover border border-slate-200 shrink-0 bg-slate-100"
-                      referrerPolicy="no-referrer"
-                    />
+                    {prod.imageUrl ? (
+                      <img 
+                        src={prod.imageUrl} 
+                        alt={prod.name} 
+                        className="w-16 h-16 rounded-2xl object-cover border border-slate-200 shrink-0 bg-slate-100"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="w-16 h-16 rounded-2xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
+                        <Package className="w-6 h-6" />
+                      </div>
+                    )}
                     <div>
                       <div className="font-bold text-slate-900 text-xs leading-snug group-hover:text-emerald-700 transition-colors">
                         {prod.name}
@@ -1022,12 +1028,18 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                 <div key={prod.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2.5">
-                      <img
-                        src={prod.imageUrl || 'https://images.unsplash.com/photo-1534483509719-3feaee7c30da?auto=format&fit=crop&q=80&w=200'}
-                        alt={prod.name}
-                        className="w-11 h-11 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100"
-                        referrerPolicy="no-referrer"
-                      />
+                      {prod.imageUrl ? (
+                        <img
+                          src={prod.imageUrl}
+                          alt={prod.name}
+                          className="w-11 h-11 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="w-11 h-11 rounded-xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
+                          <Package className="w-5 h-5" />
+                        </div>
+                      )}
                       <div>
                         <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
                         <div className="text-[11px] text-slate-500">{prod.cutType} • {prod.sku}</div>
@@ -1174,12 +1186,18 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                     <tr key={prod.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
-                          <img
-                            src={prod.imageUrl || 'https://images.unsplash.com/photo-1534483509719-3feaee7c30da?auto=format&fit=crop&q=80&w=200'}
-                            alt={prod.name}
-                            className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100"
-                            referrerPolicy="no-referrer"
-                          />
+                          {prod.imageUrl ? (
+                            <img
+                              src={prod.imageUrl}
+                              alt={prod.name}
+                              className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
+                              <Package className="w-4 h-4" />
+                            </div>
+                          )}
                           <div>
                             <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
                             <div className="text-slate-400 text-[11px]">{prod.cutType} • {prod.sku}</div>

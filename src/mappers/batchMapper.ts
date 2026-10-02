@@ -38,6 +38,7 @@ export interface DatabaseInventoryBatchRow {
   expiry_date: string;
   qr_code_seed: string;
   notes: string | null;
+  image_url?: string | null;
   linked_product_id?: string | null;
   product_sku?: string | null;
   is_retail_cut_lot?: boolean | null;
@@ -69,9 +70,22 @@ export const batchMapper = {
     let isRetailCutLot = Boolean(row.is_retail_cut_lot);
     let linkedProductId = row.linked_product_id || undefined;
     let productSku = row.product_sku || undefined;
+    let imageUrl = row.image_url || undefined;
     let rawNotes = row.notes ?? '';
 
     // Parse structured metadata embedded in notes if present
+    if (rawNotes.includes('<!--frostly_image:')) {
+      try {
+        const match = rawNotes.match(/<!--frostly_image:(.*?)-->/);
+        if (match && match[1] && !imageUrl) {
+          imageUrl = match[1];
+          rawNotes = rawNotes.replace(/<!--frostly_image:.*?-->/, '').trim();
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     if (rawNotes.includes('<!--frostly_retail:')) {
       try {
         const match = rawNotes.match(/<!--frostly_retail:(\{.*?\})-->/);
@@ -80,6 +94,7 @@ export const batchMapper = {
           if (parsed.isRetailCutLot !== undefined && !isRetailCutLot) isRetailCutLot = Boolean(parsed.isRetailCutLot);
           if (parsed.linkedProductId && !linkedProductId) linkedProductId = parsed.linkedProductId;
           if (parsed.productSku && !productSku) productSku = parsed.productSku;
+          if (parsed.imageUrl && !imageUrl) imageUrl = parsed.imageUrl;
           rawNotes = rawNotes.replace(/<!--frostly_retail:.*?-->/, '').trim();
         }
       } catch {
@@ -129,6 +144,7 @@ export const batchMapper = {
       linkedProductId,
       productSku,
       isRetailCutLot,
+      imageUrl,
     };
   },
 
@@ -142,18 +158,25 @@ export const batchMapper = {
     if (cleanNotes.includes('<!--frostly_retail:')) {
       cleanNotes = cleanNotes.replace(/<!--frostly_retail:.*?-->/, '').trim();
     }
+    if (cleanNotes.includes('<!--frostly_image:')) {
+      cleanNotes = cleanNotes.replace(/<!--frostly_image:.*?-->/, '').trim();
+    }
 
     if (batch.isRetailCutLot || batch.linkedProductId || batch.productSku) {
       const meta = JSON.stringify({
         isRetailCutLot: Boolean(batch.isRetailCutLot),
         linkedProductId: batch.linkedProductId || null,
         productSku: batch.productSku || null,
+        imageUrl: batch.imageUrl || null,
       });
       cleanNotes = cleanNotes ? `${cleanNotes} <!--frostly_retail:${meta}-->` : `<!--frostly_retail:${meta}-->`;
+    } else if (batch.imageUrl) {
+      cleanNotes = cleanNotes ? `${cleanNotes} <!--frostly_image:${batch.imageUrl}-->` : `<!--frostly_image:${batch.imageUrl}-->`;
     }
 
     const payload: Record<string, any> = {
       id: batch.id,
+      image_url: batch.imageUrl || null,
       species_id: getSpeciesIdFromName(batch.speciesName, batch.speciesId),
       species_name: batch.speciesName,
       scientific_name: batch.scientificName,

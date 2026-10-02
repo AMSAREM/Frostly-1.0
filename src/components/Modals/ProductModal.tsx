@@ -163,10 +163,6 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         setName(`${sp.name.split('(')[0].trim()} Saku Cut`);
       }
       setCategory(sp.category);
-      if (!imageUrl || imageUrl === '') {
-        setImageUrl(sp.image);
-        setImagePreviewError(false);
-      }
       if (!isEditing && sp.standardPricePerKg) {
         setWholesalePrice(sp.standardPricePerKg);
         setRetailPrice(Math.round(sp.standardPricePerKg * 1.35));
@@ -192,9 +188,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         setStockKg(Math.min(b.availableWeightKg, 50));
         setSku(`SKU-${b.speciesId.replace('spec-', '').toUpperCase().slice(0, 4)}-${Math.floor(100 + Math.random() * 900)}`);
       }
-      const matchedSpecies = SPECIES_CATALOG.find(s => s.id === b.speciesId);
-      if (matchedSpecies && (!imageUrl || imageUrl === '')) {
-        setImageUrl(matchedSpecies.image);
+      if (b.imageUrl && (!imageUrl || imageUrl === '')) {
+        setImageUrl(b.imageUrl);
         setImagePreviewError(false);
       }
     }

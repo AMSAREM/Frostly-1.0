@@ -722,6 +722,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       className="w-5 h-5 accent-indigo-600 rounded cursor-pointer"
                     />
                   </div>
+
+                  <div className="space-y-1 sm:col-span-2 pt-2 border-t border-slate-100">
+                    <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                      <span>Default Inventory Adjustment Account (Supabase)</span>
+                      <span className="text-[10px] text-indigo-600 font-mono">GL Code: {formData.defaultAdjustmentAccountCode || '5150'}</span>
+                    </label>
+                    <select
+                      value={formData.defaultAdjustmentAccountCode || '5150'}
+                      onChange={(e) => handleChange('defaultAdjustmentAccountCode', e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 bg-white"
+                    >
+                      <option value="5150">[5150] Inventory Shrinkage & Spoilage (COGS)</option>
+                      <option value="5155">[5155] Processing Yield & Trimming Loss (COGS)</option>
+                      <option value="5160">[5160] Scale Calibration & Count Variance (COGS)</option>
+                      <option value="1420">[1420] Retail Counter Stock Reallocation (Contra-Asset)</option>
+                      <option value="4190">[4190] Inventory Count Recovery Surplus (Income)</option>
+                    </select>
+                    <p className="text-[11px] text-slate-500">
+                      Standard account credited/debited when calibrating lot stock weights in cold vaults.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 sm:col-span-2">
+                    <div>
+                      <div className="text-xs font-bold text-indigo-950">Auto-Post Valuation Variances to General Ledger</div>
+                      <div className="text-[11px] text-indigo-900/70">Automatically log inventory weight gains/losses to Supabase financial ledger entries.</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={formData.autoPostAdjustmentToLedger !== false}
+                      onChange={(e) => handleChange('autoPostAdjustmentToLedger', e.target.checked)}
+                      className="w-5 h-5 accent-indigo-600 rounded cursor-pointer"
+                    />
+                  </div>
                 </div>
               </div>
             )}

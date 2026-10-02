@@ -12,7 +12,9 @@ import {
   RetailWholesaleProduct,
   RetailTransaction,
   PurchaseOrderLanding,
-  FinancialLedgerEntry
+  FinancialLedgerEntry,
+  InventoryAdjustmentAccount,
+  InventoryStockAdjustment
 } from '../types';
 
 /**
@@ -156,3 +158,58 @@ export const INITIAL_PRODUCTS: RetailWholesaleProduct[] = [];
 export const INITIAL_RETAIL_TRANSACTIONS: RetailTransaction[] = [];
 export const INITIAL_PURCHASE_ORDERS: PurchaseOrderLanding[] = [];
 export const INITIAL_FINANCIAL_ENTRIES: FinancialLedgerEntry[] = [];
+
+export const INITIAL_ADJUSTMENT_ACCOUNTS: InventoryAdjustmentAccount[] = [
+  {
+    id: 'adj-acc-shrinkage-5150',
+    accountCode: '5150',
+    accountName: 'Inventory Shrinkage & Spoilage',
+    accountType: 'COGS',
+    description: 'Unavoidable drip loss, physical shrinkage, freezer burn, or spoilage write-down.',
+    isDefault: true,
+    isActive: true,
+    balanceUSD: 0
+  },
+  {
+    id: 'adj-acc-yield-5155',
+    accountCode: '5155',
+    accountName: 'Processing Yield & Trimming Loss',
+    accountType: 'COGS',
+    description: 'Biomass reduction from head removal, gutting, loin deboning, and sashimi trimming.',
+    isDefault: false,
+    isActive: true,
+    balanceUSD: 0
+  },
+  {
+    id: 'adj-acc-scale-5160',
+    accountCode: '5160',
+    accountName: 'Scale Calibration & Count Variance',
+    accountType: 'COGS',
+    description: 'Adjustments following periodic certified physical floor counts and crane scale recalibration.',
+    isDefault: false,
+    isActive: true,
+    balanceUSD: 0
+  },
+  {
+    id: 'adj-acc-retail-1420',
+    accountCode: '1420',
+    accountName: 'Retail Counter Stock Reallocation',
+    accountType: 'Contra-Asset',
+    description: 'Bulk cold-storage inventory allocated and transferred directly to retail fresh counter display.',
+    isDefault: false,
+    isActive: true,
+    balanceUSD: 0
+  },
+  {
+    id: 'adj-acc-surplus-4190',
+    accountCode: '4190',
+    accountName: 'Inventory Count Recovery Surplus',
+    accountType: 'Income',
+    description: 'Positive stock adjustments from physical audit surplus or weight recovery.',
+    isDefault: false,
+    isActive: true,
+    balanceUSD: 0
+  }
+];
+
+export const INITIAL_STOCK_ADJUSTMENTS: InventoryStockAdjustment[] = [];
