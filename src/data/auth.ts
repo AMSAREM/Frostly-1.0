@@ -100,6 +100,8 @@ export function setLocalCachedSession(sess: Session | null): void {
   } catch {}
 }
 
+const isDev = typeof import.meta !== 'undefined' ? Boolean(import.meta.env?.DEV) : process.env.NODE_ENV !== 'production';
+
 // Development test user credentials (with instant fallback for frictionless preview)
 export const DEFAULT_TEST_USER_EMAIL =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_EMAIL) || 'admin@frostly.io';
@@ -112,12 +114,14 @@ export const DEFAULT_TEST_USER = {
   password: DEFAULT_TEST_USER_PASSWORD,
 };
 
-// Platform Creator credentials (with instant fallback for platform operator access)
+// Platform Creator dev credentials (strictly development/staging only - completely omitted in production)
 export const DEFAULT_CREATOR_EMAIL =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_EMAIL) || 'creator@frostly.io';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_EMAIL) ||
+  (isDev ? 'creator@frostly.io' : '');
 
 export const DEFAULT_CREATOR_PASSWORD =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_PASSWORD) || 'frostly2026';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_PASSWORD) ||
+  (isDev ? 'frostly2026' : '');
 
 export const DEFAULT_CREATOR_USER = {
   email: DEFAULT_CREATOR_EMAIL,
@@ -301,8 +305,8 @@ export async function signIn(
 
   if (!isSupabaseConfigured) {
     const isCreator = 
-      emailCheck.normalizedEmail.toLowerCase() === DEFAULT_CREATOR_EMAIL.toLowerCase() || 
-      emailCheck.normalizedEmail.toLowerCase().includes('creator');
+      (Boolean(DEFAULT_CREATOR_EMAIL) && emailCheck.normalizedEmail.toLowerCase() === DEFAULT_CREATOR_EMAIL.toLowerCase()) || 
+      (isDev && emailCheck.normalizedEmail.toLowerCase().includes('creator'));
     
     const demoUser: User = {
       id: isCreator ? '00000000-0000-0000-0000-000000000001' : 'demo-user-id-001',
@@ -422,12 +426,14 @@ export async function signInAsCreator(
   email?: string,
   password?: string
 ): Promise<{ session: Session | null; error: string | null }> {
-  // Strict environment guard: block unauthenticated test shortcuts in production builds
-  if (typeof import.meta !== 'undefined' && import.meta.env?.PROD && !password) {
-    return {
-      session: null,
-      error: 'Creator auto-login is disabled in production environments. Please sign in with creator credentials.',
-    };
+  // Strict environment guard: block dev auto-login in production builds
+  if (typeof import.meta !== 'undefined' && import.meta.env?.PROD) {
+    if (!email || !password) {
+      return {
+        session: null,
+        error: 'Creator dev quick-login is disabled in production. Please sign in with your verified platform credentials.',
+      };
+    }
   }
 
   const targetEmail = email || DEFAULT_CREATOR_EMAIL;
@@ -436,7 +442,7 @@ export async function signInAsCreator(
   if (!targetEmail || !targetPassword) {
     return {
       session: null,
-      error: 'Platform creator credentials are not configured. Please set VITE_DEV_CREATOR_EMAIL and VITE_DEV_CREATOR_PASSWORD in environment variables.',
+      error: 'Platform creator dev credentials are not available in production.',
     };
   }
 

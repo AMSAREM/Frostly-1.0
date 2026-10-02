@@ -297,10 +297,18 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
     }
   };
 
-  // Creator Quick-Login Handler (Platform Owner)
+  // Creator Quick-Login Handler (Platform Owner - Dev Only)
   const handleCreatorQuickLogin = async () => {
-    const targetEmail = DEFAULT_CREATOR_EMAIL || 'creator@frostly.io';
-    const targetPass = DEFAULT_CREATOR_PASSWORD || 'frostly2026';
+    if (import.meta.env?.PROD) {
+      setErrorMessage('Creator dev auto-login is disabled in production.');
+      return;
+    }
+    const targetEmail = DEFAULT_CREATOR_EMAIL;
+    const targetPass = DEFAULT_CREATOR_PASSWORD;
+    if (!targetEmail || !targetPass) {
+      setErrorMessage('Creator dev credentials are not configured.');
+      return;
+    }
     setEmail(targetEmail);
     setPassword(targetPass);
     setIsLoading(true);
@@ -868,10 +876,10 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                 </div>
               )}
 
-              {/* Quick Login Buttons & Credentials Box */}
-              {Boolean(DEFAULT_CREATOR_EMAIL || DEFAULT_TEST_USER_EMAIL) && (
+              {/* Quick Login Buttons & Credentials Box (Development Only) */}
+              {!import.meta.env?.PROD && Boolean(DEFAULT_CREATOR_EMAIL || DEFAULT_TEST_USER_EMAIL) && (
                 <div className="mt-3 space-y-2">
-                  {DEFAULT_CREATOR_EMAIL && DEFAULT_CREATOR_PASSWORD && (
+                  {!import.meta.env?.PROD && DEFAULT_CREATOR_EMAIL && DEFAULT_CREATOR_PASSWORD && (
                     <button
                       id="auth-gate-creator-login-btn"
                       type="button"
@@ -904,8 +912,8 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                       Configured Dev Credentials (Click to Auto-Fill):
                     </div>
                     
-                    {/* Account 1: Creator */}
-                    {DEFAULT_CREATOR_EMAIL && DEFAULT_CREATOR_PASSWORD && (
+                    {/* Account 1: Creator (Dev Only) */}
+                    {!import.meta.env?.PROD && DEFAULT_CREATOR_EMAIL && DEFAULT_CREATOR_PASSWORD && (
                       <button
                         type="button"
                         id="auth-gate-fill-creator-btn"
