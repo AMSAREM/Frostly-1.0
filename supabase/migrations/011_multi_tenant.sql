@@ -242,7 +242,24 @@ AS $$
     LIMIT 1;
 $$;
 
--- B. Automatic Server-Side Tenant Stamping Trigger
+-- B. Organization Admin Check Helper
+CREATE OR REPLACE FUNCTION public.is_org_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.staff_profiles
+        WHERE id = auth.uid() 
+          AND role = 'admin' 
+          AND is_active = TRUE
+          AND organization_id = public.current_org_id()
+    );
+$$;
+
+-- C. Automatic Server-Side Tenant Stamping Trigger
 CREATE OR REPLACE FUNCTION public.stamp_organization_id()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -933,6 +950,7 @@ GRANT SELECT, UPDATE ON public.organizations TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.invites TO authenticated;
 
 GRANT EXECUTE ON FUNCTION public.current_org_id() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_org_admin() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.create_organization_and_admin(TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.accept_invite(TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.create_invite(TEXT, public.staff_role, INT) TO authenticated;
@@ -941,7 +959,7 @@ GRANT EXECUTE ON FUNCTION public.create_invite(TEXT, public.staff_role, INT) TO 
 DROP VIEW IF EXISTS public.view_customer_receivables_summary CASCADE;
 DROP VIEW IF EXISTS public.view_daily_financial_summary CASCADE;
 
-CREATE OR REPLACE VIEW public.view_customer_receivables_summary
+CREATE VIEW public.view_customer_receivables_summary
 WITH (security_invoker = true) AS
 SELECT 
     c.organization_id,
@@ -962,7 +980,7 @@ LEFT JOIN public.client_orders o
 WHERE c.is_active = TRUE
 GROUP BY c.organization_id, c.id, c.name, c.company_name, c.tier, c.credit_limit_usd, c.outstanding_balance_usd, c.payment_terms, c.status;
 
-CREATE OR REPLACE VIEW public.view_daily_financial_summary
+CREATE VIEW public.view_daily_financial_summary
 WITH (security_invoker = true) AS
 SELECT 
     organization_id,

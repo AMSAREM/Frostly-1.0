@@ -177,7 +177,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <FrostlyLogo size={22} iconOnly variant="blue" />
               </div>
               <span className="font-heading font-black text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-blue-600 transition-colors leading-none">
-                Frostly
+                Amansocean
               </span>
             </button>
           </div>
@@ -469,7 +469,7 @@ export const Header: React.FC<HeaderProps> = ({
                         className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 rounded-xl transition-colors cursor-pointer text-left"
                       >
                         <Download className="w-3.5 h-3.5 text-indigo-600" />
-                        <span>Install Frostly App</span>
+                        <span>Install Amansocean App</span>
                       </button>
                     )}
 

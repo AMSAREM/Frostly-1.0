@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS public.inventory_adjustment_accounts (
 CREATE TABLE IF NOT EXISTS public.inventory_adjustments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
-    batch_id TEXT NOT NULL REFERENCES public.inventory_batches(id) ON DELETE CASCADE,
+    batch_id TEXT NOT NULL,
     species_name TEXT NOT NULL,
     previous_weight_kg NUMERIC(10, 2) NOT NULL CHECK (previous_weight_kg >= 0),
     new_weight_kg NUMERIC(10, 2) NOT NULL CHECK (new_weight_kg >= 0),
@@ -48,10 +48,14 @@ CREATE TABLE IF NOT EXISTS public.inventory_adjustments (
     adjustment_account_id UUID REFERENCES public.inventory_adjustment_accounts(id) ON DELETE SET NULL,
     adjustment_account_code TEXT NOT NULL,
     adjustment_account_name TEXT NOT NULL,
-    financial_ledger_id UUID REFERENCES public.financial_ledger_entries(id) ON DELETE SET NULL,
+    financial_ledger_id UUID,
     notes TEXT,
     created_by TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_inv_adjustments_batch FOREIGN KEY (organization_id, batch_id) 
+        REFERENCES public.inventory_batches(organization_id, id) ON DELETE CASCADE,
+    CONSTRAINT fk_inv_adjustments_fin_ledger FOREIGN KEY (organization_id, financial_ledger_id) 
+        REFERENCES public.financial_ledger_entries(organization_id, id) ON DELETE SET NULL
 );
 
 -- 4. Create Indexes for High Performance
@@ -95,11 +99,30 @@ CREATE POLICY "adjustment_accounts_update" ON public.inventory_adjustment_accoun
         OR public.is_platform_admin()
     );
 
+-- Ensure is_org_admin helper exists
+CREATE OR REPLACE FUNCTION public.is_org_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.staff_profiles
+        WHERE id = auth.uid() 
+          AND role = 'admin' 
+          AND is_active = TRUE
+          AND organization_id = public.current_org_id()
+    );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.is_org_admin() TO authenticated;
+
 DROP POLICY IF EXISTS "adjustment_accounts_delete" ON public.inventory_adjustment_accounts;
 CREATE POLICY "adjustment_accounts_delete" ON public.inventory_adjustment_accounts
     FOR DELETE TO authenticated
     USING (
-        (organization_id = public.current_org_id() AND public.is_org_admin())
+        (organization_id = public.current_org_id() AND public.is_admin())
         OR public.is_platform_admin()
     );
 

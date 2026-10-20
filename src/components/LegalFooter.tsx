@@ -20,14 +20,14 @@ export const LegalFooter: React.FC<LegalFooterProps> = ({
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
         {/* Left branding and copyright */}
         <div className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded-md bg-slate-900 text-white flex items-center justify-center font-bold text-[10px]">
-            F
+          <div className="w-5 h-5 rounded-full bg-[#C8102E] text-white flex items-center justify-center font-bold text-[9px] border border-[#FFC400]">
+            AO
           </div>
-          <span className="font-semibold text-slate-800">Frostly Seafood Platform</span>
+          <span className="font-semibold text-slate-800">Amansocean Frozen Food &amp; Seafood</span>
           <span className="text-slate-300">•</span>
           <span>© {new Date().getFullYear()} All rights reserved</span>
           <span className="hidden sm:inline text-slate-300">•</span>
-          <span className="hidden sm:inline text-slate-400">HACCP Cold-Chain &amp; POS ERP</span>
+          <span className="hidden sm:inline text-slate-400">Flash-Frozen Ocean Delivery</span>
         </div>
 
         {/* Middle/Right Links */}

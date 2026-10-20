@@ -1,6 +1,6 @@
 -- ============================================================================
 -- FROSTLY SEAFOOD COLD-CHAIN ERP
--- COMPLETE ALL-IN-ONE SYSTEM SCHEMA (Migrations 001 to 016)
+-- COMPLETE ALL-IN-ONE SYSTEM SCHEMA (Migrations 001 to 025)
 -- Run this in Supabase SQL Editor for fresh database initialization
 -- ============================================================================
 
@@ -1774,7 +1774,7 @@ GRANT EXECUTE ON FUNCTION public.fn_fulfill_order_line_item(UUID, NUMERIC) TO au
 -- 4. Cross-Table Aggregated Reporting Views
 -- (A) Customer Outstanding Receivables Summary (security_invoker = true to respect querying user RLS)
 DROP VIEW IF EXISTS public.view_customer_receivables_summary CASCADE;
-CREATE OR REPLACE VIEW public.view_customer_receivables_summary
+CREATE VIEW public.view_customer_receivables_summary
 WITH (security_invoker = true) AS
 SELECT 
     c.id AS customer_id,
@@ -1794,7 +1794,7 @@ GROUP BY c.id, c.name, c.company_name, c.tier, c.credit_limit_usd, c.outstanding
 
 -- (B) Daily Financial Operations & Revenue Ledger Aggregation (security_invoker = true to respect querying user RLS)
 DROP VIEW IF EXISTS public.view_daily_financial_summary CASCADE;
-CREATE OR REPLACE VIEW public.view_daily_financial_summary
+CREATE VIEW public.view_daily_financial_summary
 WITH (security_invoker = true) AS
 SELECT 
     entry_date,
@@ -2250,7 +2250,24 @@ AS $$
     LIMIT 1;
 $$;
 
--- B. Automatic Server-Side Tenant Stamping Trigger
+-- B. Organization Admin Check Helper
+CREATE OR REPLACE FUNCTION public.is_org_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.staff_profiles
+        WHERE id = auth.uid() 
+          AND role = 'admin' 
+          AND is_active = TRUE
+          AND organization_id = public.current_org_id()
+    );
+$$;
+
+-- C. Automatic Server-Side Tenant Stamping Trigger
 CREATE OR REPLACE FUNCTION public.stamp_organization_id()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -2941,6 +2958,7 @@ GRANT SELECT, UPDATE ON public.organizations TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.invites TO authenticated;
 
 GRANT EXECUTE ON FUNCTION public.current_org_id() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_org_admin() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.create_organization_and_admin(TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.accept_invite(TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.create_invite(TEXT, public.staff_role, INT) TO authenticated;
@@ -2949,7 +2967,7 @@ GRANT EXECUTE ON FUNCTION public.create_invite(TEXT, public.staff_role, INT) TO 
 DROP VIEW IF EXISTS public.view_customer_receivables_summary CASCADE;
 DROP VIEW IF EXISTS public.view_daily_financial_summary CASCADE;
 
-CREATE OR REPLACE VIEW public.view_customer_receivables_summary
+CREATE VIEW public.view_customer_receivables_summary
 WITH (security_invoker = true) AS
 SELECT 
     c.organization_id,
@@ -2970,7 +2988,7 @@ LEFT JOIN public.client_orders o
 WHERE c.is_active = TRUE
 GROUP BY c.organization_id, c.id, c.name, c.company_name, c.tier, c.credit_limit_usd, c.outstanding_balance_usd, c.payment_terms, c.status;
 
-CREATE OR REPLACE VIEW public.view_daily_financial_summary
+CREATE VIEW public.view_daily_financial_summary
 WITH (security_invoker = true) AS
 SELECT 
     organization_id,
@@ -4408,5 +4426,932 @@ BEGIN
     );
 END;
 $$;
+
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- START OF 017_inventory_retail_linking.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ============================================================================
+-- FROSTLY SEAFOOD COLD-CHAIN ERP
+-- Migration 017: Inventory Retail Linking Columns
+-- ============================================================================
+
+DO $$
+BEGIN
+    -- 1. linked_product_id (maps retail cut inventory lots to product catalogue items)
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+          AND table_name = 'inventory_batches' 
+          AND column_name = 'linked_product_id'
+    ) THEN
+        ALTER TABLE public.inventory_batches ADD COLUMN linked_product_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_inventory_linked_product ON public.inventory_batches(linked_product_id);
+    END IF;
+
+    -- 2. product_sku (maps retail cut lots to inventory SKU)
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+          AND table_name = 'inventory_batches' 
+          AND column_name = 'product_sku'
+    ) THEN
+        ALTER TABLE public.inventory_batches ADD COLUMN product_sku TEXT;
+        CREATE INDEX IF NOT EXISTS idx_inventory_product_sku ON public.inventory_batches(product_sku);
+    END IF;
+
+    -- 3. is_retail_cut_lot (boolean flag for retail cut lot filtering)
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+          AND table_name = 'inventory_batches' 
+          AND column_name = 'is_retail_cut_lot'
+    ) THEN
+        ALTER TABLE public.inventory_batches ADD COLUMN is_retail_cut_lot BOOLEAN NOT NULL DEFAULT false;
+        CREATE INDEX IF NOT EXISTS idx_inventory_is_retail_cut ON public.inventory_batches(is_retail_cut_lot);
+    END IF;
+END $$;
+
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- START OF 018_seed_landed_catch_species.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ============================================================================
+-- FROSTLY SEAFOOD COLD-CHAIN ERP
+-- Migration 018: Ensure Catch Intake Fallback Species ('spec-landed')
+-- ============================================================================
+
+DO $$
+DECLARE
+    org_rec RECORD;
+BEGIN
+    FOR org_rec IN SELECT id FROM public.organizations LOOP
+        INSERT INTO public.species (
+            organization_id, id, name, scientific_name, category,
+            default_zone, standard_price_per_kg, available_grades,
+            fao_zones, gear_types, seasonal_peak, image,
+            shelf_life_fresh_days, shelf_life_frozen_months, is_active
+        ) VALUES (
+            org_rec.id,
+            'spec-landed',
+            'General Landed Biomass',
+            'Harvest Catch Provenance',
+            'Pelagic',
+            'Commercial Cold Storage (-22°C)',
+            25.00,
+            ARRAY['Grade #1', 'Grade #2']::public.quality_grade[],
+            ARRAY['FAO 61', 'FAO 71'],
+            ARRAY['Certified Sustainable Gear'],
+            'Year-Round',
+            'https://images.unsplash.com/photo-1544551763-46a013bb70d5?auto=format&fit=crop&w=600&q=80',
+            7,
+            12,
+            TRUE
+        )
+        ON CONFLICT (organization_id, id) DO NOTHING;
+    END LOOP;
+END $$;
+
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- START OF 019_platform_pricing_plans.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ============================================================================
+-- FROSTLY SEAFOOD COLD-CHAIN ERP
+-- Migration 019: Platform Pricing Plans & Dynamic Public Landing Page Pricing
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 1. Create platform_pricing_plans table
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.platform_pricing_plans (
+    id TEXT PRIMARY KEY,                       -- e.g. 'starter', 'standard', 'enterprise'
+    tier_name TEXT NOT NULL,                  -- e.g. 'Starter Fishery', 'Commercial Fleet'
+    tagline TEXT NOT NULL,
+    monthly_price_usd NUMERIC NOT NULL,
+    annual_price_usd NUMERIC NOT NULL,
+    monthly_price_ghs NUMERIC NOT NULL DEFAULT 0,
+    annual_price_ghs NUMERIC NOT NULL DEFAULT 0,
+    max_staff_seats INTEGER NOT NULL DEFAULT 5,
+    is_popular BOOLEAN NOT NULL DEFAULT FALSE,
+    badge TEXT,
+    features JSONB NOT NULL DEFAULT '[]'::jsonb,
+    button_text TEXT NOT NULL DEFAULT 'Start 14-Day Free Trial',
+    button_style TEXT NOT NULL DEFAULT 'bg-white text-slate-900 border border-slate-300 hover:bg-slate-50',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_by UUID REFERENCES auth.users(id)
+);
+
+-- Index for public landing page sort
+CREATE INDEX IF NOT EXISTS idx_platform_pricing_plans_active_sort 
+ON public.platform_pricing_plans(is_active, sort_order);
+
+-- ----------------------------------------------------------------------------
+-- 2. Seed Initial Pricing Plans
+-- ----------------------------------------------------------------------------
+
+INSERT INTO public.platform_pricing_plans (
+    id,
+    tier_name,
+    tagline,
+    monthly_price_usd,
+    annual_price_usd,
+    monthly_price_ghs,
+    annual_price_ghs,
+    max_staff_seats,
+    is_popular,
+    badge,
+    features,
+    button_text,
+    button_style,
+    sort_order,
+    is_active
+) VALUES 
+(
+    'starter',
+    'Starter Fishery',
+    'Ideal for independent fishing vessels & single cold-room docks.',
+    49,
+    39,
+    650,
+    520,
+    5,
+    FALSE,
+    NULL,
+    '[
+        "Up to 2 fishing vessels or dock stations",
+        "Catch Inward & Weighing with tare deduction",
+        "Cold storage lot tracking with basic alerts",
+        "Mobile PWA with offline logging",
+        "Standard PDF invoices & receipts",
+        "Email customer support"
+    ]'::jsonb,
+    'Start 14-Day Free Trial',
+    'bg-white text-slate-900 border border-slate-300 hover:bg-slate-50',
+    1,
+    TRUE
+),
+(
+    'standard',
+    'Commercial Fleet',
+    'For commercial seafood processors, wholesalers & fleet managers.',
+    149,
+    119,
+    1950,
+    1560,
+    20,
+    TRUE,
+    'Most Popular',
+    '[
+        "Unlimited vessels, dock stations & staff accounts",
+        "Full FSMA 204 & HACCP digital QR passports",
+        "Dual fulfillment: Retail Touch POS + B2B Wholesale",
+        "AI Catch Intelligence (Frostly Copilot)",
+        "Yield recovery & dynamic HOG-to-fillet COGS",
+        "Automated AR/AP ledger with customer credit aging",
+        "Multi-zone IoT temperature continuous monitoring",
+        "Priority 24/7 dockside support"
+    ]'::jsonb,
+    'Start Commercial Trial',
+    'bg-blue-600 hover:bg-blue-700 text-white shadow-md',
+    2,
+    TRUE
+),
+(
+    'enterprise',
+    'Enterprise Processor',
+    'Custom infrastructure for multi-terminal processing plants & exporters.',
+    399,
+    319,
+    5200,
+    4160,
+    9999,
+    FALSE,
+    NULL,
+    '[
+        "Multi-facility & multi-port operational clustering",
+        "Custom ERP / SAP / NetSuite API integrations",
+        "Dedicated isolated database tenancy",
+        "Custom hardware catch-weight scale driver protocols",
+        "Custom HACCP hazard analysis workflows",
+        "Dedicated Technical Account Manager",
+        "99.99% uptime Service Level Agreement (SLA)"
+    ]'::jsonb,
+    'Contact Enterprise Sales',
+    'bg-slate-900 hover:bg-slate-800 text-white',
+    3,
+    TRUE
+)
+ON CONFLICT (id) DO UPDATE SET
+    tier_name = EXCLUDED.tier_name,
+    tagline = EXCLUDED.tagline,
+    monthly_price_usd = EXCLUDED.monthly_price_usd,
+    annual_price_usd = EXCLUDED.annual_price_usd,
+    monthly_price_ghs = EXCLUDED.monthly_price_ghs,
+    annual_price_ghs = EXCLUDED.annual_price_ghs,
+    max_staff_seats = EXCLUDED.max_staff_seats,
+    is_popular = EXCLUDED.is_popular,
+    badge = EXCLUDED.badge,
+    features = EXCLUDED.features,
+    button_text = EXCLUDED.button_text,
+    button_style = EXCLUDED.button_style,
+    sort_order = EXCLUDED.sort_order,
+    is_active = EXCLUDED.is_active;
+
+-- ----------------------------------------------------------------------------
+-- 3. Row Level Security & Access Grants
+-- ----------------------------------------------------------------------------
+
+ALTER TABLE public.platform_pricing_plans ENABLE ROW LEVEL SECURITY;
+
+-- Anyone (unauthenticated public visitors and authenticated tenant users) can read active plans
+DROP POLICY IF EXISTS "platform_pricing_plans_public_read" ON public.platform_pricing_plans;
+CREATE POLICY "platform_pricing_plans_public_read" ON public.platform_pricing_plans
+FOR SELECT TO anon, authenticated
+USING (is_active = TRUE OR public.is_platform_admin());
+
+-- Only platform creators / admins can insert, update or delete pricing plans
+DROP POLICY IF EXISTS "platform_pricing_plans_creator_write" ON public.platform_pricing_plans;
+CREATE POLICY "platform_pricing_plans_creator_write" ON public.platform_pricing_plans
+FOR ALL TO authenticated
+USING (public.is_platform_admin())
+WITH CHECK (public.is_platform_admin());
+
+GRANT SELECT ON public.platform_pricing_plans TO anon, authenticated;
+GRANT ALL ON public.platform_pricing_plans TO authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 4. RPC Function: Platform Creator Update Pricing Plan with Audit Log
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.platform_save_pricing_plan(
+    p_id TEXT,
+    p_tier_name TEXT,
+    p_tagline TEXT,
+    p_monthly_price_usd NUMERIC,
+    p_annual_price_usd NUMERIC,
+    p_monthly_price_ghs NUMERIC DEFAULT NULL,
+    p_annual_price_ghs NUMERIC DEFAULT NULL,
+    p_max_staff_seats INTEGER DEFAULT 5,
+    p_is_popular BOOLEAN DEFAULT FALSE,
+    p_badge TEXT DEFAULT NULL,
+    p_features JSONB DEFAULT '[]'::jsonb,
+    p_button_text TEXT DEFAULT 'Start 14-Day Free Trial',
+    p_button_style TEXT DEFAULT 'bg-white text-slate-900 border border-slate-300 hover:bg-slate-50',
+    p_reason TEXT DEFAULT 'Pricing plan updated via Creator Console'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_old_plan RECORD;
+    v_new_plan RECORD;
+BEGIN
+    -- Verify caller is platform admin
+    IF NOT public.is_platform_admin() THEN
+        RAISE EXCEPTION 'Access Denied: Only verified platform creators may update pricing plans.';
+    END IF;
+
+    -- Fetch current state for audit logging
+    SELECT * INTO v_old_plan 
+    FROM public.platform_pricing_plans 
+    WHERE id = p_id;
+
+    -- Upsert plan
+    INSERT INTO public.platform_pricing_plans (
+        id,
+        tier_name,
+        tagline,
+        monthly_price_usd,
+        annual_price_usd,
+        monthly_price_ghs,
+        annual_price_ghs,
+        max_staff_seats,
+        is_popular,
+        badge,
+        features,
+        button_text,
+        button_style,
+        updated_at,
+        updated_by
+    ) VALUES (
+        p_id,
+        p_tier_name,
+        p_tagline,
+        p_monthly_price_usd,
+        p_annual_price_usd,
+        COALESCE(p_monthly_price_ghs, p_monthly_price_usd * 13),
+        COALESCE(p_annual_price_ghs, p_annual_price_usd * 13),
+        p_max_staff_seats,
+        p_is_popular,
+        p_badge,
+        p_features,
+        p_button_text,
+        p_button_style,
+        NOW(),
+        auth.uid()
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        tier_name = EXCLUDED.tier_name,
+        tagline = EXCLUDED.tagline,
+        monthly_price_usd = EXCLUDED.monthly_price_usd,
+        annual_price_usd = EXCLUDED.annual_price_usd,
+        monthly_price_ghs = EXCLUDED.monthly_price_ghs,
+        annual_price_ghs = EXCLUDED.annual_price_ghs,
+        max_staff_seats = EXCLUDED.max_staff_seats,
+        is_popular = EXCLUDED.is_popular,
+        badge = EXCLUDED.badge,
+        features = EXCLUDED.features,
+        button_text = EXCLUDED.button_text,
+        button_style = EXCLUDED.button_style,
+        updated_at = NOW(),
+        updated_by = auth.uid()
+    RETURNING * INTO v_new_plan;
+
+    -- Record in platform audit logs
+    INSERT INTO public.platform_audit_logs (
+        actor_id,
+        action,
+        previous_state,
+        new_state,
+        reason,
+        created_at
+    ) VALUES (
+        auth.uid(),
+        'UPDATE_PRICING_PLAN',
+        CASE WHEN v_old_plan.id IS NOT NULL THEN row_to_json(v_old_plan)::jsonb ELSE NULL END,
+        row_to_json(v_new_plan)::jsonb,
+        COALESCE(p_reason, 'Pricing updated from Platform Creator console'),
+        NOW()
+    );
+
+    RETURN row_to_json(v_new_plan)::jsonb;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.platform_save_pricing_plan(TEXT, TEXT, TEXT, NUMERIC, NUMERIC, NUMERIC, NUMERIC, INTEGER, BOOLEAN, TEXT, JSONB, TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.platform_save_pricing_plan(TEXT, TEXT, TEXT, NUMERIC, NUMERIC, NUMERIC, NUMERIC, INTEGER, BOOLEAN, TEXT, JSONB, TEXT, TEXT, TEXT) TO authenticated;
+
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- START OF 020_user_login_and_feature_telemetry.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ============================================================================
+-- FROSTLY SEAFOOD COLD-CHAIN ERP
+-- Migration 020: User Login Tracking & Feature Usage Telemetry
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 1. User Login Activity Log Table
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.user_login_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    full_name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'viewer',
+    organization_name TEXT,
+    login_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_agent TEXT,
+    client_ip TEXT,
+    device_type TEXT DEFAULT 'desktop',
+    session_status TEXT DEFAULT 'active'
+);
+
+-- Index for fast user activity lookups
+CREATE INDEX IF NOT EXISTS idx_user_login_logs_org_id ON public.user_login_logs(organization_id);
+CREATE INDEX IF NOT EXISTS idx_user_login_logs_user_id ON public.user_login_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_login_logs_login_at ON public.user_login_logs(login_at DESC);
+
+-- Enable RLS
+ALTER TABLE public.user_login_logs ENABLE ROW LEVEL SECURITY;
+
+-- Platform admins can view all logins; Tenant staff can view their organization's logins
+DROP POLICY IF EXISTS "user_login_logs_select" ON public.user_login_logs;
+CREATE POLICY "user_login_logs_select" ON public.user_login_logs
+FOR SELECT TO authenticated
+USING (
+    public.is_platform_admin() 
+    OR organization_id = public.current_org_id()
+);
+
+-- Authenticated users can insert their own login records
+DROP POLICY IF EXISTS "user_login_logs_insert" ON public.user_login_logs;
+CREATE POLICY "user_login_logs_insert" ON public.user_login_logs
+FOR INSERT TO authenticated
+WITH CHECK (
+    user_id = auth.uid() 
+    OR public.is_platform_admin()
+);
+
+GRANT SELECT, INSERT ON public.user_login_logs TO authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 2. Feature Usage Telemetry Table
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.user_feature_usage_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
+    user_email TEXT NOT NULL,
+    user_name TEXT NOT NULL,
+    organization_name TEXT,
+    feature_key TEXT NOT NULL,
+    feature_name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'operations',
+    action_type TEXT NOT NULL DEFAULT 'view',
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_feature_usage_logs_org ON public.user_feature_usage_logs(organization_id);
+CREATE INDEX IF NOT EXISTS idx_feature_usage_logs_feature ON public.user_feature_usage_logs(feature_key);
+CREATE INDEX IF NOT EXISTS idx_feature_usage_logs_created ON public.user_feature_usage_logs(created_at DESC);
+
+ALTER TABLE public.user_feature_usage_logs ENABLE ROW LEVEL SECURITY;
+
+-- Platform admins can view all feature telemetry; Tenant staff can view their organization's telemetry
+DROP POLICY IF EXISTS "user_feature_usage_select" ON public.user_feature_usage_logs;
+CREATE POLICY "user_feature_usage_select" ON public.user_feature_usage_logs
+FOR SELECT TO authenticated
+USING (
+    public.is_platform_admin() 
+    OR organization_id = public.current_org_id()
+);
+
+DROP POLICY IF EXISTS "user_feature_usage_insert" ON public.user_feature_usage_logs;
+CREATE POLICY "user_feature_usage_insert" ON public.user_feature_usage_logs
+FOR INSERT TO authenticated
+WITH CHECK (
+    user_id = auth.uid() 
+    OR public.is_platform_admin()
+);
+
+GRANT SELECT, INSERT ON public.user_feature_usage_logs TO authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 3. Platform Admin RPC: Get User Logins
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.platform_get_user_logins(p_limit INT DEFAULT 100)
+RETURNS TABLE (
+    id UUID,
+    user_id UUID,
+    organization_id UUID,
+    organization_name TEXT,
+    email TEXT,
+    full_name TEXT,
+    role TEXT,
+    login_at TIMESTAMPTZ,
+    device_type TEXT,
+    user_agent TEXT,
+    session_status TEXT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF NOT public.is_platform_admin() THEN
+        RAISE EXCEPTION 'Access denied: caller is not a verified platform administrator';
+    END IF;
+
+    RETURN QUERY
+    SELECT 
+        l.id,
+        l.user_id,
+        l.organization_id,
+        COALESCE(l.organization_name, o.name, 'Independent Dock') AS organization_name,
+        l.email,
+        l.full_name,
+        l.role,
+        l.login_at,
+        l.device_type,
+        l.user_agent,
+        l.session_status
+    FROM public.user_login_logs l
+    LEFT JOIN public.organizations o ON o.id = l.organization_id
+    ORDER BY l.login_at DESC
+    LIMIT p_limit;
+END;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 4. Platform Admin RPC: Feature Usage Aggregates
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.platform_get_feature_usage_analytics(p_days INT DEFAULT 30)
+RETURNS TABLE (
+    feature_key TEXT,
+    feature_name TEXT,
+    category TEXT,
+    total_uses BIGINT,
+    unique_users_count BIGINT,
+    last_used_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF NOT public.is_platform_admin() THEN
+        RAISE EXCEPTION 'Access denied: caller is not a verified platform administrator';
+    END IF;
+
+    RETURN QUERY
+    SELECT 
+        f.feature_key,
+        f.feature_name,
+        f.category,
+        COUNT(*)::BIGINT AS total_uses,
+        COUNT(DISTINCT f.user_id)::BIGINT AS unique_users_count,
+        MAX(f.created_at) AS last_used_at
+    FROM public.user_feature_usage_logs f
+    WHERE f.created_at >= (NOW() - (p_days || ' days')::INTERVAL)
+    GROUP BY f.feature_key, f.feature_name, f.category
+    ORDER BY total_uses DESC;
+END;
+$$;
+
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- START OF 021_realtime_user_sessions.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ============================================================================
+-- FROSTLY SEAFOOD COLD-CHAIN ERP
+-- Migration 021: Realtime Replication for User Sessions & Presence Tracking
+-- ============================================================================
+
+-- 1. Ensure user_login_logs table has full replica identity so payload updates include all fields
+ALTER TABLE public.user_login_logs REPLICA IDENTITY FULL;
+
+-- 2. Add user_login_logs to the supabase_realtime publication
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND tablename = 'user_login_logs'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.user_login_logs;
+    END IF;
+END $$;
+
+-- 3. Function to update a user's session status in realtime
+CREATE OR REPLACE FUNCTION public.update_user_session_status(
+    p_log_id UUID,
+    p_status TEXT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    UPDATE public.user_login_logs
+    SET session_status = p_status
+    WHERE id = p_log_id
+      AND (user_id = auth.uid() OR public.is_platform_admin());
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.update_user_session_status(UUID, TEXT) TO authenticated;
+
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- START OF 022_inventory_adjustment_account.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ============================================================================
+-- FROSTLY SEAFOOD COLD-CHAIN ERP
+-- Migration 022: Inventory Adjustment Accounts & Inventory Valuation Adjustments
+-- Connects inventory stock adjustments directly to the Supabase database
+-- and financial chart of accounts.
+-- ============================================================================
+
+-- 1. Extend financial_entry_category ENUM to include Inventory Adjustment
+DO $$
+BEGIN
+    ALTER TYPE public.financial_entry_category ADD VALUE IF NOT EXISTS 'Inventory Adjustment';
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+-- 2. Create inventory_adjustment_accounts table
+-- Represents ledger accounts dedicated to tracking inventory discrepancies,
+-- trimming/yield loss, shrinkage, spoilage write-offs, and count reconciliations.
+CREATE TABLE IF NOT EXISTS public.inventory_adjustment_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    account_code TEXT NOT NULL,
+    account_name TEXT NOT NULL,
+    account_type TEXT NOT NULL CHECK (account_type IN ('COGS', 'OpEx', 'Contra-Asset', 'Income')),
+    description TEXT,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    balance_usd NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_org_adjustment_account_code UNIQUE (organization_id, account_code)
+);
+
+-- 3. Create inventory_adjustments audit and transaction log table
+-- Records every weight/valuation change made to an inventory lot,
+-- linked to the specific adjustment account and financial ledger.
+CREATE TABLE IF NOT EXISTS public.inventory_adjustments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    batch_id TEXT NOT NULL,
+    species_name TEXT NOT NULL,
+    previous_weight_kg NUMERIC(10, 2) NOT NULL CHECK (previous_weight_kg >= 0),
+    new_weight_kg NUMERIC(10, 2) NOT NULL CHECK (new_weight_kg >= 0),
+    delta_weight_kg NUMERIC(10, 2) NOT NULL,
+    unit_cost_usd NUMERIC(10, 2) NOT NULL DEFAULT 0.00 CHECK (unit_cost_usd >= 0),
+    valuation_variance_usd NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    reason TEXT NOT NULL,
+    adjustment_account_id UUID REFERENCES public.inventory_adjustment_accounts(id) ON DELETE SET NULL,
+    adjustment_account_code TEXT NOT NULL,
+    adjustment_account_name TEXT NOT NULL,
+    financial_ledger_id UUID,
+    notes TEXT,
+    created_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_inv_adjustments_batch FOREIGN KEY (organization_id, batch_id) 
+        REFERENCES public.inventory_batches(organization_id, id) ON DELETE CASCADE,
+    CONSTRAINT fk_inv_adjustments_fin_ledger FOREIGN KEY (organization_id, financial_ledger_id) 
+        REFERENCES public.financial_ledger_entries(organization_id, id) ON DELETE SET NULL
+);
+
+-- 4. Create Indexes for High Performance
+CREATE INDEX IF NOT EXISTS idx_adj_accounts_org ON public.inventory_adjustment_accounts(organization_id);
+CREATE INDEX IF NOT EXISTS idx_adj_accounts_code ON public.inventory_adjustment_accounts(organization_id, account_code);
+CREATE INDEX IF NOT EXISTS idx_inv_adjustments_org ON public.inventory_adjustments(organization_id);
+CREATE INDEX IF NOT EXISTS idx_inv_adjustments_batch ON public.inventory_adjustments(batch_id);
+CREATE INDEX IF NOT EXISTS idx_inv_adjustments_account ON public.inventory_adjustments(adjustment_account_id);
+CREATE INDEX IF NOT EXISTS idx_inv_adjustments_date ON public.inventory_adjustments(created_at DESC);
+
+-- 5. Enable Row-Level Security (RLS) for Multi-Tenant Isolation
+ALTER TABLE public.inventory_adjustment_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inventory_adjustments ENABLE ROW LEVEL SECURITY;
+
+-- 5a. Policies for inventory_adjustment_accounts
+DROP POLICY IF EXISTS "adjustment_accounts_select" ON public.inventory_adjustment_accounts;
+CREATE POLICY "adjustment_accounts_select" ON public.inventory_adjustment_accounts
+    FOR SELECT TO authenticated
+    USING (
+        organization_id = public.current_org_id()
+        OR public.is_platform_admin()
+    );
+
+DROP POLICY IF EXISTS "adjustment_accounts_insert" ON public.inventory_adjustment_accounts;
+CREATE POLICY "adjustment_accounts_insert" ON public.inventory_adjustment_accounts
+    FOR INSERT TO authenticated
+    WITH CHECK (
+        organization_id = public.current_org_id()
+        OR public.is_platform_admin()
+    );
+
+DROP POLICY IF EXISTS "adjustment_accounts_update" ON public.inventory_adjustment_accounts;
+CREATE POLICY "adjustment_accounts_update" ON public.inventory_adjustment_accounts
+    FOR UPDATE TO authenticated
+    USING (
+        organization_id = public.current_org_id()
+        OR public.is_platform_admin()
+    )
+    WITH CHECK (
+        organization_id = public.current_org_id()
+        OR public.is_platform_admin()
+    );
+
+-- Ensure is_org_admin helper exists
+CREATE OR REPLACE FUNCTION public.is_org_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.staff_profiles
+        WHERE id = auth.uid() 
+          AND role = 'admin' 
+          AND is_active = TRUE
+          AND organization_id = public.current_org_id()
+    );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.is_org_admin() TO authenticated;
+
+DROP POLICY IF EXISTS "adjustment_accounts_delete" ON public.inventory_adjustment_accounts;
+CREATE POLICY "adjustment_accounts_delete" ON public.inventory_adjustment_accounts
+    FOR DELETE TO authenticated
+    USING (
+        (organization_id = public.current_org_id() AND public.is_admin())
+        OR public.is_platform_admin()
+    );
+
+-- 5b. Policies for inventory_adjustments
+DROP POLICY IF EXISTS "inventory_adjustments_select" ON public.inventory_adjustments;
+CREATE POLICY "inventory_adjustments_select" ON public.inventory_adjustments
+    FOR SELECT TO authenticated
+    USING (
+        organization_id = public.current_org_id()
+        OR public.is_platform_admin()
+    );
+
+DROP POLICY IF EXISTS "inventory_adjustments_insert" ON public.inventory_adjustments;
+CREATE POLICY "inventory_adjustments_insert" ON public.inventory_adjustments
+    FOR INSERT TO authenticated
+    WITH CHECK (
+        organization_id = public.current_org_id()
+        OR public.is_platform_admin()
+    );
+
+-- 6. Seed Default Standard Cold-Chain Seafood Adjustment Accounts for All Existing Organizations
+DO $$
+DECLARE
+    org_rec RECORD;
+BEGIN
+    FOR org_rec IN SELECT id FROM public.organizations LOOP
+        -- Account 5150: Inventory Shrinkage & Spoilage
+        INSERT INTO public.inventory_adjustment_accounts (
+            organization_id, account_code, account_name, account_type, description, is_default, is_active
+        ) VALUES (
+            org_rec.id, '5150', 'Inventory Shrinkage & Spoilage', 'COGS',
+            'Unavoidable drip loss, physical shrinkage, freezer burn, or spoilage write-down.', TRUE, TRUE
+        ) ON CONFLICT (organization_id, account_code) DO NOTHING;
+
+        -- Account 5155: Processing Trimming & Yield Loss
+        INSERT INTO public.inventory_adjustment_accounts (
+            organization_id, account_code, account_name, account_type, description, is_default, is_active
+        ) VALUES (
+            org_rec.id, '5155', 'Processing Yield & Trimming Loss', 'COGS',
+            'Biomass reduction from head removal, gutting, loin deboning, and sashimi trimming.', FALSE, TRUE
+        ) ON CONFLICT (organization_id, account_code) DO NOTHING;
+
+        -- Account 5160: Certified Scale & Audit Variance
+        INSERT INTO public.inventory_adjustment_accounts (
+            organization_id, account_code, account_name, account_type, description, is_default, is_active
+        ) VALUES (
+            org_rec.id, '5160', 'Scale Calibration & Count Variance', 'COGS',
+            'Adjustments following periodic certified physical floor counts and crane scale recalibration.', FALSE, TRUE
+        ) ON CONFLICT (organization_id, account_code) DO NOTHING;
+
+        -- Account 1420: Retail Display Reallocation Offset
+        INSERT INTO public.inventory_adjustment_accounts (
+            organization_id, account_code, account_name, account_type, description, is_default, is_active
+        ) VALUES (
+            org_rec.id, '1420', 'Retail Counter Stock Reallocation', 'Contra-Asset',
+            'Bulk cold-storage inventory allocated and transferred directly to retail fresh counter display.', FALSE, TRUE
+        ) ON CONFLICT (organization_id, account_code) DO NOTHING;
+
+        -- Account 4190: Inventory Count Surplus / Recovery
+        INSERT INTO public.inventory_adjustment_accounts (
+            organization_id, account_code, account_name, account_type, description, is_default, is_active
+        ) VALUES (
+            org_rec.id, '4190', 'Inventory Count Recovery Surplus', 'Income',
+            'Positive stock adjustments from physical audit surplus or weight recovery.', FALSE, TRUE
+        ) ON CONFLICT (organization_id, account_code) DO NOTHING;
+    END LOOP;
+END $$;
+
+-- 7. Grant Permissions to authenticated users
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.inventory_adjustment_accounts TO authenticated;
+GRANT SELECT, INSERT ON public.inventory_adjustments TO authenticated;
+
+-- 8. Add to Realtime Publication if available
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_publication_tables 
+            WHERE pubname = 'supabase_realtime' AND tablename = 'inventory_adjustment_accounts'
+        ) THEN
+            ALTER PUBLICATION supabase_realtime ADD TABLE public.inventory_adjustment_accounts;
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_publication_tables 
+            WHERE pubname = 'supabase_realtime' AND tablename = 'inventory_adjustments'
+        ) THEN
+            ALTER PUBLICATION supabase_realtime ADD TABLE public.inventory_adjustments;
+        END IF;
+    END IF;
+END $$;
+
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- START OF 023_batch_image_storage.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ============================================================================
+-- FROSTLY SEAFOOD COLD-CHAIN ERP
+-- Migration 023: Inventory Batch Image URL Column
+-- Supports user-uploaded and custom photos for catch batches & inventory lots
+-- ============================================================================
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'inventory_batches'
+          AND column_name = 'image_url'
+    ) THEN
+        ALTER TABLE public.inventory_batches ADD COLUMN image_url TEXT;
+        COMMENT ON COLUMN public.inventory_batches.image_url IS 'User-provided photo URL or base64 storage URI for the catch lot. Not auto-generated.';
+    END IF;
+END $$;
+
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- START OF 024_customer_ledger_payment_enhancements.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ============================================================================
+-- FROSTLY SEAFOOD COLD-CHAIN ERP
+-- Migration 024: Customer Payment Ledger Enhancements
+-- Extends financial_ledger_entries with explicit customer_id, receipt_number, and notes
+-- for comprehensive customer statement tracking and receipt voucher generation.
+-- ============================================================================
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'financial_ledger_entries' AND column_name = 'customer_id'
+    ) THEN
+        ALTER TABLE public.financial_ledger_entries ADD COLUMN customer_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_fin_ledger_customer ON public.financial_ledger_entries(customer_id);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'financial_ledger_entries' AND column_name = 'receipt_number'
+    ) THEN
+        ALTER TABLE public.financial_ledger_entries ADD COLUMN receipt_number TEXT;
+        CREATE INDEX IF NOT EXISTS idx_fin_ledger_receipt ON public.financial_ledger_entries(receipt_number);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'financial_ledger_entries' AND column_name = 'notes'
+    ) THEN
+        ALTER TABLE public.financial_ledger_entries ADD COLUMN notes TEXT;
+    END IF;
+END $$;
+
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- START OF 025_supplier_ledger_payment_enhancements.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ============================================================================
+-- FROSTLY SEAFOOD COLD-CHAIN ERP
+-- Migration 025: Supplier Payment Ledger & Disbursement Enhancements
+-- Extends financial_ledger_entries with explicit supplier_id and voucher_number
+-- for comprehensive Accounts Payable (AP) statement tracking and remittance advice vouchers.
+-- ============================================================================
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'financial_ledger_entries' AND column_name = 'supplier_id'
+    ) THEN
+        ALTER TABLE public.financial_ledger_entries ADD COLUMN supplier_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_fin_ledger_supplier ON public.financial_ledger_entries(supplier_id);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'financial_ledger_entries' AND column_name = 'voucher_number'
+    ) THEN
+        ALTER TABLE public.financial_ledger_entries ADD COLUMN voucher_number TEXT;
+        CREATE INDEX IF NOT EXISTS idx_fin_ledger_voucher ON public.financial_ledger_entries(voucher_number);
+    END IF;
+END $$;
 
 

@@ -1,14 +1,12 @@
 import React, { useState } from 'react';
 import { 
-  Snowflake, 
-  Search, 
+  Download, 
+  LogIn, 
   Menu, 
   X, 
-  ChevronDown, 
-  ExternalLink,
-  ShieldCheck,
-  Download,
-  LogIn
+  ShieldCheck, 
+  ArrowRight,
+  Sparkles
 } from 'lucide-react';
 import { FrostlyLogo } from '../FrostlyLogo';
 
@@ -28,7 +26,6 @@ export const LandingHeader: React.FC<LandingHeaderProps> = ({
   isInstalled = false
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
 
   const scrollToSection = (id: string) => {
     setMobileMenuOpen(false);
@@ -42,94 +39,96 @@ export const LandingHeader: React.FC<LandingHeaderProps> = ({
     <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          {/* Brand Logo & Product Name */}
-          <div className="flex items-center gap-6">
-            <div 
-              onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-              className="flex items-center gap-3 cursor-pointer group"
-            >
-              <FrostlyLogo size={28} iconOnly variant="blue" />
-              <div className="flex items-center">
-                <span className="font-semibold text-xl tracking-tight text-slate-900 group-hover:text-blue-600 transition-colors pl-0 -ml-[15px]">
-                  Frostly
-                </span>
-                <span className="mx-2.5 text-slate-300 font-light hidden sm:inline">|</span>
-                <span className="text-sm font-medium text-slate-600 hidden sm:inline">
-                  Seafood Platform
-                </span>
-              </div>
+          
+          {/* Zone 1: Brand Wordmark & Product Name */}
+          <div 
+            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            className="flex items-center gap-3 cursor-pointer group shrink-0"
+          >
+            <FrostlyLogo size={28} iconOnly variant="blue" />
+            <div className="flex items-center">
+              <span className="font-bold text-xl tracking-tight text-slate-900 group-hover:text-blue-700 transition-colors">
+                Frostly
+              </span>
+              <span className="mx-2 text-slate-300 font-light hidden sm:inline">/</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 hidden sm:inline">
+                Cold-Chain ERP
+              </span>
             </div>
-
-            {/* Desktop Navigation Links */}
-            <nav className="hidden lg:flex items-center gap-1">
-              <button 
-                onClick={() => scrollToSection('features')} 
-                className="px-3 py-2 text-sm font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100/70 rounded-md transition-colors"
-              >
-                Features
-              </button>
-              <button 
-                onClick={() => scrollToSection('traceability')} 
-                className="px-3 py-2 text-sm font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100/70 rounded-md transition-colors"
-              >
-                Traceability & HACCP
-              </button>
-              <button 
-                onClick={() => scrollToSection('copilot')} 
-                className="px-3 py-2 text-sm font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100/70 rounded-md transition-colors flex items-center gap-1.5"
-              >
-                <span>AI Catch Intelligence</span>
-                <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">
-                  Copilot
-                </span>
-              </button>
-              <button 
-                onClick={() => scrollToSection('pricing')} 
-                className="px-3 py-2 text-sm font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100/70 rounded-md transition-colors"
-              >
-                Pricing
-              </button>
-              <button 
-                onClick={() => scrollToSection('faq')} 
-                className="px-3 py-2 text-sm font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100/70 rounded-md transition-colors"
-              >
-                FAQ
-              </button>
-            </nav>
           </div>
 
-          {/* Right Header Actions */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          {/* Zone 2: Primary Navigation Links (Single-line, unboxed) */}
+          <nav className="hidden lg:flex items-center gap-1 xl:gap-2">
+            <button 
+              onClick={() => scrollToSection('traceability')} 
+              className="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer"
+            >
+              Traceability & IoT
+            </button>
+            <button 
+              onClick={() => scrollToSection('bento-features')} 
+              className="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer"
+            >
+              Platform Capabilities
+            </button>
+            <button 
+              onClick={() => scrollToSection('ledgers-showcase')} 
+              className="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer"
+            >
+              Payment Ledgers
+            </button>
+            <button 
+              onClick={() => scrollToSection('compliance')} 
+              className="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer"
+            >
+              FSMA 204
+            </button>
+            <button 
+              onClick={() => scrollToSection('pricing')} 
+              className="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer"
+            >
+              Pricing
+            </button>
+            <button 
+              onClick={() => scrollToSection('faq')} 
+              className="px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-50 transition-colors whitespace-nowrap cursor-pointer"
+            >
+              FAQ
+            </button>
+          </nav>
+
+          {/* Zone 3: Actions & Conversion CTA */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             {!isInstalled && onInstallApp && (
               <button
                 id="landing-header-install-app-btn"
                 onClick={onInstallApp}
-                className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 px-2.5 sm:px-3 py-1.5 rounded-lg shadow-2xs transition-colors cursor-pointer"
+                className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-3 py-1.5 rounded-md transition-colors cursor-pointer whitespace-nowrap"
                 title="Install Frostly App on Desktop or Mobile"
               >
-                <Download className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                <span>Install App</span>
+                <Download className="w-3.5 h-3.5 text-slate-600 shrink-0" />
+                <span>PWA App</span>
               </button>
             )}
 
             <button
               onClick={onExploreDemo}
-              className="hidden md:inline-flex items-center text-sm font-medium text-slate-700 hover:text-slate-900 px-3 py-1.5 rounded-md hover:bg-slate-100 transition-colors"
+              className="hidden md:inline-flex items-center text-sm font-medium text-slate-700 hover:text-slate-900 px-3 py-1.5 rounded-md hover:bg-slate-100 transition-colors whitespace-nowrap cursor-pointer"
             >
-              Explore Live Demo
+              Live Demo
             </button>
 
             <button
               onClick={onSignIn}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-900 hover:text-blue-700 px-3 py-1.5 rounded-md hover:bg-slate-100 transition-colors"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-900 hover:text-blue-700 px-3 py-1.5 rounded-md hover:bg-slate-100 transition-colors whitespace-nowrap cursor-pointer"
             >
-              <LogIn className="w-4 h-4 text-slate-600" />
+              <LogIn className="w-4 h-4 text-slate-500" />
               <span>Sign in</span>
             </button>
 
             <button
               onClick={onGetStarted}
-              className="bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium px-4 py-2 rounded-md shadow-xs transition-all active:scale-95"
+              className="bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium px-4 py-2 rounded-md shadow-xs transition-all active:scale-[0.98] whitespace-nowrap cursor-pointer"
             >
               Start Free Trial
             </button>
@@ -137,7 +136,7 @@ export const LandingHeader: React.FC<LandingHeaderProps> = ({
             {/* Mobile menu toggle */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="lg:hidden p-2 text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-100"
+              className="lg:hidden p-2 text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-100 cursor-pointer"
               aria-label="Toggle Navigation Menu"
             >
               {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
@@ -147,66 +146,81 @@ export const LandingHeader: React.FC<LandingHeaderProps> = ({
 
         {/* Mobile Dropdown Menu */}
         {mobileMenuOpen && (
-          <div className="lg:hidden py-4 border-t border-slate-200 animate-in fade-in slide-in-from-top-2 duration-200">
-            <div className="flex flex-col gap-2">
-              <button
-                onClick={() => scrollToSection('features')}
-                className="text-left px-3 py-2 text-base font-medium text-slate-700 hover:bg-slate-100 rounded-md"
-              >
-                Features
-              </button>
+          <div className="lg:hidden py-4 border-t border-slate-200 animate-in fade-in slide-in-from-top-2 duration-150">
+            <div className="flex flex-col gap-1">
               <button
                 onClick={() => scrollToSection('traceability')}
-                className="text-left px-3 py-2 text-base font-medium text-slate-700 hover:bg-slate-100 rounded-md"
+                className="text-left px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-md"
               >
-                Traceability & HACCP
+                Traceability & IoT
               </button>
               <button
-                onClick={() => scrollToSection('copilot')}
-                className="text-left px-3 py-2 text-base font-medium text-slate-700 hover:bg-slate-100 rounded-md"
+                onClick={() => scrollToSection('bento-features')}
+                className="text-left px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-md"
               >
-                AI Catch Intelligence (Copilot)
+                Platform Capabilities
+              </button>
+              <button
+                onClick={() => scrollToSection('ledgers-showcase')}
+                className="text-left px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-md"
+              >
+                Payment Ledgers
+              </button>
+              <button
+                onClick={() => scrollToSection('compliance')}
+                className="text-left px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-md"
+              >
+                FSMA 204 Regulatory
               </button>
               <button
                 onClick={() => scrollToSection('pricing')}
-                className="text-left px-3 py-2 text-base font-medium text-slate-700 hover:bg-slate-100 rounded-md"
+                className="text-left px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-md"
               >
                 Pricing
               </button>
               <button
                 onClick={() => scrollToSection('faq')}
-                className="text-left px-3 py-2 text-base font-medium text-slate-700 hover:bg-slate-100 rounded-md"
+                className="text-left px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-md"
               >
                 FAQ
               </button>
+
               <div className="pt-3 border-t border-slate-200 flex flex-col gap-2">
                 {!isInstalled && onInstallApp && (
                   <button
-                    id="landing-mobile-install-app-btn"
                     onClick={() => {
                       setMobileMenuOpen(false);
                       onInstallApp();
                     }}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-bold bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-md hover:bg-indigo-100 transition-colors"
+                    className="w-full flex items-center justify-center gap-2 py-2 text-sm font-medium bg-slate-100 text-slate-800 rounded-md"
                   >
-                    <Download className="w-4 h-4 text-indigo-600" />
-                    <span>Install Frostly App</span>
+                    <Download className="w-4 h-4 text-slate-600" />
+                    <span>Install Frostly PWA</span>
                   </button>
                 )}
                 <button
-                  onClick={onExploreDemo}
-                  className="w-full text-center py-2.5 text-sm font-medium border border-slate-300 text-slate-700 rounded-md hover:bg-slate-50"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    onExploreDemo();
+                  }}
+                  className="w-full text-center py-2 text-sm font-medium border border-slate-300 text-slate-700 rounded-md hover:bg-slate-50"
                 >
                   Explore Live Demo
                 </button>
                 <button
-                  onClick={onSignIn}
-                  className="w-full text-center py-2.5 text-sm font-medium bg-slate-100 text-slate-900 rounded-md hover:bg-slate-200"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    onSignIn();
+                  }}
+                  className="w-full text-center py-2 text-sm font-medium bg-slate-100 text-slate-900 rounded-md"
                 >
                   Sign In
                 </button>
                 <button
-                  onClick={onGetStarted}
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    onGetStarted();
+                  }}
                   className="w-full text-center py-2.5 text-sm font-medium bg-slate-900 text-white rounded-md shadow-xs"
                 >
                   Start Free Trial

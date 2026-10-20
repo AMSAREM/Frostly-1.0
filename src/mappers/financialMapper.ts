@@ -14,6 +14,11 @@ export interface DatabaseFinancialEntryRow {
   created_at?: string;
   created_by?: string;
   organization_id?: string;
+  customer_id?: string;
+  supplier_id?: string;
+  receipt_number?: string;
+  voucher_number?: string;
+  notes?: string;
 }
 
 export const financialMapper = {
@@ -29,6 +34,11 @@ export const financialMapper = {
       amount: Number(row.amount ?? 0),
       paymentMethod: row.payment_method || 'Bank Transfer (ACH / SEPA)',
       status: (row.status as any) || 'Settled',
+      customerId: row.customer_id || undefined,
+      supplierId: row.supplier_id || undefined,
+      receiptNumber: row.receipt_number || undefined,
+      voucherNumber: row.voucher_number || undefined,
+      notes: row.notes || undefined,
     };
   },
 
@@ -46,6 +56,11 @@ export const financialMapper = {
       payment_method: entry.paymentMethod,
       status: entry.status,
     };
+    if (entry.customerId) payload.customer_id = entry.customerId;
+    if (entry.supplierId) payload.supplier_id = entry.supplierId;
+    if (entry.receiptNumber) payload.receipt_number = entry.receiptNumber;
+    if (entry.voucherNumber) payload.voucher_number = entry.voucherNumber;
+    if (entry.notes) payload.notes = entry.notes;
     if (isUuid) {
       payload.id = entry.id;
     }

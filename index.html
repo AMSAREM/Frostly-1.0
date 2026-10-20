@@ -1,71 +1,63 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="scroll-smooth">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
-    <title>Frostly - Seafood Business Platform</title>
-    <meta property="og:title" content="Frostly - Seafood Business Platform" />
-    <meta name="description" content="Progressive Web App (PWA) seafood ERP and management platform with Financials (P&L, AR/AP), Customer CRM, Supplier & Catch Inward logs, offline local caching, and Dual Retail POS & Wholesale order fulfillment." />
-    <meta property="og:description" content="Progressive Web App (PWA) seafood ERP and management platform with Financials (P&L, AR/AP), Customer CRM, Supplier & Catch Inward logs, offline local caching, and Dual Retail POS & Wholesale order fulfillment." />
+    <title>Amansocean | Frozen Seafood & Food Delivery</title>
+    <meta property="og:title" content="Amansocean | Frozen Seafood & Food Delivery" />
+    <meta name="description" content="Fresh From the Ocean, Delivered Frozen. Premium seafood, ready meals and frozen favorites from Amansocean, flash-frozen and delivered straight to your door." />
+    <meta property="og:description" content="Fresh From the Ocean, Delivered Frozen. Premium seafood, ready meals and frozen favorites from Amansocean, flash-frozen and delivered straight to your door." />
     
     <!-- PWA Manifest & Icons -->
     <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/png" href="/logofrostly1.png" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='50' fill='%23C8102E'/><text x='50' y='64' font-size='42' font-family='sans-serif' font-weight='900' fill='white' text-anchor='middle'>AO</text></svg>" />
     <link rel="apple-touch-icon" href="/logofrostly1.png" />
     
     <!-- Theme & Color Meta Tags -->
-    <meta name="theme-color" content="#0052FF" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)" />
-    <meta name="msapplication-TileColor" content="#0052FF" />
+    <meta name="theme-color" content="#FFC400" />
+    <meta name="msapplication-TileColor" content="#C8102E" />
     
     <!-- iOS Web App Meta Tags -->
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Frostly" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Amansocean" />
     
     <!-- App Meta & SEO -->
-    <meta name="application-name" content="Frostly" />
+    <meta name="application-name" content="Amansocean" />
     <meta name="format-detection" content="telephone=no" />
     <meta name="robots" content="index, follow" />
     <link rel="sitemap" type="application/xml" title="Sitemap" href="/sitemap.xml" />
 
     <!-- OpenGraph Social Cards -->
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Frostly" />
-    <meta property="og:image" content="/logofrostly1.png" />
+    <meta property="og:site_name" content="Amansocean" />
 
     <!-- Twitter / X Cards -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Frostly - Seafood Business Platform" />
-    <meta name="twitter:description" content="Progressive Web App (PWA) seafood ERP and management platform with Financials, Customer CRM, Supplier Catch logs, offline caching, and Dual POS." />
-    <meta name="twitter:image" content="/logofrostly1.png" />
+    <meta name="twitter:title" content="Amansocean | Frozen Seafood & Food Delivery" />
+    <meta name="twitter:description" content="Fresh From the Ocean, Delivered Frozen. Premium seafood, ready meals and frozen favorites from Amansocean, flash-frozen and delivered to your door." />
 
-    <!-- Schema.org Structured Data (WebApplication) -->
+    <!-- Schema.org Structured Data -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
-      "@type": "WebApplication",
-      "name": "Frostly Seafood Business Platform",
-      "applicationCategory": "BusinessApplication",
-      "operatingSystem": "All",
-      "description": "Progressive Web App seafood ERP and cold-chain management platform with Financials (P&L, AR/AP), HACCP temperature records, Customer CRM, and Dual POS.",
-      "offers": {
-        "@type": "Offer",
-        "price": "0",
-        "priceCurrency": "USD"
-      }
+      "@type": "FoodEstablishment",
+      "name": "Amansocean",
+      "description": "Premium frozen seafood and prepared meals delivered frozen with guaranteed cold-chain freshness.",
+      "url": "https://amansocean.com",
+      "servesCuisine": ["Seafood", "Frozen Food", "Ready Meals"],
+      "priceRange": "$$"
     }
     </script>
 
-    <!-- Google Fonts -->
+    <!-- Google Fonts: Poppins (ExtraBold 800 for headlines), Montserrat, and Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800;900&family=Poppins:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,700;1,800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   </head>
-  <body class="bg-[#f8f9fc] text-[#1e2337] antialiased selection:bg-indigo-500 selection:text-white min-h-screen">
+  <body class="bg-[#FBF3E4] text-[#1A1A1A] antialiased selection:bg-[#FFC400] selection:text-[#1A1A1A] min-h-screen">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

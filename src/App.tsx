@@ -1472,7 +1472,15 @@ export default function App() {
   };
 
   // Universal Payment & Settle Ledger Handler (AR / AP)
-  const handleRecordPayment = (type: 'AR' | 'AP', entityId: string, amount: number, refId: string) => {
+  const handleRecordPayment = (
+    type: 'AR' | 'AP', 
+    entityId: string, 
+    amount: number, 
+    refId: string,
+    paymentMethod: string = 'Bank Wire Transfer',
+    notes: string = '',
+    specificOrderId?: string
+  ) => {
     if (type === 'AR') {
       // Customer paid receivable
       setCustomers(prev => prev.map(cust => {
@@ -1490,8 +1498,9 @@ export default function App() {
       }));
 
       // Update Order payment status if order ID passed
+      const targetOrderId = specificOrderId || refId;
       setOrders(prev => prev.map(o => {
-        if (o.id === refId || o.clientName.toLowerCase().includes(entityId.toLowerCase())) {
+        if (o.id === targetOrderId || o.clientName.toLowerCase().includes(entityId.toLowerCase())) {
           const updated = { ...o, paymentStatus: 'Paid' as const };
           orderRepository.save(updated).catch(err => {
             console.warn('[App] orderRepository save on AR payment failed:', err);
@@ -1503,17 +1512,25 @@ export default function App() {
 
       // Log Financial Settlement Entry
       const cust = customers.find(c => c.id === entityId);
+      const receiptNum = `REC-${Date.now().toString().slice(-6)}`;
       const newEntry: FinancialLedgerEntry = {
         id: `FIN-${Date.now().toString().slice(-4)}`,
         date: new Date().toISOString().split('T')[0],
         type: 'Income',
         category: 'Revenue (Wholesale)',
-        description: `Customer AR Settlement Received - ${cust?.name || entityId}`,
-        referenceId: `PMT-AR-${refId}`,
+        description: notes 
+          ? `Customer AR Settlement Received - ${cust?.name || entityId} (${notes})`
+          : specificOrderId
+          ? `Customer AR Settlement Received - ${cust?.name || entityId} (Order #${specificOrderId})`
+          : `Customer AR Settlement Received - ${cust?.name || entityId}`,
+        referenceId: refId.startsWith('PMT') ? refId : `PMT-AR-${refId}`,
         entityName: cust?.name || 'Customer Account',
         amount: amount,
-        paymentMethod: 'Bank Wire Transfer',
-        status: 'Settled'
+        paymentMethod: paymentMethod || 'Bank Wire Transfer',
+        status: 'Settled',
+        customerId: entityId,
+        notes: notes,
+        receiptNumber: receiptNum
       };
       setFinancialEntries(prev => [newEntry, ...prev]);
       financialRepository.addEntry(newEntry).catch(err => {
@@ -1523,7 +1540,7 @@ export default function App() {
       addNotification({
         type: 'order_update',
         title: `AR Payment Collected: ${formatAppCurrency(amount)}`,
-        message: `Receivable posted to ledger for ${cust?.name || entityId}.`,
+        message: `Receivable posted to ledger for ${cust?.name || entityId} (${paymentMethod}). Receipt #${receiptNum}`,
         urgency: 'low'
       });
     } else {
@@ -1542,26 +1559,38 @@ export default function App() {
         return sup;
       }));
 
-      // Update PO payment status
+      // Update PO payment status if specific PO provided or matches reference
+      const targetPOId = specificOrderId || refId;
       setPurchaseOrders(prev => prev.map(po => {
-        if (po.supplierId === entityId || po.id === refId) {
+        if (po.id === targetPOId || (!specificOrderId && po.supplierId === entityId && po.paymentStatus !== 'Paid in Full')) {
           return { ...po, paymentStatus: 'Paid in Full' };
         }
         return po;
       }));
 
       const sup = suppliers.find(s => s.id === entityId);
+      const voucherNum = refId.startsWith('VOUCH') 
+        ? refId 
+        : `VOUCH-${Date.now().toString().slice(-6)}`;
+
       const newEntry: FinancialLedgerEntry = {
         id: `FIN-${Date.now().toString().slice(-4)}`,
         date: new Date().toISOString().split('T')[0],
         type: 'COGS',
         category: 'COGS (Catch Intake)',
-        description: `Harvester AP Bill Settled - ${sup?.name || entityId}`,
-        referenceId: `PMT-AP-${refId}`,
+        description: notes
+          ? `Harvester AP Settlement Wire - ${sup?.name || entityId} (${notes})`
+          : specificOrderId
+          ? `Harvester AP Settlement Wire - ${sup?.name || entityId} (PO #${specificOrderId})`
+          : `Harvester AP Settlement Wire - ${sup?.name || entityId}`,
+        referenceId: refId.startsWith('VOUCH') || refId.startsWith('PMT') ? refId : `PMT-AP-${refId}`,
         entityName: sup?.name || 'Harvester Co-op',
         amount: amount,
-        paymentMethod: 'Direct Wire Disbursement',
-        status: 'Settled'
+        paymentMethod: paymentMethod || 'Federal Wire Transfer / ACH',
+        status: 'Settled',
+        supplierId: entityId,
+        voucherNumber: voucherNum,
+        notes: notes
       };
       setFinancialEntries(prev => [newEntry, ...prev]);
       financialRepository.addEntry(newEntry).catch(err => {
@@ -1571,10 +1600,117 @@ export default function App() {
       addNotification({
         type: 'order_update',
         title: `Harvester Payout Disbursed: ${formatAppCurrency(amount)}`,
-        message: `Settlement wire completed for ${sup?.name || entityId}.`,
+        message: `Settlement wire completed for ${sup?.name || entityId} (${paymentMethod}). Voucher #${voucherNum}`,
         urgency: 'low'
       });
     }
+  };
+
+  // Supplier AP Reversal / Void Handler
+  const handleReverseSupplierPayment = (paymentEntryId: string, supplierId: string, amount: number, reason: string) => {
+    // 1. Revert supplier balance: restore amount back to outstandingPayableUSD
+    setSuppliers(prev => prev.map(sup => {
+      if (sup.id === supplierId) {
+        const restoredBal = sup.outstandingPayableUSD + amount;
+        const updated: Supplier = { ...sup, outstandingPayableUSD: restoredBal };
+        supplierRepository.save(updated, false).catch(err => {
+          console.warn('[App] supplierRepository save on AP reversal failed:', err);
+        });
+        return updated;
+      }
+      return sup;
+    }));
+
+    // 2. Mark original payment entry as Overdue or add reversal note
+    setFinancialEntries(prev => prev.map(entry => {
+      if (entry.id === paymentEntryId) {
+        return { ...entry, status: 'Overdue' as const, description: `${entry.description} [REVERSED: ${reason}]` };
+      }
+      return entry;
+    }));
+
+    // 3. Add Reversal Entry in financial ledger
+    const sup = suppliers.find(s => s.id === supplierId);
+    const reversalEntry: FinancialLedgerEntry = {
+      id: `FIN-REV-AP-${Date.now().toString().slice(-4)}`,
+      date: new Date().toISOString().split('T')[0],
+      type: 'COGS',
+      category: 'COGS (Catch Intake)',
+      description: `Disbursement Reversal / Void - ${sup?.name || supplierId} (${reason})`,
+      referenceId: `REV-${paymentEntryId}`,
+      entityName: sup?.name || 'Harvester Fleet',
+      amount: amount,
+      paymentMethod: 'Wire Recall / Void',
+      status: 'Settled',
+      supplierId: supplierId,
+      notes: reason,
+      voucherNumber: `REV-${paymentEntryId}`
+    };
+    setFinancialEntries(prev => [reversalEntry, ...prev]);
+    financialRepository.addEntry(reversalEntry).catch(err => {
+      console.warn('[App] financialRepository addEntry error for AP reversal:', err);
+    });
+
+    addNotification({
+      type: 'order_update',
+      title: `Disbursement Voided: ${formatAppCurrency(amount)}`,
+      message: `Reversal recorded for ${sup?.name || supplierId}. Reason: ${reason}`,
+      urgency: 'medium'
+    });
+  };
+
+  // Reversal / Void Payment Handler
+  const handleReversePayment = (paymentEntryId: string, customerId: string, amount: number, reason: string) => {
+    // 1. Revert customer balance: add amount back to outstandingBalanceUSD
+    setCustomers(prev => prev.map(cust => {
+      if (cust.id === customerId) {
+        const restoredBal = cust.outstandingBalanceUSD + amount;
+        customerRepository.updateFinancials(cust.id, restoredBal, cust.totalSpendUSD, cust.totalOrdersCount).catch(err => {
+          console.warn('[App] customerRepository updateFinancials on AR reversal failed:', err);
+        });
+        return {
+          ...cust,
+          outstandingBalanceUSD: restoredBal
+        };
+      }
+      return cust;
+    }));
+
+    // 2. Mark original payment entry as Reversed or add reversal offset
+    setFinancialEntries(prev => prev.map(entry => {
+      if (entry.id === paymentEntryId) {
+        return { ...entry, status: 'Overdue' as const, description: `${entry.description} [REVERSED: ${reason}]` };
+      }
+      return entry;
+    }));
+
+    // 3. Add Reversal Entry in financial ledger
+    const cust = customers.find(c => c.id === customerId);
+    const reversalEntry: FinancialLedgerEntry = {
+      id: `FIN-REV-${Date.now().toString().slice(-4)}`,
+      date: new Date().toISOString().split('T')[0],
+      type: 'OpEx',
+      category: 'Logistics & Reefer Freight',
+      description: `Payment Reversal / Void - ${cust?.name || customerId} (${reason})`,
+      referenceId: `REV-${paymentEntryId}`,
+      entityName: cust?.name || 'Customer Account',
+      amount: amount,
+      paymentMethod: 'Adjustment / Void',
+      status: 'Settled',
+      customerId: customerId,
+      notes: reason
+    };
+    setFinancialEntries(prev => [reversalEntry, ...prev]);
+    financialRepository.addEntry(reversalEntry).catch(err => {
+      console.warn('[App] financialRepository addEntry error for AR reversal:', err);
+    });
+
+    addNotification({
+      type: 'order_update',
+      title: `Payment Reversed: ${formatAppCurrency(amount)}`,
+      message: `Payment voided for ${cust?.name || customerId}. Reason: ${reason}`,
+      urgency: 'medium'
+    });
   };
 
   // Custom Expense Handler
@@ -1730,10 +1866,13 @@ export default function App() {
           <CustomersView
             customers={customers}
             orders={orders}
+            financialEntries={financialEntries}
             onAddCustomer={handleAddCustomer}
             onUpdateCustomer={handleUpdateCustomer}
             onSelectCustomerForOrder={handleSelectCustomerForOrder}
             onRecordPayment={handleRecordPayment}
+            onReversePayment={handleReversePayment}
+            onOpenInvoice={(o) => setInvoiceOrder(o)}
             formatCurrency={formatAppCurrency}
           />
         )}
@@ -1742,9 +1881,11 @@ export default function App() {
           <SuppliersView
             suppliers={suppliers}
             purchaseOrders={purchaseOrders}
+            financialEntries={financialEntries}
             onAddSupplier={handleAddSupplier}
             onAddPurchaseOrder={handleAddPurchaseOrder}
             onRecordPayment={handleRecordPayment}
+            onReversePayment={handleReverseSupplierPayment}
             formatCurrency={formatAppCurrency}
           />
         )}

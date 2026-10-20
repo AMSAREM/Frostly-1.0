@@ -63,23 +63,22 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({
             <p className="text-xs text-slate-500 leading-relaxed">
               The modern operating system for the commercial seafood cold chain.
             </p>
-            <div className="mt-4 flex items-center gap-2 text-emerald-600 font-semibold">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>All Systems Operational</span>
+            <div className="mt-4 text-xs text-slate-500 font-medium">
+              Operational · Sub-Minute Latency
             </div>
           </div>
 
           {/* Col 2: Product */}
           <div>
             <div className="font-bold text-slate-900 uppercase tracking-wider mb-3">
-              Product
+              Platform
             </div>
             <ul className="space-y-2">
-              <li><a href="#features" className="hover:text-slate-900 transition-colors">Catch Inward & Scales</a></li>
-              <li><a href="#features" className="hover:text-slate-900 transition-colors">Cold Storage & HACCP</a></li>
-              <li><a href="#features" className="hover:text-slate-900 transition-colors">Retail Touch POS</a></li>
-              <li><a href="#features" className="hover:text-slate-900 transition-colors">B2B Wholesale Orders</a></li>
-              <li><a href="#copilot" className="hover:text-slate-900 transition-colors">AI Catch Copilot</a></li>
+              <li><a href="#traceability" className="hover:text-slate-900 transition-colors">Traceability & IoT</a></li>
+              <li><a href="#bento-features" className="hover:text-slate-900 transition-colors">Bento Capabilities</a></li>
+              <li><a href="#ledgers-showcase" className="hover:text-slate-900 transition-colors">Customer & Supplier Ledgers</a></li>
+              <li><a href="#compliance" className="hover:text-slate-900 transition-colors">FSMA 204 Engine</a></li>
+              <li><a href="#pricing" className="hover:text-slate-900 transition-colors">Transparent Pricing</a></li>
             </ul>
           </div>
 

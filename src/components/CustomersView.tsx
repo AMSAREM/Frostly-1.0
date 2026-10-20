@@ -20,35 +20,65 @@ import {
   ShieldAlert,
   Edit3,
   Save,
-  Tag
+  Tag,
+  Receipt,
+  RotateCcw,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Eye,
+  Download,
+  Printer
 } from 'lucide-react';
-import { Customer, ClientOrder, CustomerType, PricingTier, PaymentTerms, CustomerStatus } from '../types';
+import { Customer, ClientOrder, FinancialLedgerEntry, CustomerType, PricingTier, PaymentTerms, CustomerStatus } from '../types';
+import { CustomerLedgerTab } from './CustomerLedgerTab';
+import { RecordPaymentModal } from './Modals/RecordPaymentModal';
+import { PaymentReceiptModal } from './Modals/PaymentReceiptModal';
 
 interface CustomersViewProps {
   customers: Customer[];
   orders: ClientOrder[];
+  financialEntries?: FinancialLedgerEntry[];
   onAddCustomer: (customer: Customer) => void;
   onUpdateCustomer: (customer: Customer) => void;
   onSelectCustomerForOrder: (customer: Customer) => void;
-  onRecordPayment: (type: 'AR' | 'AP', entityId: string, amount: number, refId: string) => void;
+  onRecordPayment: (
+    type: 'AR' | 'AP', 
+    entityId: string, 
+    amount: number, 
+    refId: string,
+    paymentMethod?: string,
+    notes?: string,
+    specificOrderId?: string
+  ) => void;
+  onReversePayment?: (paymentEntryId: string, customerId: string, amount: number, reason: string) => void;
+  onOpenInvoice?: (order: ClientOrder) => void;
   formatCurrency: (amount: number) => string;
 }
 
 export const CustomersView: React.FC<CustomersViewProps> = ({
   customers = [],
   orders = [],
+  financialEntries = [],
   onAddCustomer,
   onUpdateCustomer,
   onSelectCustomerForOrder,
   onRecordPayment,
+  onReversePayment,
+  onOpenInvoice,
   formatCurrency
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [filterType, setFilterType] = useState<string>('all');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [profileActiveTab, setProfileActiveTab] = useState<'ledger' | 'orders' | 'terms'>('ledger');
+  
+  // Payment Modal States
   const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState<boolean>(false);
   const [isRecordPaymentModalOpen, setIsRecordPaymentModalOpen] = useState<boolean>(false);
-  const [paymentAmount, setPaymentAmount] = useState<string>('');
+  const [paymentModalCustomer, setPaymentModalCustomer] = useState<Customer | null>(null);
+  const [preselectedOrderId, setPreselectedOrderId] = useState<string | undefined>(undefined);
+  const [suggestedPaymentAmount, setSuggestedPaymentAmount] = useState<number | undefined>(undefined);
+  const [lastCreatedReceipt, setLastCreatedReceipt] = useState<any | null>(null);
 
   // Credit Facility Quick Adjustment State
   const [isEditingCreditFacility, setIsEditingCreditFacility] = useState(false);
@@ -56,12 +86,24 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   const [facilityTerms, setFacilityTerms] = useState<PaymentTerms>('Net-30');
   const [facilityStatus, setFacilityStatus] = useState<CustomerStatus>('Active');
 
-  const handleOpenCustomerProfile = (cust: Customer) => {
+  const handleOpenCustomerProfile = (cust: Customer, initialTab: 'ledger' | 'orders' | 'terms' = 'terms') => {
     setSelectedCustomer(cust);
+    setProfileActiveTab(initialTab);
     setIsEditingCreditFacility(false);
     setFacilityCreditLimit(cust.creditLimitUSD.toString());
     setFacilityTerms(cust.paymentTerms);
     setFacilityStatus(cust.status);
+  };
+
+  const handleOpenLedger = (cust: Customer) => {
+    handleOpenCustomerProfile(cust, 'ledger');
+  };
+
+  const handleOpenRecordPayment = (cust: Customer, specificOrderId?: string, suggestedAmount?: number) => {
+    setPaymentModalCustomer(cust);
+    setPreselectedOrderId(specificOrderId);
+    setSuggestedPaymentAmount(suggestedAmount);
+    setIsRecordPaymentModalOpen(true);
   };
 
   const handleSaveCreditFacility = () => {
@@ -147,25 +189,13 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
     setNewNotes('');
   };
 
-  const handleOpenPayment = (customer: Customer) => {
-    setSelectedCustomer(customer);
-    setPaymentAmount(customer.outstandingBalanceUSD.toString());
-    setIsRecordPaymentModalOpen(true);
-  };
-
-  const handleProcessPayment = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedCustomer) return;
-    const amt = parseFloat(paymentAmount);
-    if (isNaN(amt) || amt <= 0) return;
-
-    onRecordPayment('AR', selectedCustomer.id, amt, selectedCustomer.id);
-    setIsRecordPaymentModalOpen(false);
-  };
-
   // Get orders specific to selected customer
   const customerOrders = selectedCustomer 
-    ? orders.filter(o => o.clientName.toLowerCase().includes(selectedCustomer.name.toLowerCase()) || o.clientName.toLowerCase().includes(selectedCustomer.companyName.toLowerCase()))
+    ? orders.filter(o => 
+        o.customerId === selectedCustomer.id ||
+        o.clientName.toLowerCase().includes(selectedCustomer.name.toLowerCase()) || 
+        o.clientName.toLowerCase().includes(selectedCustomer.companyName.toLowerCase())
+      )
     : [];
 
   return (
@@ -177,10 +207,10 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
             <span className="p-2 bg-indigo-100/80 text-indigo-700 rounded-xl">
               <Users className="w-5 h-5" />
             </span>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Customer CRM & Accounts</h1>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Customer CRM & Account Ledgers</h1>
           </div>
           <p className="text-sm text-slate-500 mt-1">
-            Manage wholesale restaurants, hotel chains, supermarket buyers, and VIP retail accounts.
+            Manage wholesale clients, payment histories, accounts receivable (AR) ledgers, and credit limits.
           </p>
         </div>
 
@@ -201,13 +231,13 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
         <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-2">
           <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Active Client Accounts</div>
           <div className="text-2xl font-black text-slate-900 font-mono-code">{customers.length} Accounts</div>
-          <div className="text-xs text-slate-500">100% active credit standing</div>
+          <div className="text-xs text-slate-500">Commercial seafood buyers</div>
         </div>
 
         <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-2">
           <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Receivables (AR)</div>
           <div className="text-2xl font-black text-amber-700 font-mono-code">{formatCurrency(totalReceivables)}</div>
-          <div className="text-xs text-slate-500">Awaiting Net-15 / Net-30 collection</div>
+          <div className="text-xs text-slate-500">Outstanding B2B credit to collect</div>
         </div>
 
         <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-2">
@@ -221,7 +251,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
           <div className="text-2xl font-black text-slate-900 font-mono-code">
             {formatCurrency(customers.reduce((s, c) => s + c.creditLimitUSD, 0) / (customers.length || 1))}
           </div>
-          <div className="text-xs text-slate-500">Secured wholesale accounts</div>
+          <div className="text-xs text-slate-500">Secured wholesale credit accounts</div>
         </div>
       </div>
 
@@ -250,52 +280,33 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              {t === 'all' ? 'All Accounts' : t.split(' / ')[0]}
+              {t === 'all' ? 'All Channels' : t}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Mobile Customer Cards (Phones & Small screens) */}
-      <div className="space-y-3 md:hidden">
+      {/* Customer Cards Grid (Mobile) */}
+      <div className="grid grid-cols-1 gap-4 md:hidden">
         {filteredCustomers.map((cust) => {
           const isOverdue = cust.outstandingBalanceUSD > 0;
           return (
             <div key={cust.id} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex items-start justify-between">
                 <div>
-                  <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
-                    <span>{cust.name}</span>
-                    {cust.type?.includes('Wholesale') && (
-                      <span className="px-1.5 py-0.5 text-[9px] font-bold bg-indigo-50 text-indigo-700 rounded-md border border-indigo-100">
-                        B2B
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-slate-500 text-[11px] flex items-center gap-1 mt-0.5">
-                    <Building2 className="w-3 h-3 text-slate-400" />
-                    <span>{cust.companyName}</span>
-                  </div>
+                  <div className="font-bold text-slate-900">{cust.name}</div>
+                  <div className="text-xs text-slate-500">{cust.companyName}</div>
+                  <div className="text-[11px] text-slate-400">{cust.city}</div>
                 </div>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
-                  cust.tier?.includes('VIP')
-                    ? 'bg-purple-100 text-purple-800'
-                    : cust.tier?.includes('Standard')
-                    ? 'bg-blue-100 text-blue-800'
-                    : 'bg-slate-100 text-slate-800'
-                }`}>
-                  {cust.tier || 'Standard'}
-                </span>
-              </div>
-
-              <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-100 space-y-1">
-                <div className="flex items-center gap-1.5 text-slate-500 text-[11px]">
-                  <Phone className="w-3 h-3 text-slate-400" />
-                  <span>{cust.phone}</span>
-                </div>
-                <div className="flex items-center gap-1.5 text-slate-500 text-[11px]">
-                  <Mail className="w-3 h-3 text-slate-400" />
-                  <span className="truncate">{cust.email}</span>
+                <div className="text-right">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    cust.status === 'Credit Hold' 
+                      ? 'bg-rose-100 text-rose-800' 
+                      : 'bg-emerald-100 text-emerald-800'
+                  }`}>
+                    {cust.status}
+                  </span>
+                  <div className="text-[10px] text-slate-400 mt-1 font-mono-code">{cust.paymentTerms}</div>
                 </div>
               </div>
 
@@ -315,26 +326,34 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 pt-1">
+              <div className="flex items-center gap-1.5 pt-1">
                 <button
-                  onClick={() => handleOpenCustomerProfile(cust)}
-                  className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold text-center cursor-pointer"
+                  onClick={() => handleOpenLedger(cust)}
+                  className="flex-1 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-xl text-xs font-bold text-center border border-emerald-200 transition-colors cursor-pointer flex items-center justify-center gap-1"
                 >
-                  View Profile
+                  <Receipt className="w-3.5 h-3.5" />
+                  <span>Ledger</span>
+                </button>
+                <button
+                  onClick={() => handleOpenCustomerProfile(cust, 'terms')}
+                  className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold text-center transition-colors cursor-pointer"
+                >
+                  Profile
                 </button>
                 {isOverdue ? (
                   <button
-                    onClick={() => handleOpenPayment(cust)}
-                    className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold text-center cursor-pointer"
+                    onClick={() => handleOpenRecordPayment(cust)}
+                    className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold text-center transition-colors cursor-pointer flex items-center justify-center gap-1"
                   >
-                    Receive Pay
+                    <CreditCard className="w-3.5 h-3.5" />
+                    <span>Pay</span>
                   </button>
                 ) : (
                   <button
                     onClick={() => onSelectCustomerForOrder(cust)}
-                    className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold text-center cursor-pointer"
+                    className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold text-center transition-colors cursor-pointer"
                   >
-                    New Order
+                    Order
                   </button>
                 )}
               </div>
@@ -433,9 +452,19 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                       <div className="text-slate-400 text-[10px] font-normal">{cust.totalOrdersCount} orders</div>
                     </td>
 
-                    <td className="py-4 px-4 text-right space-x-2">
+                    <td className="py-4 px-4 text-right space-x-1.5 whitespace-nowrap">
+                      {/* Direct Ledger Action */}
                       <button
-                        onClick={() => handleOpenCustomerProfile(cust)}
+                        onClick={() => handleOpenLedger(cust)}
+                        className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                        title="View Customer Payment History & Financial Ledger"
+                      >
+                        <Receipt className="w-3.5 h-3.5" />
+                        <span>Ledger</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleOpenCustomerProfile(cust, 'terms')}
                         className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-bold transition-all cursor-pointer"
                       >
                         Profile
@@ -443,10 +472,12 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
 
                       {isOverdue ? (
                         <button
-                          onClick={() => handleOpenPayment(cust)}
-                          className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer"
+                          onClick={() => handleOpenRecordPayment(cust)}
+                          className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                          title="Record Payment Received"
                         >
-                          Pay
+                          <CreditCard className="w-3.5 h-3.5" />
+                          <span>Pay</span>
                         </button>
                       ) : (
                         <button
@@ -465,249 +496,380 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
         </div>
       </div>
 
-      {/* Customer Profile & Purchase History Drawer */}
+      {/* Customer Profile & Comprehensive Account Drawer / Modal */}
       {selectedCustomer && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white max-w-2xl w-full rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-5 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white max-w-4xl w-full rounded-3xl p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-6 max-h-[92vh] overflow-y-auto my-auto animate-in fade-in zoom-in-95 duration-150">
+            
+            {/* Customer Profile Top Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
               <div className="flex items-center gap-3">
                 <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl">
                   <Building2 className="w-6 h-6" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-slate-900">{selectedCustomer.name}</h2>
-                  <p className="text-xs text-slate-500">{selectedCustomer.companyName} • Member since {selectedCustomer.joinedDate}</p>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-xl font-black text-slate-900 tracking-tight">{selectedCustomer.name}</h2>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 font-mono-code">
+                      {selectedCustomer.id}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {selectedCustomer.companyName} • Member since {selectedCustomer.joinedDate} • {selectedCustomer.type}
+                  </p>
                 </div>
               </div>
-              <button 
-                onClick={() => setSelectedCustomer(null)}
-                className="text-slate-400 hover:text-slate-600 cursor-pointer text-xl font-bold"
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleOpenRecordPayment(selectedCustomer)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+                >
+                  <DollarSign className="w-4 h-4" />
+                  <span>Receive Payment</span>
+                </button>
+
+                <button 
+                  onClick={() => setSelectedCustomer(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer text-xl font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Profile Tab Navigation Strip */}
+            <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+              <button
+                onClick={() => setProfileActiveTab('ledger')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  profileActiveTab === 'ledger'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                }`}
               >
-                ✕
+                <Receipt className="w-4 h-4" />
+                <span>Account Ledger & Payment History</span>
+                {selectedCustomer.outstandingBalanceUSD > 0 && (
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                    profileActiveTab === 'ledger' ? 'bg-emerald-800 text-white' : 'bg-amber-100 text-amber-800'
+                  }`}>
+                    Due: {formatCurrency(selectedCustomer.outstandingBalanceUSD)}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setProfileActiveTab('orders')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  profileActiveTab === 'orders'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                }`}
+              >
+                <ShoppingBag className="w-4 h-4" />
+                <span>Orders & Invoices ({customerOrders.length})</span>
+              </button>
+
+              <button
+                onClick={() => setProfileActiveTab('terms')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  profileActiveTab === 'terms'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                }`}
+              >
+                <CreditCard className="w-4 h-4" />
+                <span>Commercial Terms & Facility</span>
               </button>
             </div>
 
-            {/* Profile Grid Details */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
-                <div className="text-[10px] text-slate-400 font-bold uppercase">Pricing Tier</div>
-                <div className="text-xs font-bold text-slate-900 mt-1">{selectedCustomer.tier}</div>
+            {/* TAB 1: CUSTOMER FINANCIAL LEDGER & PAYMENT HISTORY */}
+            {profileActiveTab === 'ledger' && (
+              <div className="space-y-4">
+                <CustomerLedgerTab
+                  customer={selectedCustomer}
+                  orders={orders}
+                  financialEntries={financialEntries}
+                  formatCurrency={formatCurrency}
+                  onOpenRecordPayment={(cust, orderId, amt) => handleOpenRecordPayment(cust, orderId, amt)}
+                  onReversePayment={onReversePayment}
+                  onSelectCustomerForOrder={onSelectCustomerForOrder}
+                  onOpenInvoice={onOpenInvoice}
+                />
               </div>
-              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
-                <div className="text-[10px] text-slate-400 font-bold uppercase">Payment Terms</div>
-                <div className="text-xs font-bold text-slate-900 mt-1">{selectedCustomer.paymentTerms}</div>
-              </div>
-              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
-                <div className="text-[10px] text-slate-400 font-bold uppercase">Credit Limit</div>
-                <div className="text-xs font-mono-code font-bold text-slate-900 mt-1">{formatCurrency(selectedCustomer.creditLimitUSD)}</div>
-              </div>
-              <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200">
-                <div className="text-[10px] text-amber-800 font-bold uppercase">Balance Due</div>
-                <div className="text-xs font-mono-code font-bold text-amber-950 mt-1">{formatCurrency(selectedCustomer.outstandingBalanceUSD)}</div>
-              </div>
-            </div>
+            )}
 
-            {/* Credit Facility & Risk Exposure Panel */}
-            <div className="p-4 rounded-2xl bg-indigo-50/50 border border-indigo-100 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-indigo-600" />
-                  <span className="text-xs font-bold text-slate-900">Commercial Credit Facility & Exposure</span>
+            {/* TAB 2: WHOLESALE ORDERS & INVOICES */}
+            {profileActiveTab === 'orders' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-slate-900">Wholesale Order Invoices & Fulfillments</h3>
+                  <button
+                    onClick={() => {
+                      const cust = selectedCustomer;
+                      setSelectedCustomer(null);
+                      onSelectCustomerForOrder(cust);
+                    }}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Create Wholesale Order</span>
+                  </button>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                    selectedCustomer.status === 'Credit Hold'
-                      ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                      : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                  }`}>
-                    {selectedCustomer.status === 'Credit Hold' ? 'Credit Hold' : 'Good Standing'}
-                  </span>
+                {customerOrders.length > 0 ? (
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 text-xs">
+                    {customerOrders.map(order => (
+                      <div key={order.id} className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-900 font-mono-code text-sm">#{order.id}</span>
+                            <span className="text-slate-500">{order.orderDate}</span>
+                            <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md font-medium">
+                              {order.saleType || (order.paymentTerms ? 'Credit Sale' : 'Direct')}
+                            </span>
+                            {order.status && (
+                              <span className="text-[10px] px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-md font-bold">
+                                {order.status}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-600 mt-1">
+                            {order.items?.map(i => `${i.speciesName} (${i.requestedWeightKg}kg)`).join(', ') || 'No item breakdown'}
+                          </div>
+                          {order.creditAuthorizedBy && (
+                            <div className="text-[10px] text-amber-800 mt-0.5">
+                              Credit override authorized by {order.creditAuthorizedBy}
+                            </div>
+                          )}
+                        </div>
 
-                  {!isEditingCreditFacility && (
-                    <button
-                      onClick={() => setIsEditingCreditFacility(true)}
-                      className="px-2.5 py-1 text-[11px] font-bold text-indigo-700 bg-white hover:bg-indigo-100 rounded-lg border border-indigo-200 transition-colors cursor-pointer flex items-center gap-1"
-                    >
-                      <Edit3 className="w-3 h-3" />
-                      <span>Adjust Facility</span>
-                    </button>
+                        <div className="sm:text-right flex sm:flex-col items-center sm:items-end justify-between gap-2">
+                          <div className="font-mono-code font-black text-slate-900 text-sm">
+                            {formatCurrency(order.adjustedTotalUSD || order.quotedTotalUSD)}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold ${
+                              order.paymentStatus === 'Paid' 
+                                ? 'bg-emerald-100 text-emerald-800' 
+                                : 'bg-amber-100 text-amber-800'
+                            }`}>
+                              {order.paymentStatus === 'Paid' ? 'Paid' : `Credit: ${order.paymentTerms || 'Net-30'}`}
+                            </span>
+
+                            {onOpenInvoice && (
+                              <button
+                                onClick={() => onOpenInvoice(order)}
+                                className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg text-[11px] cursor-pointer"
+                              >
+                                View Invoice
+                              </button>
+                            )}
+
+                            {order.paymentStatus !== 'Paid' && (
+                              <button
+                                onClick={() => handleOpenRecordPayment(selectedCustomer, order.id, order.adjustedTotalUSD || order.quotedTotalUSD)}
+                                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] cursor-pointer"
+                              >
+                                Pay
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center text-xs text-slate-400 bg-slate-50 rounded-2xl">
+                    No orders logged for this client yet.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 3: COMMERCIAL TERMS & PROFILE */}
+            {profileActiveTab === 'terms' && (
+              <div className="space-y-5">
+                {/* Profile Grid Details */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                    <div className="text-[10px] text-slate-400 font-bold uppercase">Pricing Tier</div>
+                    <div className="text-xs font-bold text-slate-900 mt-1">{selectedCustomer.tier}</div>
+                  </div>
+                  <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                    <div className="text-[10px] text-slate-400 font-bold uppercase">Payment Terms</div>
+                    <div className="text-xs font-bold text-slate-900 mt-1">{selectedCustomer.paymentTerms}</div>
+                  </div>
+                  <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                    <div className="text-[10px] text-slate-400 font-bold uppercase">Credit Limit</div>
+                    <div className="text-xs font-mono-code font-bold text-slate-900 mt-1">{formatCurrency(selectedCustomer.creditLimitUSD)}</div>
+                  </div>
+                  <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200">
+                    <div className="text-[10px] text-amber-800 font-bold uppercase">Balance Due</div>
+                    <div className="text-xs font-mono-code font-bold text-amber-950 mt-1">{formatCurrency(selectedCustomer.outstandingBalanceUSD)}</div>
+                  </div>
+                </div>
+
+                {/* Credit Facility & Risk Exposure Panel */}
+                <div className="p-4 rounded-2xl bg-indigo-50/50 border border-indigo-100 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <CreditCard className="w-4 h-4 text-indigo-600" />
+                      <span className="text-xs font-bold text-slate-900">Commercial Credit Facility & Exposure</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        selectedCustomer.status === 'Credit Hold'
+                          ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                          : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                      }`}>
+                        {selectedCustomer.status === 'Credit Hold' ? 'Credit Hold' : 'Good Standing'}
+                      </span>
+
+                      {!isEditingCreditFacility && (
+                        <button
+                          onClick={() => setIsEditingCreditFacility(true)}
+                          className="px-2.5 py-1 text-[11px] font-bold text-indigo-700 bg-white hover:bg-indigo-100 rounded-lg border border-indigo-200 transition-colors cursor-pointer flex items-center gap-1"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                          <span>Adjust Facility</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {isEditingCreditFacility ? (
+                    <div className="p-3 bg-white rounded-xl border border-indigo-200 space-y-3 text-xs animate-in fade-in">
+                      <div className="font-bold text-slate-900 text-xs">Edit Credit Terms & Line of Credit</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Credit Limit (USD)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1000"
+                            value={facilityCreditLimit}
+                            onChange={(e) => setFacilityCreditLimit(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono-code font-bold text-slate-900"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Approved Terms</label>
+                          <select
+                            value={facilityTerms}
+                            onChange={(e) => setFacilityTerms(e.target.value as PaymentTerms)}
+                            className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900"
+                          >
+                            <option value="Net-7">Net-7</option>
+                            <option value="Net-15">Net-15</option>
+                            <option value="Net-30">Net-30</option>
+                            <option value="Net-60">Net-60</option>
+                            <option value="Due on Receipt">Due on Receipt</option>
+                            <option value="Cash on Delivery (COD)">Cash on Delivery (COD)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Facility Status</label>
+                          <select
+                            value={facilityStatus}
+                            onChange={(e) => setFacilityStatus(e.target.value as CustomerStatus)}
+                            className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900"
+                          >
+                            <option value="Active">Active (Good Standing)</option>
+                            <option value="Credit Hold">Credit Hold (Suspended)</option>
+                            <option value="Pending Review">Pending Review</option>
+                            <option value="Inactive">Inactive</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-1 border-t border-slate-100">
+                        <button
+                          onClick={() => setIsEditingCreditFacility(false)}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleSaveCreditFacility}
+                          className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg flex items-center gap-1 cursor-pointer"
+                        >
+                          <Save className="w-3 h-3" />
+                          <span>Save Facility</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <div>
+                          <span className="text-slate-500">Available Credit: </span>
+                          <span className="font-mono-code font-black text-emerald-700">
+                            {formatCurrency(Math.max(0, selectedCustomer.creditLimitUSD - selectedCustomer.outstandingBalanceUSD))}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          Utilization: {((selectedCustomer.outstandingBalanceUSD / (selectedCustomer.creditLimitUSD || 1)) * 100).toFixed(1)}%
+                        </div>
+                      </div>
+
+                      {/* Utilization Bar */}
+                      <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                        <div 
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            selectedCustomer.outstandingBalanceUSD > selectedCustomer.creditLimitUSD
+                              ? 'bg-rose-500'
+                              : selectedCustomer.outstandingBalanceUSD / (selectedCustomer.creditLimitUSD || 1) > 0.8
+                              ? 'bg-amber-500'
+                              : 'bg-indigo-600'
+                          }`}
+                          style={{
+                            width: `${Math.min(100, (selectedCustomer.outstandingBalanceUSD / (selectedCustomer.creditLimitUSD || 1)) * 100)}%`
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Contact & Location Details */}
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-2.5 text-slate-700">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-900">Primary Contact:</span>
+                    <span>{selectedCustomer.contactPerson}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-900">Email:</span>
+                    <span className="font-mono-code text-indigo-600">{selectedCustomer.email}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-900">Phone:</span>
+                    <span>{selectedCustomer.phone}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-900">Delivery Address:</span>
+                    <span>{selectedCustomer.address}, {selectedCustomer.city}</span>
+                  </div>
+                  {selectedCustomer.notes && (
+                    <div className="pt-2 border-t border-slate-200 text-slate-600 italic">
+                      <strong>Notes:</strong> {selectedCustomer.notes}
+                    </div>
                   )}
                 </div>
               </div>
+            )}
 
-              {isEditingCreditFacility ? (
-                <div className="p-3 bg-white rounded-xl border border-indigo-200 space-y-3 text-xs animate-in fade-in">
-                  <div className="font-bold text-slate-900 text-xs">Edit Credit Terms & Line of Credit</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Credit Limit (USD)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="1000"
-                        value={facilityCreditLimit}
-                        onChange={(e) => setFacilityCreditLimit(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono-code font-bold text-slate-900"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Approved Terms</label>
-                      <select
-                        value={facilityTerms}
-                        onChange={(e) => setFacilityTerms(e.target.value as PaymentTerms)}
-                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900"
-                      >
-                        <option value="Net-7">Net-7</option>
-                        <option value="Net-15">Net-15</option>
-                        <option value="Net-30">Net-30</option>
-                        <option value="Net-60">Net-60</option>
-                        <option value="Due on Receipt">Due on Receipt</option>
-                        <option value="Cash on Delivery (COD)">Cash on Delivery (COD)</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Facility Status</label>
-                      <select
-                        value={facilityStatus}
-                        onChange={(e) => setFacilityStatus(e.target.value as CustomerStatus)}
-                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900"
-                      >
-                        <option value="Active">Active (Good Standing)</option>
-                        <option value="Credit Hold">Credit Hold (Suspended)</option>
-                        <option value="Pending Review">Pending Review</option>
-                        <option value="Inactive">Inactive</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end gap-2 pt-1 border-t border-slate-100">
-                    <button
-                      onClick={() => setIsEditingCreditFacility(false)}
-                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleSaveCreditFacility}
-                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg flex items-center gap-1 cursor-pointer"
-                    >
-                      <Save className="w-3 h-3" />
-                      <span>Save Facility</span>
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center text-xs">
-                    <div>
-                      <span className="text-slate-500">Available Credit: </span>
-                      <span className="font-mono-code font-black text-emerald-700">
-                        {formatCurrency(Math.max(0, selectedCustomer.creditLimitUSD - selectedCustomer.outstandingBalanceUSD))}
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-slate-500">
-                      Utilization: {((selectedCustomer.outstandingBalanceUSD / (selectedCustomer.creditLimitUSD || 1)) * 100).toFixed(1)}%
-                    </div>
-                  </div>
-
-                  {/* Utilization Bar */}
-                  <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
-                    <div 
-                      className={`h-full rounded-full transition-all duration-300 ${
-                        selectedCustomer.outstandingBalanceUSD > selectedCustomer.creditLimitUSD
-                          ? 'bg-rose-500'
-                          : selectedCustomer.outstandingBalanceUSD / (selectedCustomer.creditLimitUSD || 1) > 0.8
-                          ? 'bg-amber-500'
-                          : 'bg-indigo-600'
-                      }`}
-                      style={{
-                        width: `${Math.min(100, (selectedCustomer.outstandingBalanceUSD / (selectedCustomer.creditLimitUSD || 1)) * 100)}%`
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Contact & Location Details */}
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-2 text-slate-700">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-slate-900">Primary Contact:</span>
-                <span>{selectedCustomer.contactPerson}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-slate-900">Email:</span>
-                <span className="font-mono-code text-indigo-600">{selectedCustomer.email}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-slate-900">Phone:</span>
-                <span>{selectedCustomer.phone}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-slate-900">Delivery Address:</span>
-                <span>{selectedCustomer.address}, {selectedCustomer.city}</span>
-              </div>
-              {selectedCustomer.notes && (
-                <div className="pt-2 border-t border-slate-200 text-slate-600 italic">
-                  <strong>Notes:</strong> {selectedCustomer.notes}
-                </div>
-              )}
-            </div>
-
-            {/* Order History */}
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 mb-2">Order History & Invoices</h3>
-              {customerOrders.length > 0 ? (
-                <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 text-xs">
-                  {customerOrders.map(order => (
-                    <div key={order.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-slate-900 font-mono-code">{order.id}</span>
-                          <span className="text-slate-500">{order.orderDate}</span>
-                          <span className="text-[10px] px-1.5 py-0.2 bg-slate-100 text-slate-700 rounded font-medium">
-                            {order.saleType || (order.paymentTerms ? 'Credit Sale' : 'Direct')}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">
-                          {order.items.map(i => `${i.speciesName} (${i.requestedWeightKg}kg)`).join(', ')}
-                        </div>
-                        {order.creditAuthorizedBy && (
-                          <div className="text-[10px] text-amber-800 mt-0.5">
-                            Credit override by {order.creditAuthorizedBy}
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-right">
-                        <div className="font-mono-code font-bold text-slate-900">{formatCurrency(order.adjustedTotalUSD || order.quotedTotalUSD)}</div>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                          order.paymentStatus === 'Paid' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                        }`}>
-                          {order.paymentStatus === 'Paid' ? 'Paid' : `Credit: ${order.paymentTerms || 'Net-30'}`}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="p-4 text-center text-xs text-slate-400 bg-slate-50 rounded-2xl">
-                  No previous orders logged for this client yet.
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3 pt-2">
+            {/* Profile Footer */}
+            <div className="flex gap-3 pt-3 border-t border-slate-100">
               {selectedCustomer.outstandingBalanceUSD > 0 && (
                 <button
-                  onClick={() => {
-                    const cust = selectedCustomer;
-                    setSelectedCustomer(null);
-                    handleOpenPayment(cust);
-                  }}
-                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer"
+                  onClick={() => handleOpenRecordPayment(selectedCustomer)}
+                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
                 >
-                  Record Payment Received ({formatCurrency(selectedCustomer.outstandingBalanceUSD)})
+                  <DollarSign className="w-4 h-4" />
+                  <span>Receive Payment ({formatCurrency(selectedCustomer.outstandingBalanceUSD)})</span>
                 </button>
               )}
               <button
@@ -913,64 +1075,37 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
       )}
 
       {/* Record Payment Modal */}
-      {isRecordPaymentModalOpen && selectedCustomer && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white max-w-md w-full rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
-                  <CreditCard className="w-5 h-5" />
-                </div>
-                <h3 className="text-lg font-bold text-slate-900">Record Customer Payment</h3>
-              </div>
-              <button 
-                onClick={() => setIsRecordPaymentModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 cursor-pointer text-lg font-bold"
-              >
-                ✕
-              </button>
-            </div>
+      <RecordPaymentModal
+        isOpen={isRecordPaymentModalOpen}
+        onClose={() => {
+          setIsRecordPaymentModalOpen(false);
+          setPaymentModalCustomer(null);
+          setPreselectedOrderId(undefined);
+          setSuggestedPaymentAmount(undefined);
+        }}
+        customer={paymentModalCustomer}
+        orders={orders}
+        preselectedOrderId={preselectedOrderId}
+        suggestedAmount={suggestedPaymentAmount}
+        formatCurrency={formatCurrency}
+        onRecordPayment={onRecordPayment}
+        onPaymentSuccess={(receiptData) => {
+          setLastCreatedReceipt(receiptData);
+        }}
+      />
 
-            <p className="text-xs text-slate-500">
-              Customer <strong>{selectedCustomer.name}</strong> has an outstanding receivable balance of <strong>{formatCurrency(selectedCustomer.outstandingBalanceUSD)}</strong>.
-            </p>
-
-            <form onSubmit={handleProcessPayment} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Payment Amount Received ($ USD)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  max={selectedCustomer.outstandingBalanceUSD}
-                  value={paymentAmount}
-                  onChange={(e) => setPaymentAmount(e.target.value)}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono-code font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900"
-                  required
-                />
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsRecordPaymentModalOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-xs cursor-pointer"
-                >
-                  Post Payment to Ledger
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {/* Payment Receipt / Settlement Voucher Modal */}
+      {lastCreatedReceipt && (
+        <PaymentReceiptModal
+          isOpen={Boolean(lastCreatedReceipt)}
+          onClose={() => setLastCreatedReceipt(null)}
+          entry={lastCreatedReceipt}
+          customer={paymentModalCustomer || selectedCustomer}
+          formatCurrency={formatCurrency}
+          onReversePayment={onReversePayment}
+        />
       )}
+
     </div>
   );
 };

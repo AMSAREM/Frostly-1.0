@@ -161,7 +161,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
         setActivationNotice({
           isActivated: true,
           email: emailParam,
-          org: orgParam || 'Frostly Seafood Platform',
+          org: orgParam || 'Amansocean Seafood Platform',
         });
       }
     } catch {}
@@ -485,13 +485,13 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                 className="mb-4 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-900 transition-colors"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
-                <span>Back to Frostly Overview</span>
+                <span>Back to Amansocean Overview</span>
               </button>
             )}
             <div className="flex items-center gap-3">
               <FrostlyLogo size={36} iconOnly variant="blue" />
-              <span className="text-2xl font-black font-heading tracking-tight text-slate-900 -ml-[15px]">
-                Frostly
+              <span className="text-2xl font-black font-heading tracking-tight text-slate-900">
+                Amansocean
               </span>
             </div>
 
@@ -1379,7 +1379,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
 
         {/* Footer info note */}
         <p className="text-center text-[11px] text-slate-400 mt-4">
-          Frostly Enterprise Cold-Chain Platform &bull; Tenancy Isolated by PostgreSQL RLS
+          Amansocean Enterprise Cold-Chain Platform &bull; Tenancy Isolated by PostgreSQL RLS
         </p>
       </div>
 

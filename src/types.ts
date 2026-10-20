@@ -233,6 +233,51 @@ export interface Customer {
   joinedDate: string;
 }
 
+export type CustomerLedgerTransactionType = 'Invoice' | 'Payment' | 'Credit Note' | 'Refund' | 'Reversal';
+
+export interface CustomerLedgerEntry {
+  id: string;
+  customerId: string;
+  customerName: string;
+  date: string;
+  type: CustomerLedgerTransactionType;
+  referenceId: string;
+  description: string;
+  debit: number; // Charges/Invoices (increases balance)
+  credit: number; // Payments/Credits (reduces balance)
+  runningBalance: number;
+  paymentMethod?: string;
+  status: 'Settled' | 'Pending' | 'Overdue' | 'Reversed' | 'Partially Paid';
+  notes?: string;
+  receiptNumber?: string;
+  orderId?: string;
+  financialEntryId?: string;
+  createdAt?: string;
+}
+
+export type SupplierLedgerTransactionType = 'Bill' | 'Disbursement' | 'Credit Note' | 'Adjustment' | 'Reversal';
+
+export interface SupplierLedgerEntry {
+  id: string;
+  supplierId: string;
+  supplierName: string;
+  date: string;
+  type: SupplierLedgerTransactionType;
+  referenceId: string; // PO ID or Voucher Number
+  description: string;
+  debit: number; // Payments / Disbursements made to supplier (reduces AP liability)
+  credit: number; // Inward Catch Bills / POs from supplier (increases AP liability)
+  runningBalance: number; // Net AP balance owed to supplier
+  paymentMethod?: string;
+  status: 'Settled' | 'Pending' | 'Overdue' | 'Reversed' | 'Partially Paid';
+  notes?: string;
+  voucherNumber?: string;
+  purchaseOrderId?: string;
+  lotAssignedId?: string;
+  financialEntryId?: string;
+  createdAt?: string;
+}
+
 export type SupplierType = 'Fishermen Co-op' | 'Vessel / Fleet Captain' | 'Aquaculture Farm' | 'Fish Auction / Wholesaler' | 'Direct Marine Import';
 
 export interface Supplier {
@@ -403,6 +448,11 @@ export interface FinancialLedgerEntry {
   amount: number; // positive value
   paymentMethod: string;
   status: 'Settled' | 'Pending' | 'Overdue';
+  customerId?: string;
+  supplierId?: string;
+  notes?: string;
+  receiptNumber?: string;
+  voucherNumber?: string;
 }
 
 export interface AppSettings {

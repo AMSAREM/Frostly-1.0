@@ -35,7 +35,7 @@ export const LandingCompliance: React.FC = () => {
   ];
 
   return (
-    <section id="traceability" className="py-20 bg-slate-900 text-white relative overflow-hidden">
+    <section id="compliance" className="py-20 bg-slate-900 text-white relative overflow-hidden">
       {/* Background ambient lighting */}
       <div className="absolute top-0 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 left-1/4 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -44,11 +44,11 @@ export const LandingCompliance: React.FC = () => {
         
         {/* Section Title */}
         <div className="text-center max-w-3xl mx-auto">
-          <span className="text-xs font-bold uppercase tracking-wider text-sky-400 bg-sky-950/80 px-3 py-1 rounded-full border border-sky-800">
+          <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-2">
             Enterprise Trust & Regulation
-          </span>
-          <h2 className="mt-4 text-3xl sm:text-4xl font-semibold text-white tracking-tight">
-            Built to satisfy the world's strictest food safety auditors
+          </div>
+          <h2 className="mt-2 text-3xl sm:text-4xl font-bold text-white tracking-tight">
+            Built to Satisfy the World's Strictest Food Safety Auditors
           </h2>
           <p className="mt-4 text-base sm:text-lg text-slate-300">
             From the US FDA Food Traceability Rule (FSMA 204) to EU Catch Certificate regulations, Frostly transforms regulatory compliance from a manual paperwork burden into automated real-time proof.

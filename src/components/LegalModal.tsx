@@ -50,7 +50,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({
                 {type === 'sitemap' && 'Platform Sitemap & Architecture'}
               </h2>
               <p className="text-xs text-slate-500">
-                Frostly Seafood ERP Platform • Last updated September 2026
+                Amansocean Seafood ERP Platform • Last updated September 2026
               </p>
             </div>
           </div>
@@ -73,7 +73,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({
               <section className="space-y-2">
                 <h3 className="text-sm font-bold text-slate-900">1. Operational Commitment & Data Ownership</h3>
                 <p>
-                  Frostly operates under strict multi-tenant data segregation. Your seafood inventory, vessel landing slips, HACCP critical temperature audits, supplier accounts, and sales ledger entries remain exclusively owned by your enterprise organization.
+                  Amansocean operates under strict multi-tenant data segregation. Your seafood inventory, vessel landing slips, HACCP critical temperature audits, supplier accounts, and sales ledger entries remain exclusively owned by your enterprise organization.
                 </p>
               </section>
 
@@ -87,7 +87,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({
               <section className="space-y-2">
                 <h3 className="text-sm font-bold text-slate-900">3. Payment & Billing Gateways</h3>
                 <p>
-                  Payment processing is facilitated directly by licensed, PCI-DSS Level 1 certified gateways (Paystack for Mobile Money/GHS and Stripe for Card/USD). Frostly does not record, store, or transmit raw credit card credentials or Mobile Money authorization PINs.
+                  Payment processing is facilitated directly by licensed, PCI-DSS Level 1 certified gateways (Paystack for Mobile Money/GHS and Stripe for Card/USD). Amansocean does not record, store, or transmit raw credit card credentials or Mobile Money authorization PINs.
                 </p>
               </section>
 
@@ -112,7 +112,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({
               <section className="space-y-2">
                 <h3 className="text-sm font-bold text-slate-900">1. Platform License & Acceptance of Terms</h3>
                 <p>
-                  By deploying and accessing the Frostly Seafood Business Platform, your enterprise agrees to these Terms of Service. Frostly grants your organization a non-exclusive, non-transferable subscription license to operate dockside inventory, cold-chain HACCP logging, and POS order fulfillment.
+                  By deploying and accessing the Amansocean Seafood Business Platform, your enterprise agrees to these Terms of Service. Amansocean grants your organization a non-exclusive, non-transferable subscription license to operate dockside inventory, cold-chain HACCP logging, and POS order fulfillment.
                 </p>
               </section>
 
@@ -133,7 +133,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({
               <section className="space-y-2">
                 <h3 className="text-sm font-bold text-slate-900">4. Food Safety & Temperature Liability</h3>
                 <p>
-                  Frostly provides sensor logging interfaces and automated critical limit threshold alerts (-18°C frozen storage, 0–4°C chilled wet fish). However, physical product temperature integrity, refrigeration hardware uptime, and regulatory hygiene certifications remain the sole responsibility of the facility operator.
+                  Amansocean provides sensor logging interfaces and automated critical limit threshold alerts (-18°C frozen storage, 0–4°C chilled wet fish). However, physical product temperature integrity, refrigeration hardware uptime, and regulatory hygiene certifications remain the sole responsibility of the facility operator.
                 </p>
               </section>
 
@@ -149,7 +149,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({
           {type === 'sitemap' && (
             <div className="space-y-4">
               <p className="text-xs text-slate-500">
-                A complete navigational index of public and tenant operational views across the Frostly platform.
+                A complete navigational index of public and tenant operational views across the Amansocean platform.
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">

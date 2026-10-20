@@ -1,13 +1,26 @@
 @import "tailwindcss";
 
 @layer base {
+  :root {
+    --primary-red: #C8102E;
+    --deep-red: #9B0B20;
+    --brand-yellow: #FFC400;
+    --cream: #FBF3E4;
+    --peach: #F5DDB0;
+    --dark-text: #1A1A1A;
+    --white: #FFFFFF;
+  }
+
   html {
     -webkit-tap-highlight-color: transparent;
     text-size-adjust: 100%;
+    scroll-behavior: smooth;
   }
 
   body {
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    font-family: 'Poppins', 'Inter', system-ui, -apple-system, sans-serif;
+    background-color: #FBF3E4;
+    color: #1A1A1A;
     padding-top: env(safe-area-inset-top);
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
@@ -16,11 +29,9 @@
   }
   
   h1, h2, h3, h4, .font-heading {
-    font-family: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif;
-  }
-
-  .font-mono-code {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Poppins', 'Montserrat', system-ui, sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.02em;
   }
 
   button, a, input, select, textarea {
@@ -28,48 +39,91 @@
   }
 }
 
-/* Safe area bottom padding for mobile navigation */
-.pb-safe {
-  padding-bottom: max(env(safe-area-inset-bottom, 16px), 12px);
+/* Amansocean custom color utility shortcuts */
+.bg-primary-red { background-color: #C8102E; }
+.bg-deep-red { background-color: #9B0B20; }
+.bg-brand-yellow { background-color: #FFC400; }
+.bg-cream { background-color: #FBF3E4; }
+.bg-peach { background-color: #F5DDB0; }
+.text-primary-red { color: #C8102E; }
+.text-deep-red { color: #9B0B20; }
+.text-brand-yellow { color: #FFC400; }
+.text-dark-text { color: #1A1A1A; }
+.border-primary-red { border-color: #C8102E; }
+.border-brand-yellow { border-color: #FFC400; }
+.border-peach { border-color: #F5DDB0; }
+
+/* Interactive Hover Lift */
+.hover-lift {
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+.hover-lift:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 24px -8px rgba(155, 11, 32, 0.22);
 }
 
-.pt-safe {
-  padding-top: env(safe-area-inset-top, 0px);
+.hover-lift-sm {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.hover-lift-sm:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px -4px rgba(0, 0, 0, 0.1);
 }
 
-/* Hide scrollbar for Chrome, Safari and Opera */
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-/* Hide scrollbar for IE, Edge and Firefox */
-.no-scrollbar {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
+/* Cart Badge Bounce Animation */
+@keyframes cart-bounce {
+  0%, 100% { transform: scale(1); }
+  30% { transform: scale(1.4) rotate(-6deg); }
+  60% { transform: scale(0.9) rotate(4deg); }
+  80% { transform: scale(1.15) rotate(-2deg); }
 }
 
-/* Custom scrollbar */
+.animate-cart-bounce {
+  animation: cart-bounce 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Subtle fade in up animation */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.5s ease-out forwards;
+}
+
+/* Speech bubble arrow notch */
+.speech-notch-down::after {
+  content: '';
+  position: absolute;
+  bottom: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 12px solid transparent;
+  border-right: 12px solid transparent;
+  border-top: 10px solid currentColor;
+}
+
+/* Custom scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: #FBF3E4;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #E5C384;
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #C8102E;
 }
-
-@keyframes pulse-subtle {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.85; transform: scale(1.02); }
-}
-
-.animate-pulse-subtle {
-  animation: pulse-subtle 3s ease-in-out infinite;
-}
-
-

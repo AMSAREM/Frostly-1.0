@@ -50,11 +50,11 @@ export const LandingPricing: React.FC<LandingPricingProps> = ({ onSelectPlan }) 
         
         {/* Section Title */}
         <div className="text-center max-w-3xl mx-auto">
-          <span className="text-xs font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-3 py-1 rounded-full border border-blue-200">
-            Simple, Transparent Pricing
-          </span>
-          <h2 className="mt-4 text-3xl sm:text-4xl font-semibold text-slate-900 tracking-tight">
-            Predictable plans designed to scale with your harvest volume
+          <div className="text-xs font-semibold uppercase tracking-wider text-blue-700 mb-2">
+            Transparent Commercial Plans
+          </div>
+          <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 tracking-tight">
+            Predictable Plans Designed to Scale with Your Harvest Volume
           </h2>
           <p className="mt-4 text-base sm:text-lg text-slate-600">
             Every plan includes our 100% offline-first PWA engine, automated tare deduction, and cryptographic audit security. No surprise per-ton fees.

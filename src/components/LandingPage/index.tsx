@@ -1,17 +1,14 @@
 import React, { useState } from 'react';
-import { LandingHeader } from './LandingHeader';
-import { LandingHero } from './LandingHero';
-import { LandingFeatures } from './LandingFeatures';
-import { LandingCopilotDemo } from './LandingCopilotDemo';
-import { LandingCompliance } from './LandingCompliance';
-import { LandingPricing } from './LandingPricing';
-import { LandingTestimonials } from './LandingTestimonials';
-import { LandingFaq } from './LandingFaq';
-import { LandingFooter } from './LandingFooter';
-import { FeedbackModal } from './FeedbackModal';
+import { CartProvider } from '../../context/CartContext';
+import { Navbar } from './Navbar';
+import { HeroSection } from './HeroSection';
+import { CategoryCards } from './CategoryCards';
+import { FeaturedProducts } from './FeaturedProducts';
+import { BottomFeatureRow } from './BottomFeatureRow';
+import { FooterSection } from './FooterSection';
+import { CartDrawer } from './CartDrawer';
+import { SearchModal } from './SearchModal';
 import { LegalModal } from '../LegalModal';
-import { PWAInstallModal } from '../PWAInstallModal';
-import { usePWAInstall } from '../../utils/pwa';
 
 export interface LandingPageProps {
   onSignIn: () => void;
@@ -19,26 +16,13 @@ export interface LandingPageProps {
   onExploreDemo: () => void;
 }
 
-export const LandingPage: React.FC<LandingPageProps> = ({
+const LandingPageContent: React.FC<LandingPageProps> = ({
   onSignIn,
   onGetStarted,
   onExploreDemo
 }) => {
-  const [feedbackOpen, setFeedbackOpen] = useState<boolean>(false);
-  const [pwaModalOpen, setPwaModalOpen] = useState<boolean>(false);
-  const { isInstallable, isInstalled, isIOS, isStandalone, triggerInstall } = usePWAInstall();
-
-  const handleInstallClick = async () => {
-    if (isInstallable) {
-      const accepted = await triggerInstall();
-      if (!accepted) {
-        setPwaModalOpen(true);
-      }
-    } else {
-      setPwaModalOpen(true);
-    }
-  };
-
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [legalModal, setLegalModal] = useState<{
     isOpen: boolean;
     type: 'privacy' | 'terms' | 'sitemap';
@@ -48,60 +32,49 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   });
 
   return (
-    <div className="min-h-screen bg-white text-slate-900 font-sans antialiased selection:bg-blue-100 selection:text-blue-900">
+    <div className="min-h-screen bg-[#FBF3E4] text-[#1A1A1A] font-sans antialiased selection:bg-[#FFC400] selection:text-[#1A1A1A]">
       
-      {/* Header */}
-      <LandingHeader
+      {/* 1. Navbar (sticky, yellow background, red AO badge overlapping, center links, right cart/order/search/account) */}
+      <Navbar 
         onSignIn={onSignIn}
-        onGetStarted={onGetStarted}
-        onExploreDemo={onExploreDemo}
-        onInstallApp={handleInstallClick}
-        isInstalled={isInstalled}
+        onOpenSearch={() => setSearchOpen(true)}
       />
 
-      {/* Hero Section (Matching Microsoft 365 Outlook Reference) */}
-      <LandingHero
-        onSignIn={onSignIn}
-        onGetStarted={onGetStarted}
-        onExploreDemo={onExploreDemo}
-        onOpenFeedback={() => setFeedbackOpen(true)}
-        onInstallApp={handleInstallClick}
-        isInstalled={isInstalled}
-      />
-
-      {/* Core Feature Showcase */}
-      <LandingFeatures />
-
-      {/* AI Catch Intelligence / Frostly Copilot */}
-      <LandingCopilotDemo />
-
-      {/* Compliance & Regulatory (FSMA 204 & HACCP) */}
-      <LandingCompliance />
-
-      {/* Transparent Pricing Plans */}
-      <LandingPricing
-        onSelectPlan={(planName) => {
-          onGetStarted();
+      {/* 2. Hero (full-width red background, radial gradient, large headline, yellow button, overlapping seafood platter, bottom triangle notch) */}
+      <HeroSection 
+        onShopNow={() => {
+          const el = document.getElementById('shop');
+          if (el) el.scrollIntoView({ behavior: 'smooth' });
         }}
       />
 
-      {/* Customer Testimonials & Proof */}
-      <LandingTestimonials />
+      {/* 3. Category Cards (3 speech-bubble style cards with bottom pointer triangle, filters products) */}
+      <CategoryCards
+        selectedCategory={selectedCategory}
+        onSelectCategory={(cat) => setSelectedCategory(cat)}
+      />
 
-      {/* FAQ Accordion */}
-      <LandingFaq />
+      {/* 4. Featured Products (3 white cards, 20px rounded corners, soft shadow, red New/Hot badge, heart icon, price, yellow Add button) */}
+      <FeaturedProducts
+        selectedCategory={selectedCategory}
+      />
 
-      {/* Microsoft-Style Footer */}
-      <LandingFooter
+      {/* 5. Bottom Feature Row (2:1 width ratio: Peach card with green rider on red scooter + Fast Delivery/Freshness; Red card with Cool Treats + yellow Order Now) */}
+      <BottomFeatureRow />
+
+      {/* 6. Footer (Deep red #9B0B20, Amansocean logo, quick links, social icons, copyright line) */}
+      <FooterSection
         onSignIn={onSignIn}
-        onGetStarted={onGetStarted}
         onOpenLegal={(type) => setLegalModal({ isOpen: true, type })}
       />
 
-      {/* Floating Feedback Modal */}
-      <FeedbackModal
-        isOpen={feedbackOpen}
-        onClose={() => setFeedbackOpen(false)}
+      {/* Slide-out Cart Drawer with Items, Quantities, and Checkout */}
+      <CartDrawer />
+
+      {/* Quick Search Modal */}
+      <SearchModal
+        isOpen={searchOpen}
+        onClose={() => setSearchOpen(false)}
       />
 
       {/* Legal & Terms Modal */}
@@ -111,20 +84,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         onClose={() => setLegalModal({ ...legalModal, isOpen: false })}
       />
 
-      {/* PWA Install Modal */}
-      <PWAInstallModal
-        isOpen={pwaModalOpen}
-        onClose={() => setPwaModalOpen(false)}
-        onInstall={async () => {
-          await triggerInstall();
-          setPwaModalOpen(false);
-        }}
-        isIOS={isIOS}
-        isInstallable={isInstallable}
-        isStandalone={isStandalone}
-      />
-
     </div>
+  );
+};
+
+export const LandingPage: React.FC<LandingPageProps> = (props) => {
+  return (
+    <CartProvider>
+      <LandingPageContent {...props} />
+    </CartProvider>
   );
 };
 

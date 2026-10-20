@@ -16,38 +16,68 @@ import {
   AlertCircle,
   TrendingDown,
   Building2,
-  FileText
+  FileText,
+  Receipt,
+  RotateCcw,
+  ArrowDownLeft,
+  ChevronRight,
+  Eye,
+  Download,
+  Printer,
+  ShieldCheck,
+  CreditCard,
+  X
 } from 'lucide-react';
-import { Supplier, PurchaseOrderLanding, SupplierType, QualityGrade, StorageZone } from '../types';
+import { Supplier, PurchaseOrderLanding, FinancialLedgerEntry, SupplierType, QualityGrade, StorageZone } from '../types';
+import { SupplierLedgerTab } from './SupplierLedgerTab';
+import { RecordSupplierPaymentModal } from './Modals/RecordSupplierPaymentModal';
+import { SupplierPaymentVoucherModal } from './Modals/SupplierPaymentVoucherModal';
 
 interface SuppliersViewProps {
   suppliers: Supplier[];
   purchaseOrders: PurchaseOrderLanding[];
+  financialEntries?: FinancialLedgerEntry[];
   onAddSupplier: (supplier: Supplier) => void;
   onAddPurchaseOrder: (po: PurchaseOrderLanding) => void;
-  onRecordPayment: (type: 'AR' | 'AP', entityId: string, amount: number, refId: string) => void;
+  onRecordPayment: (
+    type: 'AR' | 'AP', 
+    entityId: string, 
+    amount: number, 
+    refId: string,
+    paymentMethod?: string,
+    notes?: string,
+    specificPOId?: string
+  ) => void;
+  onReversePayment?: (paymentEntryId: string, supplierId: string, amount: number, reason: string) => void;
   formatCurrency: (amount: number) => string;
 }
 
 export const SuppliersView: React.FC<SuppliersViewProps> = ({
   suppliers = [],
   purchaseOrders = [],
+  financialEntries = [],
   onAddSupplier,
   onAddPurchaseOrder,
   onRecordPayment,
+  onReversePayment,
   formatCurrency
 }) => {
   const [activeTab, setActiveTab] = useState<'suppliers' | 'inward_catch'>('suppliers');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState('all');
+  
+  // Profile & Ledger Modal State
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
+  const [profileActiveTab, setProfileActiveTab] = useState<'ledger' | 'catches' | 'terms'>('ledger');
+
+  // Modals
   const [isAddSupplierModalOpen, setIsAddSupplierModalOpen] = useState(false);
   const [isNewCatchModalOpen, setIsNewCatchModalOpen] = useState(false);
-  const [isSettleModalOpen, setIsSettleModalOpen] = useState(false);
-  const [settleAmount, setSettleAmount] = useState('');
-
-  // Settle Bill target
-  const [targetSupplierForSettle, setTargetSupplierForSettle] = useState<Supplier | null>(null);
+  const [isRecordPaymentModalOpen, setIsRecordPaymentModalOpen] = useState(false);
+  const [paymentModalSupplier, setPaymentModalSupplier] = useState<Supplier | null>(null);
+  const [preselectedPOId, setPreselectedPOId] = useState<string | undefined>(undefined);
+  const [suggestedPaymentAmount, setSuggestedPaymentAmount] = useState<number | undefined>(undefined);
+  const [lastCreatedVoucher, setLastCreatedVoucher] = useState<any | null>(null);
 
   // New Supplier Form State
   const [supName, setSupName] = useState('');
@@ -86,6 +116,22 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
     return matchesType && matchesSearch;
   });
 
+  const handleOpenSupplierProfile = (sup: Supplier, initialTab: 'ledger' | 'catches' | 'terms' = 'ledger') => {
+    setSelectedSupplier(sup);
+    setProfileActiveTab(initialTab);
+  };
+
+  const handleOpenLedger = (sup: Supplier) => {
+    handleOpenSupplierProfile(sup, 'ledger');
+  };
+
+  const handleOpenRecordPayment = (sup: Supplier, specificPOId?: string, suggestedAmount?: number) => {
+    setPaymentModalSupplier(sup);
+    setPreselectedPOId(specificPOId);
+    setSuggestedPaymentAmount(suggestedAmount);
+    setIsRecordPaymentModalOpen(true);
+  };
+
   const handleCreateSupplierSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!supName.trim() || !supEmail.trim()) return;
@@ -106,6 +152,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
       totalWeightSuppliedKg: 0,
       rating: 5.0,
       status: 'Active',
+      bankAccountRef: 'ACH / Fedwire Verified',
       notes: supNotes.trim()
     };
 
@@ -165,21 +212,10 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
     setPoNotes('');
   };
 
-  const handleOpenSettleModal = (sup: Supplier) => {
-    setTargetSupplierForSettle(sup);
-    setSettleAmount(sup.outstandingPayableUSD.toString());
-    setIsSettleModalOpen(true);
-  };
-
-  const handleConfirmSettle = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!targetSupplierForSettle) return;
-    const amt = parseFloat(settleAmount);
-    if (isNaN(amt) || amt <= 0) return;
-
-    onRecordPayment('AP', targetSupplierForSettle.id, amt, targetSupplierForSettle.id);
-    setIsSettleModalOpen(false);
-  };
+  // Selected supplier POs
+  const selectedSupplierPOs = selectedSupplier
+    ? purchaseOrders.filter(p => p.supplierId === selectedSupplier.id || p.supplierName.toLowerCase() === selectedSupplier.name.toLowerCase())
+    : [];
 
   return (
     <div className="space-y-6">
@@ -190,10 +226,10 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
             <span className="p-2 bg-blue-100/80 text-blue-700 rounded-xl">
               <Ship className="w-5 h-5" />
             </span>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Suppliers & Catch Landings</h1>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Suppliers & Accounts Payable</h1>
           </div>
           <p className="text-sm text-slate-500 mt-1">
-            Harvester fleet co-ops, aquaculture farms, vessel captains, and inward seafood purchase orders.
+            Harvester fleet partners, landing catch purchase orders, settlement ledgers, and wire disbursement vouchers.
           </p>
         </div>
 
@@ -207,7 +243,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Supplier Directory
+              Supplier Directory & Ledgers
             </button>
             <button
               onClick={() => setActiveTab('inward_catch')}
@@ -266,7 +302,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
 
         <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-2">
           <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Harvester Payouts</div>
-          <div className="text-2xl font-black text-slate-900 font-mono-code">{formatCurrency(totalLifetimePaid)}</div>
+          <div className="text-2xl font-black text-emerald-700 font-mono-code">{formatCurrency(totalLifetimePaid)}</div>
           <div className="text-xs text-slate-500">Direct-to-dock procurement value</div>
         </div>
       </div>
@@ -339,6 +375,12 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                       <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-md text-[11px] font-semibold border border-blue-100">
                         {sup.paymentTerms}
                       </span>
+                      {sup.bankAccountRef && (
+                        <span className="px-2 py-0.5 bg-emerald-50 text-emerald-800 rounded-md text-[10px] font-medium border border-emerald-100 flex items-center gap-1">
+                          <CreditCard className="w-3 h-3" />
+                          <span>ACH Active</span>
+                        </span>
+                      )}
                     </div>
 
                     {/* Sourced Species Tags */}
@@ -378,30 +420,20 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
 
                     <div className="flex gap-2 pt-2">
                       <button
-                        onClick={() => setSelectedSupplier(sup)}
-                        className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                        onClick={() => handleOpenSupplierProfile(sup, 'ledger')}
+                        className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1"
                       >
-                        Profile
+                        <Receipt className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Ledger & History</span>
                       </button>
 
-                      {hasPayable ? (
-                        <button
-                          onClick={() => handleOpenSettleModal(sup)}
-                          className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
-                        >
-                          Settle Bill
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setPoSupplierId(sup.id);
-                            setIsNewCatchModalOpen(true);
-                          }}
-                          className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
-                        >
-                          Intake Catch
-                        </button>
-                      )}
+                      <button
+                        onClick={() => handleOpenRecordPayment(sup)}
+                        className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 shadow-xs"
+                      >
+                        <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>{hasPayable ? 'Disburse Payout' : 'Post Payment'}</span>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -434,6 +466,8 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
             {purchaseOrders.map((po) => {
               const item = po.speciesItems[0];
               const isUnpaid = po.paymentStatus !== 'Paid in Full';
+              const sup = suppliers.find(s => s.id === po.supplierId);
+
               return (
                 <div key={po.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
                   <div className="flex items-start justify-between gap-2">
@@ -459,7 +493,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                       <span className="font-mono-code font-bold text-indigo-600 text-[10px]">{po.lotAssignedId}</span>
                     </div>
                     <div className="text-slate-500 text-[11px] mt-0.5">
-                      {item?.weightKg.toLocaleString()} kg @ {formatCurrency(item?.costPerKgUSD || 0)}/kg ({item?.grade})
+                      {item?.weightKg.toLocaleString()} kg @ {formatCurrency(item?.costPerKg || 0)}/kg ({item?.grade})
                     </div>
                   </div>
 
@@ -474,20 +508,31 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="pt-1">
+                  <div className="pt-1 flex gap-2">
+                    {sup && (
+                      <button
+                        onClick={() => handleOpenSupplierProfile(sup, 'ledger')}
+                        className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold text-center cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        <Receipt className="w-3 h-3 text-slate-500" />
+                        <span>Ledger</span>
+                      </button>
+                    )}
+
                     {isUnpaid ? (
                       <button
                         onClick={() => {
-                          const sup = suppliers.find(s => s.id === po.supplierId);
-                          if (sup) handleOpenSettleModal(sup);
+                          if (sup) handleOpenRecordPayment(sup, po.id, po.totalCostUSD);
                         }}
-                        className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold text-center cursor-pointer"
+                        className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold text-center cursor-pointer flex items-center justify-center gap-1.5"
                       >
-                        Settle Payout ({formatCurrency(po.totalCostUSD)})
+                        <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Disburse Wire ({formatCurrency(po.totalCostUSD)})</span>
                       </button>
                     ) : (
-                      <div className="text-center py-1.5 text-xs text-emerald-700 font-bold bg-emerald-50 rounded-xl border border-emerald-200/60">
-                        Payment Cleared
+                      <div className="flex-1 text-center py-1.5 text-xs text-emerald-700 font-bold bg-emerald-50 rounded-xl border border-emerald-200/60 flex items-center justify-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Settlement Cleared</span>
                       </div>
                     )}
                   </div>
@@ -512,6 +557,8 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
               <tbody className="divide-y divide-slate-100">
                 {purchaseOrders.map((po) => {
                   const item = po.speciesItems[0];
+                  const sup = suppliers.find(s => s.id === po.supplierId);
+
                   return (
                     <tr key={po.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3.5 px-4">
@@ -552,19 +599,35 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4 text-right">
-                        {po.paymentStatus !== 'Paid in Full' ? (
-                          <button
-                            onClick={() => {
-                              const sup = suppliers.find(s => s.id === po.supplierId);
-                              if (sup) handleOpenSettleModal(sup);
-                            }}
-                            className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold cursor-pointer"
-                          >
-                            Pay Payout
-                          </button>
-                        ) : (
-                          <span className="text-xs text-emerald-600 font-medium">Cleared</span>
-                        )}
+                        <div className="flex items-center justify-end gap-1.5">
+                          {sup && (
+                            <button
+                              onClick={() => handleOpenSupplierProfile(sup, 'ledger')}
+                              className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg text-xs font-bold inline-flex items-center gap-1 cursor-pointer"
+                              title="View Supplier AP Ledger"
+                            >
+                              <Receipt className="w-3.5 h-3.5" />
+                              <span className="hidden lg:inline">Ledger</span>
+                            </button>
+                          )}
+
+                          {po.paymentStatus !== 'Paid in Full' ? (
+                            <button
+                              onClick={() => {
+                                if (sup) handleOpenRecordPayment(sup, po.id, po.totalCostUSD);
+                              }}
+                              className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold cursor-pointer inline-flex items-center gap-1"
+                            >
+                              <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Disburse Payout</span>
+                            </button>
+                          ) : (
+                            <span className="text-xs text-emerald-600 font-bold inline-flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Cleared</span>
+                            </span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -573,6 +636,343 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
             </table>
           </div>
         </div>
+      )}
+
+      {/* FULL SUPPLIER PROFILE & AP LEDGER MODAL */}
+      {selectedSupplier && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white max-w-5xl w-full rounded-3xl shadow-2xl border border-slate-200 overflow-hidden my-auto animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[92vh]">
+            
+            {/* Modal Header */}
+            <div className="px-6 py-5 bg-slate-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
+              <div className="flex items-start gap-3">
+                <span className="p-3 bg-blue-500/20 text-blue-400 rounded-2xl shrink-0 mt-0.5">
+                  <Ship className="w-6 h-6" />
+                </span>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-xl font-black tracking-tight">{selectedSupplier.name}</h2>
+                    <span className="px-2.5 py-0.5 bg-blue-500/30 text-blue-300 rounded-full text-xs font-bold">
+                      {selectedSupplier.type}
+                    </span>
+                    <div className="flex items-center gap-1 bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-lg text-xs font-bold">
+                      <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                      <span>{selectedSupplier.rating.toFixed(1)}</span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1 flex flex-wrap items-center gap-3">
+                    <span className="flex items-center gap-1">
+                      <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                      <span>{selectedSupplier.portLocation}, {selectedSupplier.country}</span>
+                    </span>
+                    <span>•</span>
+                    <span>Contact: {selectedSupplier.contactPerson} ({selectedSupplier.phone})</span>
+                    <span>•</span>
+                    <span>Terms: {selectedSupplier.paymentTerms}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Header Outstanding Balance & Actions */}
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="text-right bg-slate-800/80 px-4 py-2 rounded-2xl border border-slate-700">
+                  <div className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Outstanding Accounts Payable</div>
+                  <div className={`font-mono-code font-black text-lg ${selectedSupplier.outstandingPayableUSD > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    {formatCurrency(selectedSupplier.outstandingPayableUSD)}
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => handleOpenRecordPayment(selectedSupplier)}
+                  className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <DollarSign className="w-4 h-4" />
+                  <span>Disburse Payment</span>
+                </button>
+
+                <button
+                  onClick={() => setSelectedSupplier(null)}
+                  className="p-2 text-slate-400 hover:text-white rounded-xl transition-colors cursor-pointer"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+
+            {/* Profile Tab Navigation */}
+            <div className="px-6 py-2.5 bg-slate-100 border-b border-slate-200 flex items-center justify-between gap-4 overflow-x-auto no-scrollbar shrink-0">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setProfileActiveTab('ledger')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
+                    profileActiveTab === 'ledger'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Receipt className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Ledger & Settlement Statements</span>
+                </button>
+
+                <button
+                  onClick={() => setProfileActiveTab('catches')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
+                    profileActiveTab === 'catches'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Anchor className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Landed Catch Orders</span>
+                  <span className="px-1.5 py-0.5 text-[10px] bg-indigo-100 text-indigo-800 rounded-full font-bold">
+                    {selectedSupplierPOs.length}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => setProfileActiveTab('terms')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
+                    profileActiveTab === 'terms'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Ship className="w-3.5 h-3.5 text-slate-600" />
+                  <span>Fleet & Remittance Terms</span>
+                </button>
+              </div>
+
+              <button
+                onClick={() => {
+                  setPoSupplierId(selectedSupplier.id);
+                  setIsNewCatchModalOpen(true);
+                }}
+                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Log Catch</span>
+              </button>
+            </div>
+
+            {/* Profile Tab Contents */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-6">
+              
+              {/* TAB 1: SUPPLIER AP LEDGER & PAYMENT HISTORY */}
+              {profileActiveTab === 'ledger' && (
+                <SupplierLedgerTab
+                  supplier={selectedSupplier}
+                  purchaseOrders={purchaseOrders}
+                  financialEntries={financialEntries}
+                  formatCurrency={formatCurrency}
+                  onOpenRecordPayment={handleOpenRecordPayment}
+                  onReversePayment={onReversePayment}
+                  onOpenNewCatch={() => {
+                    setPoSupplierId(selectedSupplier.id);
+                    setIsNewCatchModalOpen(true);
+                  }}
+                />
+              )}
+
+              {/* TAB 2: INWARD LANDED CATCHES (PURCHASE ORDERS) */}
+              {profileActiveTab === 'catches' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900">Historical Inward Landed Catches & Dock Invoices</h3>
+                      <p className="text-xs text-slate-500">Every catch batch landed at dock from {selectedSupplier.name}.</p>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        setPoSupplierId(selectedSupplier.id);
+                        setIsNewCatchModalOpen(true);
+                      }}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+                    >
+                      <Anchor className="w-3.5 h-3.5" />
+                      <span>Log New Landed Catch</span>
+                    </button>
+                  </div>
+
+                  {selectedSupplierPOs.length > 0 ? (
+                    <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 text-xs">
+                      {selectedSupplierPOs.map(po => {
+                        const item = po.speciesItems[0];
+                        const isUnpaid = po.paymentStatus !== 'Paid in Full';
+
+                        return (
+                          <div key={po.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50 transition-colors">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-slate-900 font-mono-code text-sm">#{po.id}</span>
+                                <span className="font-mono-code text-[11px] text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded font-bold">
+                                  Lot: {po.lotAssignedId}
+                                </span>
+                                <span className="text-slate-500">{po.orderDate}</span>
+                                <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md font-medium">
+                                  Vessel: {po.vesselName}
+                                </span>
+                              </div>
+                              <div className="text-xs text-slate-700 font-medium">
+                                {item?.speciesName} — {item?.weightKg.toLocaleString()} kg @ {formatCurrency(item?.costPerKg || 0)}/kg ({item?.grade})
+                              </div>
+                              {po.notes && (
+                                <div className="text-[11px] text-slate-500 italic">
+                                  Inspection Note: {po.notes}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="sm:text-right flex sm:flex-col items-center sm:items-end justify-between gap-2">
+                              <div className="font-mono-code font-black text-slate-900 text-base">
+                                {formatCurrency(po.totalCostUSD)}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold ${
+                                  po.paymentStatus === 'Paid in Full'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}>
+                                  {po.paymentStatus}
+                                </span>
+
+                                {isUnpaid ? (
+                                  <button
+                                    onClick={() => handleOpenRecordPayment(selectedSupplier, po.id, po.totalCostUSD)}
+                                    className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold cursor-pointer"
+                                  >
+                                    Disburse Wire
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-emerald-600 font-medium">Cleared</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="p-8 text-center text-slate-500 bg-slate-50 rounded-2xl border border-slate-200">
+                      No landed catch purchase orders recorded yet for this supplier.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 3: FLEET & REMITTANCE TERMS */}
+              {profileActiveTab === 'terms' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Banking & Remittance */}
+                  <div className="p-5 rounded-2xl border border-slate-200 bg-slate-50 space-y-3">
+                    <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <CreditCard className="w-4 h-4 text-emerald-600" />
+                      <span>Remittance & Wire Profile</span>
+                    </h4>
+                    <div className="space-y-2 text-xs">
+                      <div className="flex justify-between py-1.5 border-b border-slate-200/60">
+                        <span className="text-slate-500">Bank Account Ref:</span>
+                        <span className="font-mono-code font-bold text-slate-900">{selectedSupplier.bankAccountRef || 'ACH Verified Direct'}</span>
+                      </div>
+                      <div className="flex justify-between py-1.5 border-b border-slate-200/60">
+                        <span className="text-slate-500">Settlement Terms:</span>
+                        <span className="font-bold text-slate-900">{selectedSupplier.paymentTerms}</span>
+                      </div>
+                      <div className="flex justify-between py-1.5 border-b border-slate-200/60">
+                        <span className="text-slate-500">Home Pier / Port:</span>
+                        <span className="font-medium text-slate-900">{selectedSupplier.portLocation}, {selectedSupplier.country}</span>
+                      </div>
+                      <div className="flex justify-between py-1.5 border-b border-slate-200/60">
+                        <span className="text-slate-500">Total Sourced Volume:</span>
+                        <span className="font-mono-code font-bold text-slate-900">{selectedSupplier.totalWeightSuppliedKg.toLocaleString()} kg</span>
+                      </div>
+                      <div className="flex justify-between py-1.5">
+                        <span className="text-slate-500">Total Sourced Value:</span>
+                        <span className="font-mono-code font-bold text-slate-900">{formatCurrency(selectedSupplier.totalPurchasedUSD)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Fleet Vessels & Quotas */}
+                  <div className="p-5 rounded-2xl border border-slate-200 bg-slate-50 space-y-3">
+                    <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Ship className="w-4 h-4 text-blue-600" />
+                      <span>Vessels & Seafood Quotas</span>
+                    </h4>
+                    <div className="space-y-2 text-xs">
+                      <div>
+                        <div className="text-slate-500 text-[11px] mb-1">Registered Harvester Vessels:</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedSupplier.vesselNames && selectedSupplier.vesselNames.length > 0 ? (
+                            selectedSupplier.vesselNames.map(v => (
+                              <span key={v} className="px-2 py-0.5 bg-white border border-slate-200 rounded-lg text-slate-800 font-bold text-[11px]">
+                                {v}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-slate-400">Independent fleet vessels</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pt-2">
+                        <div className="text-slate-500 text-[11px] mb-1">Target Harvest Species:</div>
+                        <div className="flex flex-wrap gap-1">
+                          {selectedSupplier.suppliedSpecies.map(sp => (
+                            <span key={sp} className="px-2 py-0.5 bg-blue-50 text-blue-800 border border-blue-100 rounded-md text-[10px] font-semibold">
+                              {sp}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {selectedSupplier.notes && (
+                        <div className="pt-2">
+                          <div className="text-slate-500 text-[11px] mb-0.5">Certifications & Audit Notes:</div>
+                          <div className="text-xs text-slate-700 italic bg-white p-2.5 rounded-xl border border-slate-200">
+                            "{selectedSupplier.notes}"
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RECORD SUPPLIER PAYMENT MODAL */}
+      <RecordSupplierPaymentModal
+        isOpen={isRecordPaymentModalOpen}
+        onClose={() => {
+          setIsRecordPaymentModalOpen(false);
+          setPaymentModalSupplier(null);
+          setPreselectedPOId(undefined);
+          setSuggestedPaymentAmount(undefined);
+        }}
+        supplier={paymentModalSupplier}
+        purchaseOrders={purchaseOrders}
+        preselectedPOId={preselectedPOId}
+        suggestedAmount={suggestedPaymentAmount}
+        formatCurrency={formatCurrency}
+        onRecordPayment={onRecordPayment}
+        onPaymentSuccess={(voucherData) => {
+          setLastCreatedVoucher(voucherData);
+        }}
+      />
+
+      {/* VIEW GENERATED VOUCHER MODAL */}
+      {lastCreatedVoucher && (
+        <SupplierPaymentVoucherModal
+          isOpen={!!lastCreatedVoucher}
+          onClose={() => setLastCreatedVoucher(null)}
+          entry={lastCreatedVoucher}
+          supplier={paymentModalSupplier || selectedSupplier}
+          formatCurrency={formatCurrency}
+          onReversePayment={onReversePayment}
+        />
       )}
 
       {/* Log Inward Catch / New Purchase Order Modal */}
@@ -698,7 +1098,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                 <div>
                   <div className="text-xs text-slate-500">Calculated Harvester Total Payable:</div>
                   <div className="text-sm font-bold text-slate-900">
-                    {poWeightKg} kg × ${poCostPerKg}/kg
+                    {poWeightKg || 0} kg × ${poCostPerKg || 0}/kg
                   </div>
                 </div>
                 <div className="text-xl font-black text-rose-700 font-mono-code">
@@ -869,66 +1269,6 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                   className="flex-1 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-xs cursor-pointer"
                 >
                   Save Supplier Partner
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Settle Supplier Bill Modal */}
-      {isSettleModalOpen && targetSupplierForSettle && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white max-w-md w-full rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-rose-100 text-rose-700 rounded-xl">
-                  <DollarSign className="w-5 h-5" />
-                </div>
-                <h3 className="text-lg font-bold text-slate-900">Settle Harvester Payout</h3>
-              </div>
-              <button 
-                onClick={() => setIsSettleModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 cursor-pointer text-lg font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-500">
-              Supplier <strong>{targetSupplierForSettle.name}</strong> has an outstanding payable of <strong>{formatCurrency(targetSupplierForSettle.outstandingPayableUSD)}</strong>.
-            </p>
-
-            <form onSubmit={handleConfirmSettle} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Settlement Amount ($ USD)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  max={targetSupplierForSettle.outstandingPayableUSD}
-                  value={settleAmount}
-                  onChange={(e) => setSettleAmount(e.target.value)}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl font-mono-code font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900"
-                  required
-                />
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsSettleModalOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-xs cursor-pointer"
-                >
-                  Disburse Wire & Post COGS
                 </button>
               </div>
             </form>

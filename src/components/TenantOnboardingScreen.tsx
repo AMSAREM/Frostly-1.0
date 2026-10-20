@@ -324,7 +324,7 @@ export const TenantOnboardingScreen: React.FC<TenantOnboardingScreenProps> = ({
           </div>
           <div>
             <div className="font-bold text-sm text-white flex items-center gap-2">
-              <span>Frostly Seafood Platform</span>
+              <span>Amansocean Seafood Platform</span>
               <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                 Workspace Onboarding
               </span>
@@ -935,7 +935,7 @@ export const TenantOnboardingScreen: React.FC<TenantOnboardingScreenProps> = ({
       {/* Footer */}
       {!isModal && (
         <footer className="max-w-4xl w-full mx-auto text-center text-xs text-slate-500 py-2">
-          Frostly Seafood Platform • Enterprise Cold-Chain Architecture • Ghana &amp; West Africa Operations
+          Amansocean Seafood Platform • Enterprise Cold-Chain Architecture • Ghana &amp; West Africa Operations
         </footer>
       )}
     </div>
