@@ -83,7 +83,10 @@ export class OrderRepository extends BaseRepository<ClientOrder, DatabaseOrderRo
         childItems: itemsPayload,
       });
 
-      if (serverRes.handled && !serverRes.error) {
+      if (serverRes.handled) {
+        if (serverRes.error) {
+          throw new Error(`[OrderRepository] Save error: ${serverRes.error}`);
+        }
         const current = this.getLocalCache([], orgId);
         const idx = current.findIndex((o) => o.id === order.id);
         const updated =
@@ -91,24 +94,27 @@ export class OrderRepository extends BaseRepository<ClientOrder, DatabaseOrderRo
         this.setLocalCache(updated, orgId);
         return order;
       }
-    }
 
-    const saved = await this.save(order);
-
-    if (canQuery && itemsPayload.length > 0) {
-      try {
-        await supabase
+      // Direct fallback only when server route is unhandled
+      const saved = await this.save(order);
+      if (itemsPayload.length > 0) {
+        const { error: delErr } = await supabase
           .from('order_line_items')
           .delete()
           .eq('order_id', order.id)
           .eq('organization_id', orgId);
-        await supabase.from('order_line_items').insert(itemsPayload);
-      } catch (err) {
-        console.warn('[OrderRepository] line items sync note:', err);
+        if (delErr) {
+          throw new Error(`[OrderRepository] Failed to clear previous items: ${delErr.message}`);
+        }
+        const { error: insErr } = await supabase.from('order_line_items').insert(itemsPayload);
+        if (insErr) {
+          throw new Error(`[OrderRepository] Failed to insert line items: ${insErr.message}`);
+        }
       }
+      return saved;
     }
 
-    return saved;
+    return this.save(order);
   }
 }
 

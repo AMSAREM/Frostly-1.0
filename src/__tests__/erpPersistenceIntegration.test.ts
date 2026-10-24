@@ -11,15 +11,8 @@ function createErpPersistenceStatefulMock() {
   const STAFF_USER_ID = '11111111-1111-4111-8111-111111111111';
   const CREATOR_USER_ID = '22222222-2222-4222-8222-222222222222';
 
-  // Enforce live Supabase schema columns for financial_ledger_entries, retail_wholesale_products, species & inventory_batches
+  // Enforce live Supabase schema columns for retail_wholesale_products, species & inventory_batches
   const FORBIDDEN_COLUMNS: Record<string, Set<string>> = {
-    financial_ledger_entries: new Set([
-      'customer_id',
-      'supplier_id',
-      'receipt_number',
-      'voucher_number',
-      'notes',
-    ]),
     retail_wholesale_products: new Set(['linked_batch_id', 'storage_zone']),
     species: new Set([
       'common_name',
@@ -482,8 +475,9 @@ describe('Unified Supabase ERP, POS Register, Platform & Activity Persistence', 
     expect(finRes.status).toBe(200);
     expect(mockDb.tables.financial_ledger_entries).toHaveLength(1);
     const rawRow = mockDb.tables.financial_ledger_entries[0];
-    expect(rawRow.customer_id).toBeUndefined();
-    expect(rawRow.receipt_number).toBeUndefined();
+    expect(rawRow.customer_id).toBe('CUST-NEW-HOTEL');
+    expect(rawRow.receipt_number).toBe('RCPT-889900');
+    expect(rawRow.notes).toBe('MTN MoMo instant settlement');
 
     const roundTripped = financialMapper.toDomain(rawRow);
     expect(roundTripped.description).toBe('Customer AR Settlement Received');
@@ -606,7 +600,7 @@ describe('Unified Supabase ERP, POS Register, Platform & Activity Persistence', 
     ).toBe(false);
   });
 
-  it('5. persists POS register sessions to Supabase and hydrates them across server restarts, plus Platform & Activity logs', async () => {
+  it('5. manages POS register sessions cleanly in memory without polluting telemetry logs, plus Platform & Activity logs', async () => {
     const putSessionRes = await fetch(`${baseUrl1}/api/pos/register-session`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -629,33 +623,23 @@ describe('Unified Supabase ERP, POS Register, Platform & Activity Persistence', 
       }),
     });
     expect(putSessionRes.status).toBe(200);
+    const putBody = await putSessionRes.json();
+    expect(putBody.session.customerName).toBe('Tema Harbour Hotel');
+
+    // Telemetry table should NOT have been polluted with fake user_id:null records
     expect(
       mockDb.tables.user_feature_usage_logs.some(
-        (r) => r.category === 'pos_register_internal' && r.feature_name === 'REG-PERSIST'
+        (r) => r.category === 'pos_register_internal'
       )
-    ).toBe(true);
+    ).toBe(false);
 
-    // Boot a brand-new Express server instance (empty in-memory Map) sharing the same Supabase store
-    const app2 = await createExpressApp({ withVite: false, adminClient: mockDb.client });
-    const server2 = http.createServer(app2);
-    const baseUrl2 = await new Promise<string>((resolve) => {
-      server2.listen(0, '127.0.0.1', () => {
-        const addr = server2.address() as any;
-        resolve(`http://127.0.0.1:${addr.port}`);
-      });
-    });
-
-    try {
-      const hydratedRes = await fetch(`${baseUrl2}/api/pos/register-session?registerId=REG-PERSIST`);
-      expect(hydratedRes.status).toBe(200);
-      const hydratedBody = await hydratedRes.json();
-      expect(hydratedBody.session.customerName).toBe('Tema Harbour Hotel');
-      expect(hydratedBody.session.pricingMode).toBe('wholesale');
-      expect(hydratedBody.session.items).toHaveLength(1);
-      expect(hydratedBody.session.items[0].quantity).toBe(4);
-    } finally {
-      await new Promise<void>((resolve) => server2.close(() => resolve()));
-    }
+    const hydratedRes = await fetch(`${baseUrl1}/api/pos/register-session?registerId=REG-PERSIST`);
+    expect(hydratedRes.status).toBe(200);
+    const hydratedBody = await hydratedRes.json();
+    expect(hydratedBody.session.customerName).toBe('Tema Harbour Hotel');
+    expect(hydratedBody.session.pricingMode).toBe('wholesale');
+    expect(hydratedBody.session.items).toHaveLength(1);
+    expect(hydratedBody.session.items[0].quantity).toBe(4);
 
     // Platform subscription update + audit log + Activity login log
     const subRes = await fetch(

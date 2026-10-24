@@ -495,7 +495,7 @@ export async function recordUserLogin(
   const orgName = organization?.name || profile?.organization_name || 'Amansocean Coldstore';
   const rawOrgId = organization?.id || profile?.organization_id || '';
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  const orgId = uuidRegex.test(rawOrgId) ? rawOrgId : '35a94c6e-e230-4b7c-8404-a4f0ae06b798';
+  const orgId = uuidRegex.test(rawOrgId) ? rawOrgId : '';
 
   const loginRecord: UserLoginRecord = {
     id: 'log-' + Date.now(),

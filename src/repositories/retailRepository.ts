@@ -147,7 +147,10 @@ export class RetailTransactionRepository extends BaseRepository<RetailTransactio
         childItems: itemsPayload,
       });
 
-      if (serverRes.handled && !serverRes.error) {
+      if (serverRes.handled) {
+        if (serverRes.error) {
+          throw new Error(`[RetailTransactionRepository] Save error: ${serverRes.error}`);
+        }
         const current = this.getLocalCache([], orgId);
         const idx = current.findIndex((tx) => tx.id === sale.id);
         const updated =
@@ -155,24 +158,27 @@ export class RetailTransactionRepository extends BaseRepository<RetailTransactio
         this.setLocalCache(updated, orgId);
         return sale;
       }
-    }
 
-    const saved = await this.save(sale);
-
-    if (canQuery && itemsPayload.length > 0) {
-      try {
-        await supabase
+      // Direct fallback only when server route is unhandled
+      const saved = await this.save(sale);
+      if (itemsPayload.length > 0) {
+        const { error: delErr } = await supabase
           .from('retail_sale_items')
           .delete()
           .eq('transaction_id', sale.id)
           .eq('organization_id', orgId);
-        await supabase.from('retail_sale_items').insert(itemsPayload);
-      } catch (err) {
-        console.warn('[RetailTransactionRepository] retail sale items sync note:', err);
+        if (delErr) {
+          throw new Error(`[RetailTransactionRepository] Failed to clear items: ${delErr.message}`);
+        }
+        const { error: insErr } = await supabase.from('retail_sale_items').insert(itemsPayload);
+        if (insErr) {
+          throw new Error(`[RetailTransactionRepository] Failed to insert items: ${insErr.message}`);
+        }
       }
+      return saved;
     }
 
-    return saved;
+    return this.save(sale);
   }
 }
 

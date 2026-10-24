@@ -3876,34 +3876,6 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       return inMemory;
     }
 
-    if (adminClient && orgId) {
-      try {
-        const { data: rows } = await adminClient
-          .from('user_feature_usage_logs')
-          .select('id, metadata')
-          .eq('organization_id', orgId)
-          .eq('category', 'pos_register_internal')
-          .eq('feature_key', 'pos_register_session')
-          .eq('feature_name', registerId)
-          .order('created_at', { ascending: false })
-          .limit(1);
-
-        const storedMeta = rows && rows[0]?.metadata;
-        if (storedMeta && typeof storedMeta === 'object' && storedMeta.registerId) {
-          const restored: PosRegisterSessionRecord = {
-            ...createEmptyPosSession(registerId, orgId),
-            ...storedMeta,
-            registerId,
-            organizationId: orgId,
-          };
-          posRegisterSessions.set(key, restored);
-          return restored;
-        }
-      } catch {
-        // Fallback to fresh session if table read fails
-      }
-    }
-
     const empty = createEmptyPosSession(registerId, orgId);
     posRegisterSessions.set(key, empty);
     return empty;
@@ -3917,44 +3889,6 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
   ): Promise<void> {
     const key = `${orgId || 'default'}:${registerId}`;
     posRegisterSessions.set(key, session);
-
-    if (!adminClient || !orgId) return;
-    try {
-      const { data: existingRows } = await adminClient
-        .from('user_feature_usage_logs')
-        .select('id')
-        .eq('organization_id', orgId)
-        .eq('category', 'pos_register_internal')
-        .eq('feature_key', 'pos_register_session')
-        .eq('feature_name', registerId)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (existingRows && existingRows[0]?.id) {
-        await adminClient
-          .from('user_feature_usage_logs')
-          .update({
-            metadata: session,
-            action_type: 'update',
-          })
-          .eq('id', existingRows[0].id);
-      } else {
-        await adminClient.from('user_feature_usage_logs').insert({
-          user_id: null,
-          organization_id: orgId,
-          user_email: 'pos@amansocean.store',
-          user_name: `POS Register ${registerId}`,
-          organization_name: 'Amansocean POS',
-          feature_key: 'pos_register_session',
-          feature_name: registerId,
-          category: 'pos_register_internal',
-          action_type: 'update',
-          metadata: session,
-        });
-      }
-    } catch (err) {
-      console.warn('[POS Register Session Persist Notice]:', err);
-    }
   }
 
   async function resolvePosCustomerOrg(
@@ -5326,7 +5260,16 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
     if (callerProfile?.role === 'creator' && requested && ERP_UUID_REGEX.test(requested)) {
       return requested;
     }
-    return String(callerProfile?.organization_id || '');
+    const orgId = String(callerProfile?.organization_id || '').trim();
+    if (
+      orgId &&
+      ERP_UUID_REGEX.test(orgId) &&
+      orgId !== '00000000-0000-0000-0000-000000000001' &&
+      orgId !== 'org-frostly-hq'
+    ) {
+      return orgId;
+    }
+    return '';
   }
 
   async function ensureSpeciesRowExists(
@@ -5797,29 +5740,13 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       }
 
       if (tableName === 'financial_ledger_entries') {
-        if (
-          'customer_id' in cleanPayload ||
-          'supplier_id' in cleanPayload ||
-          'receipt_number' in cleanPayload ||
-          'voucher_number' in cleanPayload ||
-          'notes' in cleanPayload
-        ) {
-          cleanPayload.description = encodeFinancialDescriptionMeta(
-            String(cleanPayload.description || ''),
-            {
-              customerId: cleanPayload.customer_id,
-              supplierId: cleanPayload.supplier_id,
-              receiptNumber: cleanPayload.receipt_number,
-              voucherNumber: cleanPayload.voucher_number,
-              notes: cleanPayload.notes,
-            }
-          );
-          delete cleanPayload.customer_id;
-          delete cleanPayload.supplier_id;
-          delete cleanPayload.receipt_number;
-          delete cleanPayload.voucher_number;
-          delete cleanPayload.notes;
-        }
+        cleanPayload.customer_id = cleanPayload.customer_id || null;
+        cleanPayload.supplier_id = cleanPayload.supplier_id || null;
+        cleanPayload.receipt_number = cleanPayload.receipt_number || null;
+        cleanPayload.voucher_number = cleanPayload.voucher_number || null;
+        cleanPayload.notes = cleanPayload.notes || null;
+        cleanPayload.description = String(cleanPayload.description || 'Financial Ledger Transaction');
+
         if (cleanPayload.id) {
           cleanPayload.id = ensureValidUuid(String(cleanPayload.id));
         }

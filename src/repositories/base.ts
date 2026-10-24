@@ -60,10 +60,6 @@ export interface RepositoryOptions<TDomain, TDatabaseRow> {
 export class BaseRepository<TDomain, TDatabaseRow> {
   protected static unknownColumnsByTable: Map<string, Set<string>> = new Map([
     ['retail_wholesale_products', new Set(['linked_batch_id', 'storage_zone'])],
-    [
-      'financial_ledger_entries',
-      new Set(['customer_id', 'supplier_id', 'receipt_number', 'voucher_number', 'notes']),
-    ],
   ]);
 
   public static registerMissingColumn(tableName: string, columnName: string) {
@@ -311,14 +307,39 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     return cached.find((item) => this.getId(item) === id) || null;
   }
 
+  protected updateLocalCacheItem(entity: TDomain, orgId: string): void {
+    const id = this.getId(entity);
+    const current = this.getLocalCache([], orgId);
+    const existingIndex = current.findIndex((item) => this.getId(item) === id);
+    let updated: TDomain[];
+    if (existingIndex >= 0) {
+      updated = [...current];
+      updated[existingIndex] = entity;
+    } else {
+      updated = [entity, ...current];
+    }
+    this.setLocalCache(updated, orgId);
+  }
+
+  protected removeLocalCacheItem(id: string, orgId: string): void {
+    const current = this.getLocalCache([], orgId);
+    const filtered = current.filter((item) => this.getId(item) !== id);
+    this.setLocalCache(filtered, orgId);
+  }
+
   /**
    * Save (insert or update) an entity:
-   * 1. Immediately updates tenant-scoped local cache (optimistic response)
-   * 2. Attempts Supabase upsert with active organization_id if authenticated
-   * 3. If unauthenticated, offline, or request fails: enqueues into syncQueue with organizationId
+   * Single authoritative persistence path:
+   * - When authenticated, routes to the verified server persistence endpoint.
+   * - If server endpoint returns an error, throws immediately — never ignores or double-writes.
+   * - Only if server endpoint is unhandled does it execute direct Supabase client write.
+   * - In offline mode, queues to syncQueue for eventual replay.
    */
   public async save(entity: TDomain, isInsert = false): Promise<TDomain> {
     const orgId = await this.getOrganizationId();
+    if (isInvalidOrgId(orgId)) {
+      throw new OrganizationNotResolvedError('save', this.tableName);
+    }
     const id = this.getId(entity);
     const rawPayload = this.toDatabase(entity);
     const dbPayload: Record<string, any> = { ...rawPayload };
@@ -333,43 +354,41 @@ export class BaseRepository<TDomain, TDatabaseRow> {
       }
     }
 
-    // Populate organization_id for multi-tenant composite key and complete isolation
     if (this.onConflict.includes('organization_id') || orgId) {
-      const resolvedOrg = orgId || (await this.getOrganizationId());
-      if (isInvalidOrgId(resolvedOrg)) {
-        throw new OrganizationNotResolvedError('save', this.tableName);
-      }
-      dbPayload.organization_id = resolvedOrg;
+      dbPayload.organization_id = orgId;
     }
 
-    // 1. Optimistic Tenant-Scoped Local Cache Update
-    const current = this.getLocalCache([], orgId);
-    const existingIndex = current.findIndex((item) => this.getId(item) === id);
-
-    let updated: TDomain[];
-    if (existingIndex >= 0) {
-      updated = [...current];
-      updated[existingIndex] = entity;
-    } else {
-      updated = [entity, ...current];
-    }
-    this.setLocalCache(updated, orgId);
-
-    // 2. Try Live Supabase
     const canQuery = await this.canAccessSupabase();
     if (canQuery) {
-      try {
-        const { error } = await this.executeUpsertWithRecovery(dbPayload, this.onConflict);
-        if (!error) {
-          return entity;
+      // 1. Authoritative Server Persistence Route
+      const serverUpsert = await erpServerUpsert({
+        tableName: this.tableName,
+        payload: dbPayload,
+        onConflict: this.onConflict,
+        organizationId: orgId,
+      });
+
+      if (serverUpsert.handled) {
+        if (serverUpsert.error) {
+          throw new Error(`[BaseRepository:${this.tableName}] Persistence error: ${serverUpsert.error}`);
         }
-        console.warn(`[BaseRepository:${this.tableName}] Supabase save returned error:`, error.message);
-      } catch (err) {
-        console.warn(`[BaseRepository:${this.tableName}] Supabase save exception:`, err);
+        this.updateLocalCacheItem(entity, orgId);
+        return entity;
       }
+
+      // 2. Direct Supabase write only if server persistence endpoint was unhandled
+      const { error } = await this.executeUpsertWithRecovery(dbPayload, this.onConflict);
+      if (error) {
+        throw new Error(`[BaseRepository:${this.tableName}] Direct save error: ${error.message || error}`);
+      }
+      this.updateLocalCacheItem(entity, orgId);
+      return entity;
     }
 
-    // 3. Queue to offline sync queue with organizationId
+    // 3. Offline fallback
+    this.updateLocalCacheItem(entity, orgId);
+    const current = this.getLocalCache([], orgId);
+    const existingIndex = current.findIndex((item) => this.getId(item) === id);
     const operation: SyncOperationType = isInsert || existingIndex < 0 ? 'INSERT' : 'UPDATE';
     syncQueue.enqueue({
       tableName: this.tableName,
@@ -383,52 +402,52 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   }
 
   /**
-   * Delete an entity by ID scoped to active tenant organization_id
+   * Delete an entity by ID scoped to active tenant organization_id:
+   * Single authoritative delete path:
+   * - When authenticated, routes to the verified server persistence delete endpoint.
+   * - If server endpoint returns an error, throws immediately.
+   * - Only if server endpoint is unhandled does it execute direct Supabase client delete.
    */
   public async delete(id: string): Promise<void> {
     const orgId = await this.getOrganizationId();
+    if (isInvalidOrgId(orgId)) {
+      throw new OrganizationNotResolvedError('delete', this.tableName);
+    }
 
-    // 1. Remove from tenant-scoped local cache
-    const current = this.getLocalCache([], orgId);
-    const filtered = current.filter((item) => this.getId(item) !== id);
-    this.setLocalCache(filtered, orgId);
-
-    // 2. Try Live Supabase
     const canQuery = await this.canAccessSupabase();
     if (canQuery) {
-      try {
-        let lookupId = id;
-        if (UUID_PK_TABLES.has(this.tableName)) {
-          lookupId = ensureValidUuid(id);
+      let lookupId = id;
+      if (UUID_PK_TABLES.has(this.tableName)) {
+        lookupId = ensureValidUuid(id);
+      }
+
+      // 1. Authoritative Server Persistence Delete
+      const serverDel = await erpServerDelete({
+        tableName: this.tableName,
+        recordId: lookupId,
+        organizationId: orgId,
+      });
+
+      if (serverDel.handled) {
+        if (serverDel.error) {
+          throw new Error(`[BaseRepository:${this.tableName}] Delete error: ${serverDel.error}`);
         }
+        this.removeLocalCacheItem(id, orgId);
+        return;
+      }
 
-        const serverDel = await erpServerDelete({
-          tableName: this.tableName,
-          recordId: lookupId,
-          organizationId: orgId,
-        });
+      // 2. Direct Supabase delete only if server delete route was unhandled
+      let query = supabase
+        .from(this.tableName)
+        .delete()
+        .eq('id', lookupId);
 
-        if (serverDel.handled && !serverDel.error) {
-          return;
-        }
+      if (this.onConflict.includes('organization_id') || orgId) {
+        query = query.eq('organization_id', orgId);
+      }
 
-        let query = supabase
-          .from(this.tableName)
-          .delete()
-          .eq('id', lookupId);
-
-        if (this.onConflict.includes('organization_id') || orgId) {
-          if (orgId) {
-            query = query.eq('organization_id', orgId);
-          }
-        }
-
-        const { error } = await query;
-
-        if (!error) {
-          return;
-        }
-
+      const { error } = await query;
+      if (error) {
         if (SOFT_DELETE_TABLES.has(this.tableName)) {
           let softQuery = supabase
             .from(this.tableName)
@@ -438,18 +457,19 @@ export class BaseRepository<TDomain, TDatabaseRow> {
             softQuery = softQuery.eq('organization_id', orgId);
           }
           const softRes = await softQuery;
-          if (!softRes.error) {
-            return;
+          if (softRes.error) {
+            throw new Error(`[BaseRepository:${this.tableName}] Direct delete error: ${softRes.error.message}`);
           }
+        } else {
+          throw new Error(`[BaseRepository:${this.tableName}] Direct delete error: ${error.message}`);
         }
-
-        console.warn(`[BaseRepository:${this.tableName}] Supabase delete returned error:`, error.message);
-      } catch (err) {
-        console.warn(`[BaseRepository:${this.tableName}] Supabase delete exception:`, err);
       }
+      this.removeLocalCacheItem(id, orgId);
+      return;
     }
 
-    // 3. Queue to offline sync queue with organizationId
+    // 3. Offline fallback
+    this.removeLocalCacheItem(id, orgId);
     syncQueue.enqueue({
       tableName: this.tableName,
       operation: 'DELETE',
@@ -477,7 +497,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
   }
 
   /**
-   * Helper to perform an upsert with resilient fallback for schema differences and ON CONFLICT targets
+   * Helper to perform an upsert directly against Supabase with resilient fallback for schema differences
    */
   private async executeUpsertWithRecovery(
     payload: Record<string, any>,
@@ -506,32 +526,6 @@ export class BaseRepository<TDomain, TDatabaseRow> {
       delete cleanPayload.storage_zone;
     }
 
-    // 0B. Migrate any legacy financial_ledger_entries optional fields into description metadata before pruning
-    if (
-      this.tableName === 'financial_ledger_entries' &&
-      ('customer_id' in cleanPayload ||
-        'supplier_id' in cleanPayload ||
-        'receipt_number' in cleanPayload ||
-        'voucher_number' in cleanPayload ||
-        'notes' in cleanPayload)
-    ) {
-      cleanPayload.description = encodeFinancialDescriptionMeta(
-        String(cleanPayload.description || ''),
-        {
-          customerId: cleanPayload.customer_id,
-          supplierId: cleanPayload.supplier_id,
-          receiptNumber: cleanPayload.receipt_number,
-          voucherNumber: cleanPayload.voucher_number,
-          notes: cleanPayload.notes,
-        }
-      );
-      delete cleanPayload.customer_id;
-      delete cleanPayload.supplier_id;
-      delete cleanPayload.receipt_number;
-      delete cleanPayload.voucher_number;
-      delete cleanPayload.notes;
-    }
-
     // 1. Prune known missing schema cache columns before sending
     const knownMissing = BaseRepository.unknownColumnsByTable.get(this.tableName);
     if (knownMissing && knownMissing.size > 0) {
@@ -540,18 +534,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
       }
     }
 
-    // 2. Prefer authenticated server persistence endpoint (handles RLS, FK prerequisites, and insert-only tables)
-    const serverUpsert = await erpServerUpsert({
-      tableName: this.tableName,
-      payload: cleanPayload,
-      onConflict: conflictTarget,
-      organizationId: cleanPayload.organization_id,
-    });
-    if (serverUpsert.handled && !serverUpsert.error) {
-      return { error: null, cleanPayload };
-    }
-
-    // 3. Direct Supabase fallback
+    // 2. Direct Supabase write
     let res = INSERT_ONLY_TABLES.has(this.tableName)
       ? await supabase.from(this.tableName).insert(cleanPayload)
       : await supabase.from(this.tableName).upsert(cleanPayload, { onConflict: conflictTarget });

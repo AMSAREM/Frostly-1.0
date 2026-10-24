@@ -149,25 +149,22 @@ export const financialMapper = {
       ? rawDate
       : new Date().toISOString().split('T')[0];
 
-    const encodedDescription = encodeFinancialDescriptionMeta(entry.description, {
-      customerId: entry.customerId,
-      supplierId: entry.supplierId,
-      receiptNumber: entry.receiptNumber,
-      voucherNumber: entry.voucherNumber,
-      notes: entry.notes,
-    });
-
     const payload: Record<string, any> = {
       id: ensureValidUuid(entry.id || `fin-${Date.now()}`),
       entry_date: validDate,
       type: cleanType,
       category: cleanCategory,
-      description: encodedDescription,
+      description: entry.description || 'Financial Ledger Transaction',
       reference_id: entry.referenceId || 'LEDGER',
       entity_name: entry.entityName || 'Counterparty',
       amount: Math.max(0, Number(entry.amount) || 0),
       payment_method: entry.paymentMethod || 'Cash / Bank Transfer',
       status: cleanStatus,
+      customer_id: entry.customerId || null,
+      supplier_id: entry.supplierId || null,
+      receipt_number: entry.receiptNumber || null,
+      voucher_number: entry.voucherNumber || null,
+      notes: entry.notes || null,
     };
 
     return payload;

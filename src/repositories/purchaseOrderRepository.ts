@@ -81,7 +81,10 @@ export class PurchaseOrderRepository extends BaseRepository<PurchaseOrderLanding
         childItems: itemsPayload,
       });
 
-      if (serverRes.handled && !serverRes.error) {
+      if (serverRes.handled) {
+        if (serverRes.error) {
+          throw new Error(`[PurchaseOrderRepository] Save error: ${serverRes.error}`);
+        }
         const current = this.getLocalCache([], orgId);
         const idx = current.findIndex((item) => item.id === po.id);
         const updated =
@@ -89,24 +92,27 @@ export class PurchaseOrderRepository extends BaseRepository<PurchaseOrderLanding
         this.setLocalCache(updated, orgId);
         return po;
       }
-    }
 
-    const saved = await this.save(po);
-
-    if (canQuery && itemsPayload.length > 0) {
-      try {
-        await supabase
+      // Direct fallback only when server route is unhandled
+      const saved = await this.save(po);
+      if (itemsPayload.length > 0) {
+        const { error: delErr } = await supabase
           .from('purchase_order_items')
           .delete()
           .eq('po_id', po.id)
           .eq('organization_id', orgId);
-        await supabase.from('purchase_order_items').insert(itemsPayload);
-      } catch (err) {
-        console.warn('[PurchaseOrderRepository] purchase order items sync note:', err);
+        if (delErr) {
+          throw new Error(`[PurchaseOrderRepository] Failed to clear items: ${delErr.message}`);
+        }
+        const { error: insErr } = await supabase.from('purchase_order_items').insert(itemsPayload);
+        if (insErr) {
+          throw new Error(`[PurchaseOrderRepository] Failed to insert items: ${insErr.message}`);
+        }
       }
+      return saved;
     }
 
-    return saved;
+    return this.save(po);
   }
 }
 
