@@ -1421,7 +1421,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       list.find((o: any) => o.id !== '00000000-0000-0000-0000-000000000001') ||
       list[0] || {
         id: '35a94c6e-e230-4b7c-8404-a4f0ae06b798',
-        name: 'Amans  Ocean  Seafoods and Coldstore',
+        name: 'Amansocean Seafoods and Coldstore',
       };
 
     const resolved = { id: fallbackOrg.id, name: fallbackOrg.name };

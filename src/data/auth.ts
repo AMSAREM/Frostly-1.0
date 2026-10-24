@@ -102,9 +102,29 @@ export function setLocalCachedSession(sess: Session | null): void {
 
 const isDev = typeof import.meta !== 'undefined' ? Boolean(import.meta.env?.DEV) : process.env.NODE_ENV !== 'production';
 
+// Amansocean Primary Organization Constants
+export const AMANSOCEAN_TENANT_ID = '35a94c6e-e230-4b7c-8404-a4f0ae06b798';
+export const AMANSOCEAN_TENANT_NAME = 'Amansocean Seafoods and Coldstore';
+
+/**
+ * Determine if an email address belongs to Amansocean staff or management
+ */
+export function isAmansoceanEmail(email?: string | null): boolean {
+  if (!email) return false;
+  const lower = email.trim().toLowerCase();
+  return (
+    lower.endsWith('@amansocean.com') ||
+    lower.endsWith('@amansocean.store') ||
+    lower.includes('amansocean') ||
+    lower === 'admin@amansocean.com' ||
+    lower === 'kwesi@amansocean.com' ||
+    lower === 'anna@amansocean.com'
+  );
+}
+
 // Development test user credentials (with instant fallback for frictionless preview)
 export const DEFAULT_TEST_USER_EMAIL =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_EMAIL) || 'admin@frostly.io';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_EMAIL) || 'admin@amansocean.com';
 
 export const DEFAULT_TEST_USER_PASSWORD =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) || 'frostly2026';
@@ -198,26 +218,73 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
     let profileData: any = null;
     let orgData: any = null;
 
-    // 1. Attempt joined query with organizations
-    const { data: joinedData, error: joinedError } = await supabase
-      .from('staff_profiles')
-      .select('*, organizations(name, plan_tier, subscription_status, trial_ends_at, current_period_ends_at, max_staff_seats)')
-      .eq('id', user.id)
-      .maybeSingle();
-
-    if (!joinedError && joinedData) {
-      profileData = joinedData;
-      orgData = (joinedData as any)?.organizations;
-    } else {
-      // 2. Fallback to direct staff_profiles query if join or relation is unavailable
-      const { data: plainData, error: plainError } = await supabase
+    if (isSupabaseConfigured) {
+      // 1. Attempt joined query with organizations
+      const { data: joinedData, error: joinedError } = await supabase
         .from('staff_profiles')
-        .select('*')
+        .select('*, organizations(name, plan_tier, subscription_status, trial_ends_at, current_period_ends_at, max_staff_seats)')
         .eq('id', user.id)
         .maybeSingle();
 
-      if (!plainError && plainData) {
-        profileData = plainData;
+      if (!joinedError && joinedData) {
+        profileData = joinedData;
+        orgData = (joinedData as any)?.organizations;
+      } else {
+        // 2. Fallback to direct staff_profiles query if join or relation is unavailable
+        const { data: plainData, error: plainError } = await supabase
+          .from('staff_profiles')
+          .select('*')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (!plainError && plainData) {
+          profileData = plainData;
+        }
+      }
+    } else {
+      // Offline mode: resolve profile from local storage accounts or user metadata
+      try {
+        const rawAccounts = localStorage.getItem('frostly_offline_users');
+        if (rawAccounts && user.email) {
+          const accounts = JSON.parse(rawAccounts);
+          const match = accounts[user.email.toLowerCase()];
+          if (match) {
+            profileData = {
+              id: user.id,
+              organization_id: match.orgId,
+              email: user.email,
+              full_name: match.fullName,
+              role: match.role || 'admin',
+              department: match.department || 'Executive Operations',
+              is_active: true,
+            };
+            orgData = {
+              name: match.orgName,
+              plan_tier: match.plan_tier || 'enterprise',
+              subscription_status: 'active',
+              max_staff_seats: 25,
+            };
+          }
+        }
+      } catch {}
+
+      if (!profileData && user.user_metadata?.organization_name) {
+        const storedOrgId = localStorage.getItem('frostly_active_org_id') || 'org-local-1';
+        profileData = {
+          id: user.id,
+          organization_id: storedOrgId,
+          email: user.email || '',
+          full_name: user.user_metadata?.full_name || 'Staff User',
+          role: user.user_metadata?.role || 'admin',
+          department: user.user_metadata?.department || 'Executive Operations',
+          is_active: true,
+        };
+        orgData = {
+          name: user.user_metadata.organization_name,
+          plan_tier: 'enterprise',
+          subscription_status: 'active',
+          max_staff_seats: 25,
+        };
       }
     }
 
@@ -226,27 +293,74 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       user.user_metadata?.role === 'platform_creator' || 
       user.app_metadata?.role === 'platform_creator';
     const fallbackRole = isCreator ? 'admin' : (user.user_metadata?.role || 'admin');
-    const isUnprovisioned = !profileData && !isCreator && isSupabaseConfigured;
+
+    // Check if this user belongs to Amansocean
+    const isAmans = isAmansoceanEmail(user.email) || 
+      Boolean(user.user_metadata?.organization_name?.toLowerCase().includes('amansocean'));
+
+    // Check if user has an assigned, non-sentinel organization in staff_profiles or metadata
+    const assignedOrgId = profileData?.organization_id && 
+      profileData.organization_id !== 'org-frostly-hq' && 
+      profileData.organization_id !== '00000000-0000-0000-0000-000000000001'
+        ? profileData.organization_id
+        : (user.user_metadata?.organization_id || null);
+
+    let resolvedOrgId: string;
+    let resolvedOrgName: string;
+    let isUnprovisioned = false;
+
+    if (isCreator) {
+      resolvedOrgId = '00000000-0000-0000-0000-000000000001';
+      resolvedOrgName = 'Frostly HQ';
+    } else if (assignedOrgId) {
+      // User has their own registered workspace
+      resolvedOrgId = assignedOrgId;
+      resolvedOrgName = orgData?.name || user.user_metadata?.organization_name || 'Enterprise Workspace';
+    } else if (isAmans || !isSupabaseConfigured) {
+      // Direct resolution to Amansocean Seafoods workspace
+      resolvedOrgId = AMANSOCEAN_TENANT_ID;
+      resolvedOrgName = AMANSOCEAN_TENANT_NAME;
+    } else {
+      isUnprovisioned = !profileData && isSupabaseConfigured;
+      resolvedOrgId = isUnprovisioned ? '' : AMANSOCEAN_TENANT_ID;
+      resolvedOrgName = orgData?.name || user.user_metadata?.organization_name || (isUnprovisioned ? '' : AMANSOCEAN_TENANT_NAME);
+    }
 
     const defaultOrg: TenantOrganization = {
-      id: profileData?.organization_id || (isUnprovisioned ? '' : 'org-frostly-hq'),
-      name: orgData?.name || user.user_metadata?.organization_name || (isUnprovisioned ? '' : 'Frostly Seafood Operations'),
-      plan_tier: orgData?.plan_tier || 'starter',
-      subscription_status: orgData?.subscription_status || 'trial',
-      trial_ends_at: orgData?.trial_ends_at || new Date(Date.now() + 14 * 86400000).toISOString(),
+      id: resolvedOrgId,
+      name: resolvedOrgName,
+      plan_tier: orgData?.plan_tier || 'enterprise',
+      subscription_status: orgData?.subscription_status || 'active',
+      trial_ends_at: orgData?.trial_ends_at || new Date(Date.now() + 365 * 86400000).toISOString(),
       current_period_ends_at: orgData?.current_period_ends_at,
-      max_staff_seats: orgData?.max_staff_seats || 5,
+      max_staff_seats: orgData?.max_staff_seats || 25,
     };
+
+    let userFullName = profileData?.full_name || user.user_metadata?.full_name;
+    if (!userFullName) {
+      const emailPrefix = user.email?.split('@')[0] || '';
+      if (emailPrefix.toLowerCase().includes('kwesi')) userFullName = 'Kwesi Mensah';
+      else if (emailPrefix.toLowerCase().includes('anna')) userFullName = 'Anna Mensah';
+      else if (emailPrefix.toLowerCase().includes('admin')) userFullName = 'Amansocean Operations Lead';
+      else if (emailPrefix) {
+        userFullName = emailPrefix
+          .split(/[._-]/)
+          .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ');
+      } else {
+        userFullName = 'Staff User';
+      }
+    }
 
     cachedStaffProfile = {
       id: profileData?.id || user.id,
-      organization_id: profileData?.organization_id || (isUnprovisioned ? '' : 'org-frostly-hq'),
-      organization_name: orgData?.name || user.user_metadata?.organization_name || (isUnprovisioned ? '' : 'Frostly Seafood Operations'),
+      organization_id: resolvedOrgId,
+      organization_name: resolvedOrgName,
       organization: defaultOrg,
       email: profileData?.email || user.email || '',
-      full_name: profileData?.full_name || user.user_metadata?.full_name || (user.email?.split('@')[0] ?? 'Staff User'),
+      full_name: userFullName,
       role: (profileData?.role as any) || fallbackRole,
-      department: profileData?.department || user.user_metadata?.department || 'Executive',
+      department: profileData?.department || user.user_metadata?.department || (isAmans ? 'Operations' : 'Executive'),
       is_active: profileData?.is_active ?? true,
       needs_onboarding: isUnprovisioned,
     };
@@ -255,6 +369,21 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       try {
         localStorage.setItem('frostly_active_org_id', cachedStaffProfile.organization_id);
       } catch {}
+    }
+
+    // Auto-link Amansocean staff profile in database if unlinked
+    if (isSupabaseConfigured && user.id && isAmans && (!profileData || profileData.organization_id !== AMANSOCEAN_TENANT_ID)) {
+      Promise.resolve(
+        supabase.from('staff_profiles').upsert({
+          id: user.id,
+          organization_id: AMANSOCEAN_TENANT_ID,
+          email: user.email || '',
+          full_name: userFullName,
+          role: cachedStaffProfile.role,
+          department: cachedStaffProfile.department,
+          is_active: true,
+        })
+      ).catch((err: any) => console.warn('[Auth] staff_profiles auto-link notice:', err?.message));
     }
 
     // Record login activity telemetry (non-blocking)
@@ -308,14 +437,68 @@ export async function signIn(
       (Boolean(DEFAULT_CREATOR_EMAIL) && emailCheck.normalizedEmail.toLowerCase() === DEFAULT_CREATOR_EMAIL.toLowerCase()) || 
       (isDev && emailCheck.normalizedEmail.toLowerCase().includes('creator'));
     
+    // Check if this email was previously registered as a tenant in local storage
+    let storedOrg: TenantOrganization | null = null;
+    let storedProfile: Partial<StaffProfile> | null = null;
+    try {
+      const rawAccounts = localStorage.getItem('frostly_offline_users');
+      if (rawAccounts) {
+        const accounts = JSON.parse(rawAccounts);
+        const match = accounts[emailCheck.normalizedEmail.toLowerCase()];
+        if (match) {
+          storedOrg = {
+            id: match.orgId,
+            name: match.orgName,
+            plan_tier: match.plan_tier || 'enterprise',
+            subscription_status: 'active',
+            trial_ends_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+            max_staff_seats: match.max_staff_seats || 25,
+          };
+          storedProfile = {
+            full_name: match.fullName,
+            role: match.role || 'admin',
+            department: match.department || 'Executive Operations',
+          };
+        }
+      }
+    } catch {}
+
+    const isAmans = isAmansoceanEmail(emailCheck.normalizedEmail);
+    const resolvedOrgId = isCreator
+      ? '00000000-0000-0000-0000-000000000001'
+      : (storedOrg?.id || AMANSOCEAN_TENANT_ID);
+    const resolvedOrgName = isCreator
+      ? 'Frostly HQ'
+      : (storedOrg?.name || AMANSOCEAN_TENANT_NAME);
+
+    // Format human-friendly display name
+    let resolvedFullName = isCreator
+      ? 'Platform Creator / System Operator'
+      : (storedProfile?.full_name || '');
+
+    if (!resolvedFullName) {
+      const prefix = emailCheck.normalizedEmail.split('@')[0];
+      if (prefix.toLowerCase().includes('kwesi')) resolvedFullName = 'Kwesi Mensah';
+      else if (prefix.toLowerCase().includes('anna')) resolvedFullName = 'Anna Mensah';
+      else if (prefix.toLowerCase().includes('admin')) resolvedFullName = 'Amansocean Operations Lead';
+      else {
+        resolvedFullName = prefix
+          .split(/[._-]/)
+          .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ');
+      }
+    }
+
     const demoUser: User = {
-      id: isCreator ? '00000000-0000-0000-0000-000000000001' : 'demo-user-id-001',
-      app_metadata: { provider: 'email', role: isCreator ? 'platform_creator' : 'admin' },
+      id: isCreator
+        ? '00000000-0000-0000-0000-000000000001'
+        : (storedProfile?.id || (isAmans ? 'usr-amans-admin-01' : 'usr-local-' + emailCheck.normalizedEmail.replace(/[^a-z0-9]/gi, '-'))),
+      app_metadata: { provider: 'email', role: isCreator ? 'platform_creator' : (storedProfile?.role || 'admin') },
       user_metadata: {
-        full_name: isCreator ? 'Platform Creator / System Operator' : 'Captain Alex Mercer',
-        role: isCreator ? 'platform_creator' : 'admin',
-        department: isCreator ? 'Platform Engineering' : 'Executive Operations',
-        organization_name: isCreator ? 'Frostly HQ' : 'Frostly Seafood Operations (Demo)',
+        full_name: resolvedFullName,
+        role: isCreator ? 'platform_creator' : (storedProfile?.role || 'admin'),
+        department: isCreator ? 'Platform Engineering' : (storedProfile?.department || 'Executive Operations'),
+        organization_name: resolvedOrgName,
       },
       aud: 'authenticated',
       created_at: new Date().toISOString(),
@@ -333,9 +516,9 @@ export async function signIn(
     cachedSession = demoSession;
     setLocalCachedSession(demoSession);
 
-    const defaultOrg: TenantOrganization = {
-      id: isCreator ? '00000000-0000-0000-0000-000000000001' : 'org-frostly-hq',
-      name: isCreator ? 'Frostly HQ' : 'Frostly Seafood Operations (Demo)',
+    const defaultOrg: TenantOrganization = storedOrg || {
+      id: resolvedOrgId,
+      name: resolvedOrgName,
       plan_tier: 'enterprise',
       subscription_status: 'active',
       trial_ends_at: new Date(Date.now() + 30 * 86400000).toISOString(),
@@ -348,12 +531,16 @@ export async function signIn(
       organization_name: defaultOrg.name,
       organization: defaultOrg,
       email: demoUser.email || emailCheck.normalizedEmail,
-      full_name: demoUser.user_metadata.full_name,
-      role: 'admin',
+      full_name: resolvedFullName,
+      role: isCreator ? 'admin' : (storedProfile?.role || 'admin'),
       department: demoUser.user_metadata.department,
       is_active: true,
       needs_onboarding: false,
     };
+
+    try {
+      localStorage.setItem('frostly_active_org_id', defaultOrg.id);
+    } catch {}
 
     notifyAuthSubscribers(demoSession);
     return { session: demoSession, error: null };
@@ -842,6 +1029,21 @@ export async function signUpAndCreateOrganization(
     cachedSession = mockSession;
     cachedStaffProfile = mockProfile;
     setLocalCachedSession(mockSession);
+
+    try {
+      const raw = localStorage.getItem('frostly_offline_users');
+      const accounts = raw ? JSON.parse(raw) : {};
+      accounts[cleanEmail.toLowerCase()] = {
+        orgId: orgRes.data?.organization_id || 'org-local-1',
+        orgName,
+        fullName: adminFullName || cleanEmail.split('@')[0],
+        role: 'admin',
+        department: adminDepartment,
+      };
+      localStorage.setItem('frostly_offline_users', JSON.stringify(accounts));
+      localStorage.setItem('frostly_active_org_id', mockProfile.organization_id);
+    } catch {}
+
     notifyAuthSubscribers(mockSession);
     return { session: mockSession, profile: mockProfile, error: null };
   }

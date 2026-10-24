@@ -939,10 +939,10 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                       onClick={handleDevQuickLogin}
                       disabled={isLoading}
                       className="w-full py-2 px-3 border border-dashed border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl text-xs font-mono-code transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                      title={`Quick-login as dev tenant admin (${DEFAULT_TEST_USER_EMAIL})`}
+                      title={`Quick-login as Amansocean tenant admin (${DEFAULT_TEST_USER_EMAIL})`}
                     >
                       <KeyRound className="w-3.5 h-3.5 text-slate-500" />
-                      <span>Quick Sign-In: [TENANT] Org Admin</span>
+                      <span>Quick Sign-In: [AMANSOCEAN] Org Admin</span>
                     </button>
                   )}
 
@@ -986,7 +986,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                         className="w-full text-left p-2 rounded-lg bg-white border border-slate-200/80 hover:border-slate-300 hover:bg-slate-100/50 transition-all cursor-pointer group"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="font-semibold text-slate-800 text-xs">Tenant Org Admin</span>
+                          <span className="font-semibold text-slate-800 text-xs">Amansocean Org Admin</span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-mono">Fill</span>
                         </div>
                         <div className="font-mono text-[10px] text-slate-600 mt-0.5">
