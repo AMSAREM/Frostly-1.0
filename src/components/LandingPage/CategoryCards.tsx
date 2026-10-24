@@ -1,6 +1,6 @@
 import React from 'react';
 import { AMANSOCEAN_CATEGORIES } from '../../data/amansoceanProducts';
-import { Sparkles, Utensils, Check } from 'lucide-react';
+import { Utensils, Check } from 'lucide-react';
 
 interface CategoryCardsProps {
   selectedCategory: string;
@@ -17,8 +17,8 @@ export const CategoryCards: React.FC<CategoryCardsProps> = ({
         
         {/* Section Header */}
         <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-12">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#FFC400]/40 text-[#9B0B20] text-xs font-black uppercase tracking-wider mb-2">
-            <Sparkles className="w-3.5 h-3.5" />
+          <div className="text-xs font-extrabold tracking-wide text-[#9B0B20] mb-2 flex items-center justify-center gap-1.5">
+            <Utensils className="w-3.5 h-3.5" />
             <span>Explore By Category</span>
           </div>
           <h2 className="text-3xl sm:text-4xl font-extrabold text-[#1A1A1A] tracking-tight font-heading">
@@ -39,8 +39,8 @@ export const CategoryCards: React.FC<CategoryCardsProps> = ({
           )}
         </div>
 
-        {/* 3 Speech-Bubble Style Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 sm:gap-6 lg:gap-8 max-w-5xl mx-auto">
+        {/* 4 Official Amans Ocean Category Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-7 max-w-6xl mx-auto">
           {AMANSOCEAN_CATEGORIES.map((cat) => {
             const isRed = cat.theme === 'red';
             const isSelected = selectedCategory === cat.id;
@@ -72,6 +72,7 @@ export const CategoryCards: React.FC<CategoryCardsProps> = ({
                     <img
                       src={cat.image}
                       alt={cat.label}
+                      referrerPolicy="no-referrer"
                       className="w-full h-full object-cover"
                     />
                   </div>

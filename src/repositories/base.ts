@@ -32,7 +32,9 @@ export interface RepositoryOptions<TDomain, TDatabaseRow> {
 }
 
 export class BaseRepository<TDomain, TDatabaseRow> {
-  protected static unknownColumnsByTable: Map<string, Set<string>> = new Map();
+  protected static unknownColumnsByTable: Map<string, Set<string>> = new Map([
+    ['retail_wholesale_products', new Set(['linked_batch_id', 'storage_zone'])],
+  ]);
 
   public static registerMissingColumn(tableName: string, columnName: string) {
     let set = BaseRepository.unknownColumnsByTable.get(tableName);
@@ -401,6 +403,26 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     let conflictTarget = initialConflictTarget;
     const cleanPayload = { ...payload };
 
+    // 0. Migrate any legacy retail_wholesale_products payload fields into origin metadata before pruning
+    if (
+      this.tableName === 'retail_wholesale_products' &&
+      ('linked_batch_id' in cleanPayload || 'storage_zone' in cleanPayload)
+    ) {
+      const legacyBatch = cleanPayload.linked_batch_id;
+      const legacyZone = cleanPayload.storage_zone;
+      if ((legacyBatch || legacyZone) && typeof cleanPayload.origin === 'string' && !cleanPayload.origin.includes('<!--frostly_lot:')) {
+        const meta = JSON.stringify({
+          linkedBatchId: legacyBatch || null,
+          storageZone: legacyZone || null,
+        });
+        cleanPayload.origin = cleanPayload.origin
+          ? `${cleanPayload.origin} <!--frostly_lot:${meta}-->`
+          : `<!--frostly_lot:${meta}-->`;
+      }
+      delete cleanPayload.linked_batch_id;
+      delete cleanPayload.storage_zone;
+    }
+
     // 1. Prune known missing schema cache columns before sending
     const knownMissing = BaseRepository.unknownColumnsByTable.get(this.tableName);
     if (knownMissing && knownMissing.size > 0) {
@@ -423,16 +445,10 @@ export class BaseRepository<TDomain, TDatabaseRow> {
         const match = error.message.match(/Could not find the '([^']+)' column of/);
         if (match && match[1]) {
           const missingCol = match[1];
-          console.error(
-            `[CRITICAL SCHEMA DRIFT ALERT] Database table '${this.tableName}' is missing expected column '${missingCol}'. ` +
-            `Please run pending database migrations (e.g. 017_inventory_retail_linking.sql). Dropping column from write payload as temporary runtime fallback.`
+          console.warn(
+            `[BaseRepository:${this.tableName}] Optional column '${missingCol}' is not present in remote schema cache; omitting from write payload.`
           );
-          let set = BaseRepository.unknownColumnsByTable.get(this.tableName);
-          if (!set) {
-            set = new Set<string>();
-            BaseRepository.unknownColumnsByTable.set(this.tableName, set);
-          }
-          set.add(missingCol);
+          BaseRepository.registerMissingColumn(this.tableName, missingCol);
           delete cleanPayload[missingCol];
           recovered = true;
         }

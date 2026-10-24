@@ -3,11 +3,15 @@ import { RetailWholesaleProduct, RetailTransaction } from '../types';
 import { productMapper, retailTransactionMapper, DatabaseProductRow, DatabaseRetailTransactionRow } from '../mappers/retailMapper';
 import { supabase } from '../utils/supabase';
 
+import { LEGACY_DEMO_PRODUCT_IDS } from '../data/amansoceanProducts';
+
+const LEGACY_DEMO_SET = new Set<string>(LEGACY_DEMO_PRODUCT_IDS);
+
 export class ProductRepository extends BaseRepository<RetailWholesaleProduct, DatabaseProductRow> {
   constructor() {
     super({
       tableName: 'retail_wholesale_products',
-      storageKey: 'frostly_products_v3',
+      storageKey: 'frostly_products_v4_ghs',
       toDomain: productMapper.toDomain,
       toDatabase: productMapper.toDatabase,
       getId: (prod) => prod.id,
@@ -16,7 +20,35 @@ export class ProductRepository extends BaseRepository<RetailWholesaleProduct, Da
   }
 
   public async getProducts(fallback: RetailWholesaleProduct[] = []): Promise<RetailWholesaleProduct[]> {
-    return this.getAll(fallback);
+    const orgId = await this.getOrganizationId();
+    const canQuery = await this.canAccessSupabase();
+    if (canQuery) {
+      try {
+        let query = supabase
+          .from('retail_wholesale_products')
+          .select('*')
+          .eq('is_active', true)
+          .order('created_at', { ascending: true });
+
+        if (orgId) {
+          query = query.eq('organization_id', orgId);
+        }
+
+        const { data, error } = await query;
+        if (!error && Array.isArray(data)) {
+          const activeItems = data
+            .filter((row: any) => row.is_active !== false && !LEGACY_DEMO_SET.has(String(row.id)))
+            .map((row: any) => this.toDomain(row));
+          this.setLocalCache(activeItems, orgId);
+          return activeItems;
+        }
+      } catch (err) {
+        console.warn('[ProductRepository] Fallback to base getAll:', err);
+      }
+    }
+
+    const items = await this.getAll(fallback);
+    return items.filter((item) => !LEGACY_DEMO_SET.has(item.id));
   }
 }
 

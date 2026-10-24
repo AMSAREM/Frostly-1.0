@@ -8,6 +8,7 @@ import { FinancialsView } from './components/FinancialsView';
 import { InventoryLedgerView } from './components/InventoryLedgerView';
 import { SettingsView } from './components/SettingsView';
 import { PlatformConsoleView } from './components/PlatformConsoleView';
+import { PosCustomerView } from './components/PosCustomerView';
 
 import { TraceabilityPassportModal } from './components/Modals/TraceabilityPassportModal';
 import { CatchWeightWeigherModal } from './components/Modals/CatchWeightWeigherModal';
@@ -39,6 +40,7 @@ import {
   INITIAL_STOCK_ADJUSTMENTS,
   SPECIES_CATALOG
 } from './data/mockData';
+import { AMANSOCEAN_OFFICIAL_CATALOG } from './data/amansoceanProducts';
 
 import { 
   InventoryBatch, 
@@ -72,6 +74,11 @@ import { adjustmentAccountRepository, stockAdjustmentRepository } from './reposi
 import { StockAdjustmentData } from './components/Inventory/StockAdjustmentModal';
 import { syncManager } from './sync/syncManager';
 import { useAuth } from './components/AuthGate';
+import {
+  activatePosCustomerKioskLock,
+  isPosCustomerKioskLocked,
+  consumePosPostLoginTab,
+} from './services/posCustomerService';
 import { 
   signInAsTestUser, 
   StaffProfile,
@@ -79,10 +86,18 @@ import {
   isSubscriptionLockedOut
 } from './data/auth';
 import { User } from '@supabase/supabase-js';
+import { supabase, isSupabaseConfigured } from './utils/supabase';
 
 export default function App() {
   // Single authoritative source of truth for session and staff profile from AuthGate
-  const { session, user: currentUser, staffProfile, refreshProfile: handleRefreshProfile, signOut: handleSignOut } = useAuth();
+  const {
+    session,
+    user: currentUser,
+    staffProfile,
+    refreshProfile: handleRefreshProfile,
+    signOut: handleSignOut,
+    exitCustomerViewToLogin,
+  } = useAuth();
 
   const isSentinelFallbackOrg = 
     staffProfile?.organization_id === '00000000-0000-0000-0000-000000000001' ||
@@ -113,12 +128,26 @@ export default function App() {
     }
   });
 
-  // Navigation & Search - Support PWA App Shortcut URLs (e.g. ?tab=settings)
+  // Navigation & Search - Support post-Customer-View POS return and PWA App Shortcut URLs (e.g. ?tab=settings)
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    const validTabs: ActiveTab[] = [
+      'dashboard',
+      'retail_wholesale',
+      'customers',
+      'suppliers',
+      'financials',
+      'inventory',
+      'settings',
+      'platform',
+    ];
     try {
+      const postLoginTarget = consumePosPostLoginTab() as ActiveTab | null;
+      if (postLoginTarget && validTabs.includes(postLoginTarget)) {
+        return postLoginTarget;
+      }
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get('tab') as ActiveTab;
-      if (tabParam && ['dashboard', 'retail_wholesale', 'customers', 'suppliers', 'financials', 'inventory', 'settings', 'platform'].includes(tabParam)) {
+      if (tabParam && validTabs.includes(tabParam)) {
         return tabParam;
       }
     } catch (e) {
@@ -128,6 +157,58 @@ export default function App() {
   });
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [useImperial, setUseImperial] = useState<boolean>(() => settings.useImperial ?? false);
+  const [posCustomerView, setPosCustomerView] = useState<{
+    isOpen: boolean;
+    registerId: string;
+    customerContact?: string;
+    customerId?: string;
+  }>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const isPosCust =
+        params.get('view') === 'pos-customer' ||
+        window.location.hash.toLowerCase() === '#pos-customer' ||
+        isPosCustomerKioskLocked();
+      if (isPosCust) {
+        activatePosCustomerKioskLock();
+      }
+      return {
+        isOpen: isPosCust,
+        registerId: (params.get('register') || 'REG-1').toUpperCase(),
+      };
+    } catch {
+      return { isOpen: false, registerId: 'REG-1' };
+    }
+  });
+
+  const handleOpenPosCustomerView = (opts?: { customerContact?: string; customerId?: string }) => {
+    activatePosCustomerKioskLock();
+    setPosCustomerView({
+      isOpen: true,
+      registerId: 'REG-1',
+      customerContact: opts?.customerContact,
+      customerId: opts?.customerId,
+    });
+  };
+
+  // Prevent URL hash tampering or browser Back navigation from bypassing staff login while Customer View is locked
+  useEffect(() => {
+    if (!posCustomerView.isOpen) return;
+    const enforceKioskBoundary = () => {
+      if (
+        isPosCustomerKioskLocked() &&
+        window.location.hash.toLowerCase() !== '#pos-customer'
+      ) {
+        exitCustomerViewToLogin();
+      }
+    };
+    window.addEventListener('hashchange', enforceKioskBoundary);
+    window.addEventListener('popstate', enforceKioskBoundary);
+    return () => {
+      window.removeEventListener('hashchange', enforceKioskBoundary);
+      window.removeEventListener('popstate', enforceKioskBoundary);
+    };
+  }, [posCustomerView.isOpen, exitCustomerViewToLogin]);
 
   // Currency Formatter aware of current settings
   const formatAppCurrency = (amount: number) => {
@@ -423,13 +504,56 @@ export default function App() {
       console.warn('[App] Purchase Order repository load error:', err);
     });
 
-    productRepository.getProducts(fallbackList).then(fresh => {
-      if (isMounted) {
-        setProducts(fresh || []);
+    const officialDomainFallback: RetailWholesaleProduct[] = AMANSOCEAN_OFFICIAL_CATALOG.map((item) => ({
+      id: item.id,
+      speciesId: item.species_id,
+      name: item.name,
+      cutType: item.cut_type,
+      category: item.db_category,
+      grade: item.grade,
+      stockKg: item.stock_kg,
+      unit: item.unit,
+      costPricePerUnit: item.cost_price_per_unit,
+      wholesalePricePerUnit: item.wholesale_price_per_unit,
+      retailPricePerUnit: item.retail_price_per_unit,
+      wholesaleMinQty: item.wholesale_min_qty,
+      retailPackSize: item.retail_pack_size,
+      sku: item.sku,
+      imageUrl: item.image_url,
+      origin: item.origin,
+      isAvailableForRetail: true,
+      isAvailableForWholesale: true,
+    }));
+
+    (async () => {
+      try {
+        if (isSupabaseConfigured) {
+          const { data: sessData } = await supabase.auth.getSession();
+          const token = sessData?.session?.access_token;
+          if (token) {
+            const apiRes = await fetch('/api/erp/amansocean-products', {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (apiRes.ok) {
+              const payload = await apiRes.json();
+              if (isMounted && Array.isArray(payload.products) && payload.products.length > 0) {
+                setProducts(payload.products);
+                return;
+              }
+            }
+          }
+        }
+        const fresh = await productRepository.getProducts(officialDomainFallback);
+        if (isMounted) {
+          setProducts(fresh && fresh.length > 0 ? fresh : officialDomainFallback);
+        }
+      } catch (err) {
+        console.warn('[App] Product repository load error:', err);
+        if (isMounted) {
+          setProducts(officialDomainFallback);
+        }
       }
-    }).catch(err => {
-      console.warn('[App] Product repository load error:', err);
-    });
+    })();
 
     retailTransactionRepository.getTransactions(fallbackList).then(fresh => {
       if (isMounted) {
@@ -921,7 +1045,7 @@ export default function App() {
     addNotification({
       type: 'order_update',
       title: `Catch-Weight Calibrated: Order ${orderId}`,
-      message: `Yield weighed on certified scale. Adjusted total recalibrated to $${adjustedTotal.toFixed(2)}.`,
+      message: `Yield weighed on certified scale. Adjusted total recalibrated to ${formatAppCurrency(adjustedTotal)}.`,
       urgency: 'low'
     });
   };
@@ -1009,7 +1133,7 @@ export default function App() {
     addNotification({
       type: 'order_update',
       title: `New Customer Enrolled: ${newCust.name}`,
-      message: `${newCust.companyName} registered with ${newCust.tier}. Credit Limit: $${newCust.creditLimitUSD.toLocaleString()}.`,
+      message: `${newCust.companyName} registered with ${newCust.tier}. Credit Limit: ${formatAppCurrency(newCust.creditLimitUSD)}.`,
       urgency: 'low'
     });
   };
@@ -1229,12 +1353,49 @@ export default function App() {
 
     addNotification({
       type: 'order_update',
-      title: isCreditAccountSale ? `Credit Sale Logged: $${sale.totalAmount.toFixed(2)}` : `Retail POS Sale: $${sale.totalAmount.toFixed(2)}`,
+      title: isCreditAccountSale ? `Credit Sale Logged: ${formatAppCurrency(sale.totalAmount)}` : `Retail POS Sale: ${formatAppCurrency(sale.totalAmount)}`,
       message: isCreditAccountSale 
         ? `Receipt ${sale.receiptNumber} billed to ${sale.customerName}'s credit facility.`
         : `Receipt ${sale.receiptNumber} processed via ${sale.paymentMethod}.`,
       urgency: 'low'
     });
+  };
+
+  const handleSyncOfficialPriceList = async () => {
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (isSupabaseConfigured) {
+        const { data: sessData } = await supabase.auth.getSession();
+        const token = sessData?.session?.access_token;
+        if (token) headers.Authorization = `Bearer ${token}`;
+      }
+      const res = await fetch('/api/erp/amansocean-products/sync', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ forceResetPrices: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Could not sync official price list.');
+      }
+      if (Array.isArray(data.products) && data.products.length > 0) {
+        setProducts(data.products);
+      }
+      addNotification({
+        type: 'order_update',
+        title: 'Official Amans Ocean Price List Synced',
+        message: `${data.syncedCount || 32} GH₵ seafood & powder SKUs synced directly to Supabase.`,
+        urgency: 'low',
+      });
+    } catch (err: any) {
+      addNotification({
+        type: 'system',
+        title: 'Catalog Sync Failed',
+        message: err?.message || 'Unable to sync official price list right now.',
+        urgency: 'high',
+      });
+      throw err;
+    }
   };
 
   const handleUpdateProductPricing = (productId: string, wholesalePrice: number, retailPrice: number) => {
@@ -1731,6 +1892,18 @@ export default function App() {
     });
   };
 
+  if (posCustomerView.isOpen) {
+    return (
+      <PosCustomerView
+        registerId={posCustomerView.registerId}
+        initialCustomerContact={posCustomerView.customerContact}
+        initialCustomerId={posCustomerView.customerId}
+        formatCurrency={formatAppCurrency}
+        onExitToCashier={exitCustomerViewToLogin}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#f8f9fc] flex flex-col selection:bg-indigo-500 selection:text-white w-full max-w-full overflow-x-hidden">
       {/* Offline Status & PWA Banner */}
@@ -1766,6 +1939,7 @@ export default function App() {
         userEmail={currentUser?.email ?? null}
         showPlatformConsole={showPlatformConsole}
         companyName={companyName}
+        onOpenPosCustomerView={() => handleOpenPosCustomerView()}
       />
 
       {/* Trial and Days Count Status Banner */}
@@ -1857,7 +2031,9 @@ export default function App() {
             onUpdateProductPricing={handleUpdateProductPricing}
             onSaveProduct={handleSaveProduct}
             onDeleteProduct={handleDeleteProduct}
+            onSyncOfficialPriceList={handleSyncOfficialPriceList}
             onNavigateToInventory={() => setActiveTab('inventory')}
+            onOpenPosCustomerView={(opts) => handleOpenPosCustomerView(opts)}
             formatCurrency={formatAppCurrency}
           />
         )}

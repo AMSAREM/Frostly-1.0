@@ -29,6 +29,10 @@ import { sendDirectGoogleSmtpConfirmation } from '../services/googleSmtpService'
 import { FrostlyLogo } from './FrostlyLogo';
 import { EmailValidationFeedback } from './EmailValidationFeedback';
 import { validateEmail } from '../utils/emailValidation';
+import {
+  isPosSecurityReauthActive,
+  clearPosSecurityReauth,
+} from '../services/posCustomerService';
 import { 
   signIn, 
   signInAsTestUser, 
@@ -50,20 +54,31 @@ export interface AuthGateScreenProps {
   onAuthSuccess?: () => void;
   initialMode?: AuthScreenMode;
   onBackToLanding?: () => void;
+  requireStaffCredentials?: boolean;
 }
 
 export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ 
   onAuthSuccess,
   initialMode = 'login',
-  onBackToLanding 
+  onBackToLanding,
+  requireStaffCredentials = false,
 }) => {
-  const [mode, setMode] = useState<AuthScreenMode>(initialMode);
+  const enforceBlankStaffLogin = Boolean(requireStaffCredentials || isPosSecurityReauthActive());
+  const [mode, setMode] = useState<AuthScreenMode>(enforceBlankStaffLogin ? 'login' : initialMode);
 
   useEffect(() => {
+    if (enforceBlankStaffLogin) {
+      setMode('login');
+      setEmail('');
+      setPassword('');
+      setActivationNotice(null);
+      setIsSettingPassword(false);
+      return;
+    }
     if (initialMode) {
       setMode(initialMode);
     }
-  }, [initialMode]);
+  }, [initialMode, enforceBlankStaffLogin]);
 
   // Input states
   const [email, setEmail] = useState('');
@@ -153,9 +168,9 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
         return;
       }
 
-      // 3. Informational notice for confirmed account landing
+      // 3. Informational notice for confirmed account landing (skipped during POS security re-auth)
       const isAct = params.get('activated') === 'true';
-      if (isAct && emailParam) {
+      if (isAct && emailParam && !enforceBlankStaffLogin) {
         setMode('login');
         setEmail(emailParam);
         setActivationNotice({
@@ -165,7 +180,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
         });
       }
     } catch {}
-  }, []);
+  }, [enforceBlankStaffLogin]);
 
   // Monitor network connectivity
   useEffect(() => {
@@ -259,12 +274,15 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
       if (result.error) {
         if (result.error.toLowerCase().includes('invalid login credentials')) {
           setErrorMessage(
-            'Invalid credentials. Please verify your email and password, or click one of the quick sign-in buttons below.'
+            enforceBlankStaffLogin
+              ? 'Invalid credentials. Please verify your staff email and password.'
+              : 'Invalid credentials. Please verify your email and password, or click one of the quick sign-in buttons below.'
           );
         } else {
           setErrorMessage(result.error);
         }
       } else {
+        clearPosSecurityReauth();
         if (onAuthSuccess) onAuthSuccess();
       }
     } catch (err: any) {
@@ -498,10 +516,12 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
             {mode === 'login' && (
               <div className="mt-4">
                 <h1 className="text-xl font-bold font-heading text-slate-900">
-                  Welcome back.
+                  {enforceBlankStaffLogin ? 'Staff Sign-In Required' : 'Welcome back.'}
                 </h1>
                 <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                  Sign in to access your cold-chain management workspace.
+                  {enforceBlankStaffLogin
+                    ? 'Enter verified staff credentials to return from Customer View to the POS workspace.'
+                    : 'Sign in to access your cold-chain management workspace.'}
                 </p>
               </div>
             )}
@@ -715,6 +735,21 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                 </div>
               )}
 
+              {enforceBlankStaffLogin && (
+                <div
+                  id="pos-security-reauth-banner"
+                  className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 flex items-start gap-2.5"
+                >
+                  <ShieldCheck className="w-4 h-4 text-slate-800 shrink-0 mt-0.5" />
+                  <div className="leading-relaxed">
+                    <span className="font-semibold text-slate-900 block">
+                      Customer View Closed
+                    </span>
+                    Active terminal session has been signed out for counter security. Authenticate below to reopen Retail &amp; Wholesale POS.
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">
                   Work Email
@@ -723,7 +758,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                   id="auth-gate-email-input"
                   type="email"
                   required
-                  autoComplete="email"
+                  autoComplete={enforceBlankStaffLogin ? 'off' : 'email'}
                   placeholder="name@company.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -753,7 +788,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                         id="auth-gate-password-input"
                         type={showPassword ? 'text' : 'password'}
                         required
-                        autoComplete="current-password"
+                        autoComplete={enforceBlankStaffLogin ? 'new-password' : 'current-password'}
                         placeholder="••••••••"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
@@ -791,25 +826,29 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                     )}
                   </button>
 
-                  <div className="relative my-3">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-slate-200"></div>
-                    </div>
-                    <div className="relative flex justify-center text-[10px] uppercase font-bold tracking-wider">
-                      <span className="bg-white px-2 text-slate-400">or explore without credentials</span>
-                    </div>
-                  </div>
+                  {!enforceBlankStaffLogin && (
+                    <>
+                      <div className="relative my-3">
+                        <div className="absolute inset-0 flex items-center">
+                          <div className="w-full border-t border-slate-200"></div>
+                        </div>
+                        <div className="relative flex justify-center text-[10px] uppercase font-bold tracking-wider">
+                          <span className="bg-white px-2 text-slate-400">or explore without credentials</span>
+                        </div>
+                      </div>
 
-                  <button
-                    id="auth-gate-instant-demo-btn"
-                    type="button"
-                    onClick={handleDevQuickLogin}
-                    disabled={isLoading}
-                    className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Explore Demo Mode (Instant Access)</span>
-                  </button>
+                      <button
+                        id="auth-gate-instant-demo-btn"
+                        type="button"
+                        onClick={handleDevQuickLogin}
+                        disabled={isLoading}
+                        className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Explore Demo Mode (Instant Access)</span>
+                      </button>
+                    </>
+                  )}
                 </>
               ) : (
                 /* Sub-form: Secure Password Recovery */
@@ -876,8 +915,8 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                 </div>
               )}
 
-              {/* Quick Login Buttons & Credentials Box (Development Only) */}
-              {!import.meta.env?.PROD && Boolean(DEFAULT_CREATOR_EMAIL || DEFAULT_TEST_USER_EMAIL) && (
+              {/* Quick Login Buttons & Credentials Box (Development Only - hidden during POS security re-auth) */}
+              {!enforceBlankStaffLogin && !import.meta.env?.PROD && Boolean(DEFAULT_CREATOR_EMAIL || DEFAULT_TEST_USER_EMAIL) && (
                 <div className="mt-3 space-y-2">
                   {!import.meta.env?.PROD && DEFAULT_CREATOR_EMAIL && DEFAULT_CREATOR_PASSWORD && (
                     <button

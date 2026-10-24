@@ -8,7 +8,7 @@ interface FeedbackModalProps {
 
 export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
   const [rating, setRating] = useState<number>(5);
-  const [category, setCategory] = useState<string>('Features');
+  const [category, setCategory] = useState<string>('Seafood Quality');
   const [name, setName] = useState<string>('');
   const [email, setEmail] = useState<string>('');
   const [message, setMessage] = useState<string>('');
@@ -96,8 +96,8 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
                 <MessageSquare className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="font-bold text-base text-slate-900">Send Feedback to Frostly</h3>
-                <p className="text-xs text-slate-500">Connected directly to Frostly engineering</p>
+                <h3 className="font-bold text-base text-slate-900">Share Your Amansocean Experience</h3>
+                <p className="text-xs text-slate-500">Saved directly to our coldstore quality &amp; customer care team</p>
               </div>
             </div>
 
@@ -140,12 +140,12 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose })
                 onChange={(e) => setCategory(e.target.value)}
                 className="w-full text-xs sm:text-sm border border-slate-300 rounded-xl p-2.5 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium text-slate-800 cursor-pointer"
               >
-                <option value="Features">Feature Request (Weighing / HACCP / POS)</option>
-                <option value="Usability">Usability &amp; Design Feedback</option>
-                <option value="Hardware">Scale &amp; Label Printer Integration</option>
-                <option value="Pricing">Pricing &amp; Enterprise Licences</option>
-                <option value="Bug">Report an Issue or Bug</option>
-                <option value="Other">Other Operational Feedback</option>
+                <option value="Seafood Quality">Seafood Freshness &amp; Quality</option>
+                <option value="Cold Delivery">Cold-Chain Delivery &amp; Packaging</option>
+                <option value="Storefront">Online Ordering &amp; Storefront</option>
+                <option value="Product Request">Request a New Fish / Seafood Cut</option>
+                <option value="Support">Order Help or Issue</option>
+                <option value="Other">General Feedback</option>
               </select>
             </div>
 

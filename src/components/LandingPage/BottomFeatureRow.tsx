@@ -3,23 +3,37 @@ import {
   Truck, 
   Snowflake, 
   ArrowRight, 
-  Sparkles, 
   Clock, 
-  ShieldCheck, 
   X, 
   CheckCircle2,
-  IceCream
+  Package
 } from 'lucide-react';
-import { COOL_TREATS_PRODUCTS } from '../../data/amansoceanProducts';
+import {
+  AmansoceanProduct,
+  COOL_TREATS_PRODUCTS,
+  AMANSOCEAN_CATEGORIES,
+  AMANSOCEAN_CONTACT_PHONE,
+  AMANSOCEAN_LOCATION,
+  CURRENCY,
+} from '../../data/amansoceanProducts';
 import { useCart } from '../../context/CartContext';
 
-export const BottomFeatureRow: React.FC = () => {
+interface BottomFeatureRowProps {
+  coolTreatsProducts?: AmansoceanProduct[];
+}
+
+export const BottomFeatureRow: React.FC<BottomFeatureRowProps> = ({
+  coolTreatsProducts,
+}) => {
   const { addToCart, setIsCartOpen } = useCart();
   const [activeLearnMore, setActiveLearnMore] = useState<'delivery' | 'freshness' | null>(null);
 
   const handleOrderTreats = () => {
-    // Add cool treats sample to cart or open cart
-    const treat = COOL_TREATS_PRODUCTS[0];
+    const sourceList =
+      coolTreatsProducts && coolTreatsProducts.length > 0
+        ? coolTreatsProducts
+        : COOL_TREATS_PRODUCTS;
+    const treat = sourceList.find((t) => t.inStock !== false) || sourceList[0];
     if (treat) {
       addToCart(treat, 1);
       setIsCartOpen(true);
@@ -189,39 +203,42 @@ export const BottomFeatureRow: React.FC = () => {
             />
 
             <div className="relative z-10 space-y-4">
-              
-              {/* Cold drink / ice cream image */}
+              {/* Fish & Shrimp Powders Local Artwork */}
               <div className="w-full h-48 sm:h-52 rounded-2xl overflow-hidden bg-white/10 border-2 border-white/20 shadow-md relative">
                 <img
-                  src="https://images.unsplash.com/photo-1563805042-7684c019e1cb?auto=format&fit=crop&w=800&q=80"
-                  alt="Amansocean Cool Treats Ice Cream and Sorbet"
+                  src={AMANSOCEAN_CATEGORIES[3].image}
+                  alt="Amans Ocean Pure Fish and Shrimp Powders"
+                  referrerPolicy="no-referrer"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                 />
-                <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-[#FFC400] text-[#1A1A1A] text-xs font-black uppercase tracking-wider flex items-center gap-1 shadow-sm">
-                  <IceCream className="w-3.5 h-3.5" />
-                  <span>Artisan Ice</span>
+                <div className="absolute top-3 left-3 px-3 py-1 rounded-md bg-[#FFC400] text-[#1A1A1A] text-xs font-extrabold flex items-center gap-1 shadow-sm">
+                  <Package className="w-3.5 h-3.5" />
+                  <span>{CURRENCY} 50 · {CURRENCY} 100 Packs</span>
                 </div>
               </div>
 
-              {/* Title: Cool Treats */}
-              <h3 className="text-3xl font-extrabold tracking-tight font-heading text-white">
-                Cool Treats
+              {/* Title: Fish & Shrimp Powders + Bulk Offers */}
+              <h3 className="text-2xl sm:text-3xl font-extrabold tracking-tight font-heading text-white">
+                Fish &amp; Shrimp Powders
               </h3>
 
-              {/* Short Description */}
+              {/* Short Description + Flyer Bulk Offer Note */}
               <p className="text-sm text-red-100 font-medium leading-relaxed">
-                Complete your ocean meal with hand-churned Alphonso mango sorbets, dark sea salt gelato, and frosty fruit slushes.
+                100% pure milled Fish Powder and Shrimp Powder in Regular ({CURRENCY} 50) &amp; Large ({CURRENCY} 100) packs. Discounted offers on purchases above 5kg &amp; negotiable wholesale rates.
               </p>
 
+              <div className="text-xs text-amber-200 font-semibold">
+                {AMANSOCEAN_LOCATION} · Tel {AMANSOCEAN_CONTACT_PHONE}
+              </div>
             </div>
 
-            {/* Yellow "Order Now" Button */}
+            {/* Yellow "Add Powder Pack" Button */}
             <div className="relative z-10 pt-6">
               <button
                 onClick={handleOrderTreats}
-                className="w-full py-4 rounded-full bg-[#FFC400] text-[#1A1A1A] font-extrabold text-base hover:bg-[#ffcf33] transition-all duration-200 shadow-lg hover-lift flex items-center justify-center gap-2 group-hover:shadow-xl"
+                className="w-full py-4 rounded-full bg-[#FFC400] text-[#1A1A1A] font-extrabold text-base hover:bg-[#ffcf33] transition-all duration-200 shadow-lg hover-lift flex items-center justify-center gap-2 group-hover:shadow-xl cursor-pointer whitespace-nowrap"
               >
-                <span>Order Now</span>
+                <span>Add Powder Pack</span>
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </button>
             </div>

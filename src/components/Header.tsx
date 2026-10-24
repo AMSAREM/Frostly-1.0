@@ -23,7 +23,8 @@ import {
   KeyRound,
   RefreshCw,
   LogOut,
-  Building2
+  Building2,
+  Monitor
 } from 'lucide-react';
 import { SystemNotification } from '../types';
 import { syncManager, SyncState } from '../sync/syncManager';
@@ -55,6 +56,7 @@ interface HeaderProps {
   userEmail?: string | null;
   showPlatformConsole?: boolean;
   companyName?: string;
+  onOpenPosCustomerView?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -80,7 +82,8 @@ export const Header: React.FC<HeaderProps> = ({
   userRole = null,
   userEmail = null,
   showPlatformConsole = false,
-  companyName
+  companyName,
+  onOpenPosCustomerView
 }) => {
   const [showNotifMenu, setShowNotifMenu] = useState(false);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
@@ -470,6 +473,21 @@ export const Header: React.FC<HeaderProps> = ({
                       >
                         <Download className="w-3.5 h-3.5 text-indigo-600" />
                         <span>Install Amansocean App</span>
+                      </button>
+                    )}
+
+                    {onOpenPosCustomerView && (
+                      <button
+                        type="button"
+                        id="header-menu-pos-customer-btn"
+                        onClick={() => {
+                          setShowUserMenu(false);
+                          onOpenPosCustomerView();
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer text-left"
+                      >
+                        <Monitor className="w-3.5 h-3.5 text-rose-600" />
+                        <span>POS Customer Display</span>
                       </button>
                     )}
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, Snowflake, ShieldCheck, Flame, Star, Sparkles } from 'lucide-react';
+import { ArrowRight, Snowflake, Flame, Star } from 'lucide-react';
 
 interface HeroSectionProps {
   onShopNow?: () => void;
@@ -76,15 +76,15 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onShopNow }) => {
             {/* Trust Highlights */}
             <div className="pt-4 grid grid-cols-3 gap-3 border-t border-white/20 max-w-lg">
               <div className="space-y-0.5">
-                <div className="text-xl sm:text-2xl font-black text-[#FFC400]">2 Hrs</div>
+                <div className="text-xl sm:text-2xl font-black text-[#FFC400] tabular-nums">2 Hrs</div>
                 <div className="text-[11px] sm:text-xs text-white/80 font-medium leading-tight">Catch-to-Freeze Peak Lock</div>
               </div>
               <div className="space-y-0.5">
-                <div className="text-xl sm:text-2xl font-black text-[#FFC400]">100%</div>
+                <div className="text-xl sm:text-2xl font-black text-[#FFC400] tabular-nums">100%</div>
                 <div className="text-[11px] sm:text-xs text-white/80 font-medium leading-tight">Frozen Solid Guarantee</div>
               </div>
               <div className="space-y-0.5">
-                <div className="text-xl sm:text-2xl font-black text-[#FFC400]">4.9 ★</div>
+                <div className="text-xl sm:text-2xl font-black text-[#FFC400] tabular-nums">4.9 ★</div>
                 <div className="text-[11px] sm:text-xs text-white/80 font-medium leading-tight">15,000+ Happy Foodies</div>
               </div>
             </div>
@@ -105,6 +105,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onShopNow }) => {
                 <img
                   src="https://images.unsplash.com/photo-1565680018434-b513d5e5fd47?auto=format&fit=crop&w=1000&q=85"
                   alt="Amansocean Premium Jumbo Wild Tiger Prawns and Seafood Platter"
+                  referrerPolicy="no-referrer"
                   className="w-full h-72 sm:h-96 lg:h-[440px] object-cover object-center"
                 />
 

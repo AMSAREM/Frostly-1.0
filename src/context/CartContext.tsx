@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { AmansoceanProduct } from '../data/amansoceanProducts';
+import { trackStorefrontEvent } from '../services/storefrontService';
 
 export interface CartItem {
   product: AmansoceanProduct;
@@ -11,6 +12,7 @@ interface CartContextType {
   addToCart: (product: AmansoceanProduct, quantity?: number) => void;
   removeFromCart: (productId: string) => void;
   updateQuantity: (productId: string, quantity: number) => void;
+  syncCatalogProducts: (liveProducts: AmansoceanProduct[]) => void;
   clearCart: () => void;
   isCartOpen: boolean;
   setIsCartOpen: (open: boolean) => void;
@@ -45,16 +47,29 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [items]);
 
   const addToCart = (product: AmansoceanProduct, quantity = 1) => {
+    const maxStock =
+      typeof product.stockKg === 'number' ? Math.max(0, Math.floor(product.stockKg)) : Infinity;
+    if (product.inStock === false || maxStock <= 0) {
+      return;
+    }
+
     setItems((prev) => {
       const existing = prev.find((item) => item.product.id === product.id);
       if (existing) {
+        const nextQty = Math.min(maxStock, existing.quantity + quantity);
         return prev.map((item) =>
           item.product.id === product.id
-            ? { ...item, quantity: item.quantity + quantity }
+            ? { product, quantity: nextQty }
             : item
         );
       }
-      return [...prev, { product, quantity }];
+      return [...prev, { product, quantity: Math.min(maxStock, quantity) }];
+    });
+
+    trackStorefrontEvent('add_to_cart', {
+      productId: product.id,
+      productName: product.name,
+      cartValue: Number((product.price * quantity).toFixed(2)),
     });
 
     // Trigger bounce animation
@@ -74,11 +89,38 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     setItems((prev) =>
-      prev.map((item) =>
-        item.product.id === productId ? { ...item, quantity } : item
-      )
+      prev.map((item) => {
+        if (item.product.id !== productId) return item;
+        const maxStock =
+          typeof item.product.stockKg === 'number'
+            ? Math.max(0, Math.floor(item.product.stockKg))
+            : Infinity;
+        return { ...item, quantity: Math.min(maxStock, quantity) };
+      })
     );
   };
+
+  const syncCatalogProducts = useCallback((liveProducts: AmansoceanProduct[]) => {
+    if (!Array.isArray(liveProducts) || liveProducts.length === 0) return;
+    const byId = new Map(liveProducts.map((p) => [p.id, p]));
+    setItems((prev) =>
+      prev
+        .map((item) => {
+          const fresh = byId.get(item.product.id);
+          if (!fresh) return item;
+          const maxStock =
+            typeof fresh.stockKg === 'number' ? Math.max(0, Math.floor(fresh.stockKg)) : Infinity;
+          if (maxStock <= 0 || fresh.inStock === false) {
+            return null;
+          }
+          return {
+            product: fresh,
+            quantity: Math.min(item.quantity, maxStock),
+          };
+        })
+        .filter((it): it is CartItem => it !== null)
+    );
+  }, []);
 
   const clearCart = () => {
     setItems([]);
@@ -94,6 +136,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addToCart,
         removeFromCart,
         updateQuantity,
+        syncCatalogProducts,
         clearCart,
         isCartOpen,
         setIsCartOpen,

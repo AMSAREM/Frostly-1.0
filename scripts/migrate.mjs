@@ -64,7 +64,8 @@ const defaultMigrationFiles = [
   '022_inventory_adjustment_account.sql',
   '023_batch_image_storage.sql',
   '024_customer_ledger_payment_enhancements.sql',
-  '025_supplier_ledger_payment_enhancements.sql'
+  '025_supplier_ledger_payment_enhancements.sql',
+  '026_amansocean_storefront.sql'
 ];
 
 // Support running a single target migration if specified via CLI argument (e.g. node scripts/migrate.mjs 011_multi_tenant.sql)

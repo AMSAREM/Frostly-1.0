@@ -45,8 +45,51 @@ export interface DatabaseRetailTransactionRow {
   items?: any[];
 }
 
+export function parseProductOriginMeta(rawOrigin?: string | null): {
+  cleanOrigin: string;
+  linkedBatchId?: string;
+  storageZone?: string;
+} {
+  let cleanOrigin = String(rawOrigin || '');
+  let linkedBatchId: string | undefined;
+  let storageZone: string | undefined;
+
+  if (cleanOrigin.includes('<!--frostly_lot:')) {
+    try {
+      const match = cleanOrigin.match(/<!--frostly_lot:(\{.*?\})-->/);
+      if (match && match[1]) {
+        const parsed = JSON.parse(match[1]);
+        if (parsed.linkedBatchId) linkedBatchId = String(parsed.linkedBatchId);
+        if (parsed.storageZone) storageZone = String(parsed.storageZone);
+      }
+    } catch {
+      // ignore malformed comment metadata
+    }
+    cleanOrigin = cleanOrigin.replace(/<!--frostly_lot:.*?-->/g, '').trim();
+  }
+
+  return { cleanOrigin, linkedBatchId, storageZone };
+}
+
+export function encodeProductOriginMeta(
+  origin: string,
+  linkedBatchId?: string | null,
+  storageZone?: string | null
+): string {
+  const { cleanOrigin } = parseProductOriginMeta(origin);
+  if (!linkedBatchId && !storageZone) {
+    return cleanOrigin;
+  }
+  const meta = JSON.stringify({
+    linkedBatchId: linkedBatchId || null,
+    storageZone: storageZone || null,
+  });
+  return cleanOrigin ? `${cleanOrigin} <!--frostly_lot:${meta}-->` : `<!--frostly_lot:${meta}-->`;
+}
+
 export const productMapper = {
   toDomain(row: DatabaseProductRow): RetailWholesaleProduct {
+    const meta = parseProductOriginMeta(row.origin);
     return {
       id: row.id,
       speciesId: row.species_id,
@@ -63,15 +106,20 @@ export const productMapper = {
       retailPackSize: row.retail_pack_size || undefined,
       sku: row.sku,
       imageUrl: row.image_url,
-      origin: row.origin,
+      origin: meta.cleanOrigin,
       isAvailableForRetail: Boolean(row.is_available_for_retail),
       isAvailableForWholesale: Boolean(row.is_available_for_wholesale),
-      linkedBatchId: row.linked_batch_id || undefined,
-      storageZone: (row.storage_zone as any) || undefined,
+      linkedBatchId: row.linked_batch_id || meta.linkedBatchId || undefined,
+      storageZone: (row.storage_zone || meta.storageZone || undefined) as any,
     };
   },
 
   toDatabase(domain: RetailWholesaleProduct): Partial<DatabaseProductRow> {
+    const encodedOrigin = encodeProductOriginMeta(
+      domain.origin,
+      domain.linkedBatchId,
+      domain.storageZone
+    );
     return {
       id: domain.id,
       species_id: domain.speciesId,
@@ -88,11 +136,10 @@ export const productMapper = {
       retail_pack_size: domain.retailPackSize || null,
       sku: domain.sku,
       image_url: domain.imageUrl,
-      origin: domain.origin,
+      origin: encodedOrigin,
       is_available_for_retail: domain.isAvailableForRetail,
       is_available_for_wholesale: domain.isAvailableForWholesale,
-      linked_batch_id: domain.linkedBatchId || null,
-      storage_zone: domain.storageZone || null,
+      is_active: true,
     };
   },
 };

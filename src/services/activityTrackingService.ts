@@ -652,8 +652,20 @@ export async function trackFeatureAction(
   // 2. Persist to Supabase if configured
   if (isSupabaseConfigured) {
     try {
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      let resolvedUserId: string | null = uuidRegex.test(userId) ? userId : null;
+      if (!resolvedUserId) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const sessionUid = sessionData?.session?.user?.id;
+        if (sessionUid && uuidRegex.test(sessionUid)) {
+          resolvedUserId = sessionUid;
+          userEmail = sessionData.session?.user?.email || userEmail;
+        }
+      }
+
       await supabase.from('user_feature_usage_logs').insert({
-        user_id: userId,
+        user_id: resolvedUserId,
         organization_id: orgId,
         user_email: userEmail,
         user_name: userName,
@@ -733,6 +745,7 @@ export async function fetchFeatureUsageAnalytics(days: number = 30): Promise<{
       const { data, error } = await supabase
         .from('user_feature_usage_logs')
         .select('*')
+        .neq('category', 'storefront_internal')
         .gte('created_at', cutoff)
         .order('created_at', { ascending: false })
         .limit(1000);
