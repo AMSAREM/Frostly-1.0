@@ -1,6 +1,39 @@
 import { Session, User } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../utils/supabase';
 import { validateEmail } from '../utils/emailValidation';
+import { validatePassword } from '../utils/passwordValidation';
+
+interface FailedLoginTracker {
+  count: number;
+  lockedUntil: number;
+}
+const failedLoginMap = new Map<string, FailedLoginTracker>();
+
+export function checkRateLimit(email: string): { isLocked: boolean; remainingSeconds: number } {
+  const tracker = failedLoginMap.get(email.toLowerCase());
+  if (!tracker) return { isLocked: false, remainingSeconds: 0 };
+  const now = Date.now();
+  if (tracker.lockedUntil > now) {
+    return { isLocked: true, remainingSeconds: Math.ceil((tracker.lockedUntil - now) / 1000) };
+  }
+  return { isLocked: false, remainingSeconds: 0 };
+}
+
+export function recordFailedAttempt(email: string): void {
+  const key = email.toLowerCase();
+  const tracker = failedLoginMap.get(key) || { count: 0, lockedUntil: 0 };
+  tracker.count += 1;
+  if (tracker.count >= 5) {
+    tracker.lockedUntil = Date.now() + 60 * 1000; // 60s lockout
+    tracker.count = 0;
+  }
+  failedLoginMap.set(key, tracker);
+}
+
+export function clearFailedAttempts(email: string): void {
+  failedLoginMap.delete(email.toLowerCase());
+}
+
 
 export type PlanTier = 'starter' | 'standard' | 'enterprise';
 export type SubscriptionStatus = 'trial' | 'active' | 'past_due' | 'canceled' | 'suspended';
@@ -432,6 +465,14 @@ export async function signIn(
     return { session: null, error: emailCheck.error || 'Please provide a valid authentic email address.' };
   }
 
+  const limitCheck = checkRateLimit(emailCheck.normalizedEmail);
+  if (limitCheck.isLocked) {
+    return {
+      session: null,
+      error: `Too many failed login attempts. For security, please wait ${limitCheck.remainingSeconds} seconds before trying again.`,
+    };
+  }
+
   if (!isSupabaseConfigured) {
     const isCreator = 
       (Boolean(DEFAULT_CREATOR_EMAIL) && emailCheck.normalizedEmail.toLowerCase() === DEFAULT_CREATOR_EMAIL.toLowerCase()) || 
@@ -553,9 +594,11 @@ export async function signIn(
     });
 
     if (error) {
+      recordFailedAttempt(emailCheck.normalizedEmail);
       return { session: null, error: error.message };
     }
 
+    clearFailedAttempts(emailCheck.normalizedEmail);
     cachedSession = data.session;
     const profile = await getStaffProfile(true);
 
@@ -572,6 +615,7 @@ export async function signIn(
 
     return { session: data.session, error: null };
   } catch (err: any) {
+    recordFailedAttempt(emailCheck.normalizedEmail);
     return { session: null, error: err?.message || 'Authentication failed' };
   }
 }
@@ -991,6 +1035,15 @@ export async function signUpAndCreateOrganization(
   }
   const cleanEmail = emailCheck.normalizedEmail;
 
+  const passwordCheck = validatePassword(password);
+  if (!passwordCheck.isValid) {
+    return {
+      session: null,
+      profile: null,
+      error: passwordCheck.errorMessage || 'Password does not satisfy enterprise security requirements.',
+    };
+  }
+
   if (!isSupabaseConfigured) {
     const orgRes = await createOrganizationAndAdmin(orgName, adminFullName, adminDepartment, options);
     if (!orgRes.success) {
@@ -1162,6 +1215,11 @@ export async function setPasswordAndActivate(
   email: string,
   newPassword: string
 ): Promise<{ success: boolean; error: string | null }> {
+  const passCheck = validatePassword(newPassword);
+  if (!passCheck.isValid) {
+    return { success: false, error: passCheck.errorMessage || 'Password does not meet enterprise security requirements.' };
+  }
+
   if (!isSupabaseConfigured) {
     return { success: false, error: 'Supabase client is not configured' };
   }
@@ -1250,6 +1308,11 @@ export async function signUpAndAcceptInvite(
     return { session: null, profile: null, error: emailCheck.error || 'Please provide a valid authentic email address.' };
   }
   const cleanEmail = emailCheck.normalizedEmail;
+
+  const passCheck = validatePassword(password);
+  if (!passCheck.isValid) {
+    return { session: null, profile: null, error: passCheck.errorMessage || 'Password does not satisfy complexity requirements.' };
+  }
 
   if (!isSupabaseConfigured) {
     return { session: null, profile: null, error: 'Supabase client is not configured' };
@@ -1540,6 +1603,14 @@ export async function addWorkerToWorkspace(params: AddWorkerParams): Promise<{
     return { success: false, error: emailCheck.error || 'Please provide a valid authentic work email address.' };
   }
   const cleanEmail = emailCheck.normalizedEmail;
+
+  if (params.password) {
+    const passCheck = validatePassword(params.password);
+    if (!passCheck.isValid) {
+      return { success: false, error: passCheck.errorMessage || 'Worker password does not meet complexity requirements.' };
+    }
+  }
+
   const sanitizedParams = { ...params, email: cleanEmail };
 
   try {
@@ -1672,6 +1743,11 @@ export async function resetWorkerPassword(
   newPassword: string,
   organizationName?: string
 ): Promise<{ success: boolean; error?: string }> {
+  const passCheck = validatePassword(newPassword);
+  if (!passCheck.isValid) {
+    return { success: false, error: passCheck.errorMessage || 'New password does not meet security requirements.' };
+  }
+
   try {
     const headers = await getAuthHeaders(true);
     const res = await fetch(`/api/tenant/workers/${encodeURIComponent(workerId)}/reset-password`, {
@@ -1688,6 +1764,35 @@ export async function resetWorkerPassword(
     return { success: false, error: err?.message || 'Network error' };
   }
 }
+
+/**
+ * Updates the current authenticated user's own password with enterprise security validation.
+ */
+export async function changeCurrentUserPassword(
+  newPassword: string
+): Promise<{ success: boolean; error?: string }> {
+  const passCheck = validatePassword(newPassword);
+  if (!passCheck.isValid) {
+    return { success: false, error: passCheck.errorMessage || 'New password does not meet security requirements.' };
+  }
+
+  if (!isSupabaseConfigured) {
+    return { success: true };
+  }
+
+  try {
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to update user password.' };
+  }
+}
+
 
 
 

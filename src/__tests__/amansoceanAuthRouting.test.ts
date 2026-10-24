@@ -75,7 +75,7 @@ describe('Amansocean Workspace Authentication & Tenant Routing', () => {
     const customOrgName = 'Atlantic Catch Co';
     const regResult = await signUpAndCreateOrganization(
       'sarah@atlanticcatch.com',
-      'securepass123',
+      'SecurePass#2026!',
       customOrgName,
       'Sarah Connor',
       'Operations'
@@ -87,7 +87,7 @@ describe('Amansocean Workspace Authentication & Tenant Routing', () => {
     expect(assignedOrgId).toBeDefined();
 
     // 2. Sign in with the registered credentials
-    const { session, error } = await signIn('sarah@atlanticcatch.com', 'securepass123');
+    const { session, error } = await signIn('sarah@atlanticcatch.com', 'SecurePass#2026!');
     expect(error).toBeNull();
     expect(session).not.toBeNull();
 

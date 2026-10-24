@@ -2135,6 +2135,7 @@ export default function App() {
         {activeTab === 'inventory' && (
           <InventoryLedgerView
             batches={batches}
+            staffProfile={staffProfile}
             products={products}
             adjustmentAccounts={adjustmentAccounts}
             stockAdjustments={stockAdjustments}

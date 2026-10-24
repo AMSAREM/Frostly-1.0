@@ -34,6 +34,9 @@ import {
   StaffProfile,
 } from '../data/auth';
 import { AddWorkerModal } from './AddWorkerModal';
+import { validatePassword, generateSecurePassword } from '../utils/passwordValidation';
+import { PasswordValidationFeedback } from './PasswordValidationFeedback';
+import { RestrictedAccessNotice, canUserPerform } from '../utils/rbac';
 
 interface WorkersManagementTabProps {
   staffProfile: StaffProfile | null;
@@ -79,8 +82,13 @@ export const WorkersManagementTab: React.FC<WorkersManagementTabProps> = ({
 
   // Copy state
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  const hasWorkerPermission = canUserPerform(staffProfile?.role, 'manage_workers');
 
   const loadWorkers = async (isManualRefresh = false) => {
+    if (!hasWorkerPermission) {
+      setLoading(false);
+      return;
+    }
     if (isManualRefresh) setRefreshing(true);
     else setLoading(true);
 
@@ -195,8 +203,10 @@ export const WorkersManagementTab: React.FC<WorkersManagementTabProps> = ({
   };
 
   const handleExecutePasswordReset = async () => {
-    if (!resetTargetWorker || !newPassword || newPassword.length < 6) {
-      setErrorMessage('New password must be at least 6 characters.');
+    if (!resetTargetWorker) return;
+    const passCheck = validatePassword(newPassword);
+    if (!passCheck.isValid) {
+      setErrorMessage(passCheck.errorMessage || 'New password does not meet security criteria.');
       return;
     }
 
@@ -278,6 +288,17 @@ export const WorkersManagementTab: React.FC<WorkersManagementTabProps> = ({
   };
 
   const seatUsagePercent = Math.min(100, Math.round((seats.used / Math.max(1, seats.max)) * 100));
+
+  if (!hasWorkerPermission) {
+    return (
+      <RestrictedAccessNotice
+        featureName="Staff & Worker Access Management"
+        userRole={staffProfile?.role}
+        requiredRole="Administrator"
+        message="Access to view, invite, or modify staff members and operational roles is restricted to Organization Administrators."
+      />
+    );
+  }
 
   return (
     <div id="workers-management-tab" className="space-y-6">
@@ -834,12 +855,7 @@ export const WorkersManagementTab: React.FC<WorkersManagementTabProps> = ({
                   <label className="font-semibold text-slate-700">New Password</label>
                   <button
                     type="button"
-                    onClick={() => {
-                      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$';
-                      let gen = '';
-                      for (let i = 0; i < 10; i++) gen += chars.charAt(Math.floor(Math.random() * chars.length));
-                      setNewPassword(gen);
-                    }}
+                    onClick={() => setNewPassword(generateSecurePassword(12))}
                     className="text-[11px] font-bold text-blue-600 hover:text-blue-800"
                   >
                     Generate Strong Password
@@ -847,10 +863,14 @@ export const WorkersManagementTab: React.FC<WorkersManagementTabProps> = ({
                 </div>
                 <input
                   type="text"
-                  placeholder="e.g. Frost#New2026"
+                  placeholder="Assign new password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full p-2.5 font-mono bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full p-2.5 font-mono bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs"
+                />
+                <PasswordValidationFeedback
+                  password={newPassword}
+                  onGeneratePassword={(gen) => setNewPassword(gen)}
                 />
               </div>
             </div>

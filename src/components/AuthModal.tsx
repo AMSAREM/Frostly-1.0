@@ -18,7 +18,9 @@ import {
   Ticket,
   Copy,
   Check,
-  MailCheck
+  MailCheck,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { 
   signIn, 
@@ -39,7 +41,9 @@ import { isSupabaseConfigured } from '../utils/supabase';
 import { syncManager } from '../sync/syncManager';
 import { Session } from '@supabase/supabase-js';
 import { validateEmail } from '../utils/emailValidation';
+import { validatePassword } from '../utils/passwordValidation';
 import { EmailValidationFeedback } from './EmailValidationFeedback';
+import { PasswordValidationFeedback } from './PasswordValidationFeedback';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -57,6 +61,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
   // Sign In inputs
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   // New Org inputs
   const [orgName, setOrgName] = useState('');
@@ -177,8 +182,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
       setError(emailCheck.error || 'Please enter a valid administrator work email address');
       return;
     }
-    if (!password) {
-      setError('Please enter admin password');
+    const passCheck = validatePassword(password);
+    if (!passCheck.isValid) {
+      setError(passCheck.errorMessage || 'Please ensure your password satisfies all security criteria.');
       return;
     }
 
@@ -243,8 +249,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
       setError(emailCheck.error || 'Please enter a valid work email address');
       return;
     }
-    if (!password) {
-      setError('Please enter your desired password');
+    const invitePassCheck = validatePassword(password);
+    if (!invitePassCheck.isValid) {
+      setError(invitePassCheck.errorMessage || 'Please ensure your chosen password satisfies all security criteria.');
       return;
     }
 
@@ -721,14 +728,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
 
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">Password *</label>
-                    <input
-                      id="create-org-password-input"
-                      type="password"
-                      required
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    <div className="relative">
+                      <input
+                        id="create-org-password-input"
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        placeholder="Assign administrator password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-3 pr-9 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                      >
+                        {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                    <PasswordValidationFeedback
+                      password={password}
+                      onGeneratePassword={(gen) => setPassword(gen)}
                     />
                   </div>
 
@@ -812,14 +832,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onAuthSuc
 
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">Choose Password *</label>
-                    <input
-                      id="accept-invite-password-input"
-                      type="password"
-                      required
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    <div className="relative">
+                      <input
+                        id="accept-invite-password-input"
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        placeholder="Assign your staff password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-3 pr-9 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                      >
+                        {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                    <PasswordValidationFeedback
+                      password={password}
+                      onGeneratePassword={(gen) => setPassword(gen)}
                     />
                   </div>
 

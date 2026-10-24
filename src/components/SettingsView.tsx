@@ -28,14 +28,19 @@ import {
   CreditCard,
   Cloud,
   Sparkles,
-  Users
+  Users,
+  KeyRound,
+  Lock
 } from 'lucide-react';
 import { AppSettings, InventoryBatch, ClientOrder, Customer, Supplier, RetailWholesaleProduct, RetailTransaction, PurchaseOrderLanding, FinancialLedgerEntry } from '../types';
-import { StaffProfile } from '../data/auth';
+import { StaffProfile, changeCurrentUserPassword } from '../data/auth';
 import { SubscriptionBillingPanel } from './SubscriptionBillingPanel';
 import { PlatformConsoleView } from './PlatformConsoleView';
 import { WorkersManagementTab } from './WorkersManagementTab';
 import { syncManager, SyncState } from '../sync/syncManager';
+import { validatePassword } from '../utils/passwordValidation';
+import { PasswordValidationFeedback } from './PasswordValidationFeedback';
+import { canUserPerform } from '../utils/rbac';
 
 interface SettingsViewProps {
   settings: AppSettings;
@@ -52,7 +57,7 @@ interface SettingsViewProps {
   onRefreshProfile?: () => Promise<void>;
   showPlatformConsole?: boolean;
   onOpenOnboardingWizard?: () => void;
-  initialCategory?: 'profile' | 'workers' | 'subscription' | 'platform' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data';
+  initialCategory?: 'profile' | 'workers' | 'security' | 'subscription' | 'platform' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data';
   onRestoreAllData: (importedData: {
     batches?: InventoryBatch[];
     orders?: ClientOrder[];
@@ -86,9 +91,51 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onRestoreAllData,
   onResetToDefaults
 }) => {
-  const [activeCategory, setActiveCategory] = useState<'profile' | 'workers' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data' | 'subscription' | 'platform'>(
+  const [activeCategory, setActiveCategory] = useState<'profile' | 'workers' | 'security' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data' | 'subscription' | 'platform'>(
     initialCategory || 'profile'
   );
+
+  const canEditSettings = canUserPerform(staffProfile?.role, 'manage_settings');
+
+  // Account Password Update State
+  const [newAccountPassword, setNewAccountPassword] = useState('');
+  const [confirmAccountPassword, setConfirmAccountPassword] = useState('');
+  const [passwordChangeSuccess, setPasswordChangeSuccess] = useState<string | null>(null);
+  const [passwordChangeError, setPasswordChangeError] = useState<string | null>(null);
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordChangeSuccess(null);
+    setPasswordChangeError(null);
+
+    const check = validatePassword(newAccountPassword);
+    if (!check.isValid) {
+      setPasswordChangeError(check.errorMessage || 'Password does not meet enterprise security criteria.');
+      return;
+    }
+
+    if (newAccountPassword !== confirmAccountPassword) {
+      setPasswordChangeError('Passwords do not match. Please verify your password confirmation.');
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+    try {
+      const res = await changeCurrentUserPassword(newAccountPassword);
+      if (res.success) {
+        setPasswordChangeSuccess('Password updated successfully! All future sessions will require your new credentials.');
+        setNewAccountPassword('');
+        setConfirmAccountPassword('');
+      } else {
+        setPasswordChangeError(res.error || 'Failed to update account password.');
+      }
+    } catch (err: any) {
+      setPasswordChangeError(err?.message || 'Error updating password.');
+    } finally {
+      setIsUpdatingPassword(false);
+    }
+  };
 
   React.useEffect(() => {
     if (initialCategory) {
@@ -219,6 +266,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const navCategories = [
     { id: 'profile', label: 'Plant & Profile', icon: Building2, desc: 'Enterprise registration & facility specs' },
     { id: 'workers', label: 'Workers & Team', icon: Users, desc: 'Add workers, manage roles & seats' },
+    { id: 'security', label: 'Security & Password', icon: KeyRound, desc: 'Update credentials & security posture' },
     { id: 'subscription', label: 'Subscription & Licensing', icon: CreditCard, desc: 'Plan tiers, staff seats & Stripe billing' },
     ...(showPlatformConsole ? [{ id: 'platform', label: 'Platform Console', icon: ShieldCheck, desc: 'Cross-tenant oversight & manual MoMo billing' }] : []),
     { id: 'coldchain', label: 'Cold-Chain & HACCP', icon: ThermometerSnowflake, desc: 'Temperature alerts & critical limits' },
@@ -254,7 +302,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           )}
 
-          {activeCategory !== 'subscription' && activeCategory !== 'platform' && activeCategory !== 'workers' && (
+          {activeCategory !== 'subscription' && activeCategory !== 'platform' && activeCategory !== 'workers' && activeCategory !== 'security' && (
             <button
               id="settings-save-top-btn"
               onClick={handleSave}
@@ -373,6 +421,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <h2 className="text-sm font-bold text-slate-900 font-heading">Enterprise & Facility Profile</h2>
                   <p className="text-xs text-slate-500">Official company entity names, inspection badges, and tax settings.</p>
                 </div>
+
+                {!canEditSettings && (
+                  <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 flex items-start gap-3">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                    <div className="text-xs text-amber-900">
+                      <span className="font-bold">Read-Only Notice:</span> Your assigned role ({staffProfile?.role || 'Staff'}) has view-only permissions for enterprise plant settings. Changes require administrative clearance.
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="sm:col-span-2 space-y-1">
@@ -1038,8 +1095,106 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             )}
 
+            {/* Category: Security & Password Management */}
+            {activeCategory === 'security' && (
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-6 animate-in fade-in">
+                <div className="border-b border-slate-100 pb-3 flex items-start justify-between">
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-900 font-heading">Security & Password Management</h2>
+                    <p className="text-xs text-slate-500">Update your account login password with enterprise-grade validation.</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-[11px] font-bold text-slate-700">
+                    <Lock className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Role: {staffProfile?.role || 'Staff'}</span>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                    <span>Active Session & Access Level</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-xs text-slate-600">
+                    <div>
+                      <span className="text-slate-400 block text-[10px] font-semibold uppercase">Logged In As</span>
+                      <span className="font-bold text-slate-900">{staffProfile?.name || staffProfile?.email || 'Current User'}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px] font-semibold uppercase">Account Email</span>
+                      <span className="font-mono-code text-slate-800">{staffProfile?.email || 'N/A'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <form onSubmit={handleChangePassword} className="space-y-4 max-w-xl">
+                  {passwordChangeSuccess && (
+                    <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-start gap-2.5 text-xs text-emerald-900">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+                      <span>{passwordChangeSuccess}</span>
+                    </div>
+                  )}
+
+                  {passwordChangeError && (
+                    <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 flex items-start gap-2.5 text-xs text-rose-900">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
+                      <span>{passwordChangeError}</span>
+                    </div>
+                  )}
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                      <span>New Secure Password</span>
+                      <span className="text-[10px] font-normal text-slate-400">Min 8 chars, uppercase, lowercase, number, symbol</span>
+                    </label>
+                    <input
+                      type="password"
+                      value={newAccountPassword}
+                      onChange={(e) => setNewAccountPassword(e.target.value)}
+                      placeholder="Enter new password"
+                      required
+                      autoComplete="new-password"
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-800 focus:ring-2 focus:ring-slate-900/20 focus:border-slate-900 transition-colors"
+                    />
+                  </div>
+
+                  <PasswordValidationFeedback
+                    password={newAccountPassword}
+                    onSuggestPassword={(strong) => {
+                      setNewAccountPassword(strong);
+                      setConfirmAccountPassword(strong);
+                    }}
+                  />
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700">Confirm New Password</label>
+                    <input
+                      type="password"
+                      value={confirmAccountPassword}
+                      onChange={(e) => setConfirmAccountPassword(e.target.value)}
+                      placeholder="Re-enter new password to verify"
+                      required
+                      autoComplete="new-password"
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-800 focus:ring-2 focus:ring-slate-900/20 focus:border-slate-900 transition-colors"
+                    />
+                    {confirmAccountPassword && newAccountPassword !== confirmAccountPassword && (
+                      <p className="text-[11px] text-rose-600 font-medium">Passwords do not match</p>
+                    )}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isUpdatingPassword || !newAccountPassword || !confirmAccountPassword || newAccountPassword !== confirmAccountPassword}
+                    className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>{isUpdatingPassword ? 'Updating Credentials...' : 'Update Password'}</span>
+                  </button>
+                </form>
+              </div>
+            )}
+
             {/* Bottom Save Action Bar */}
-            {activeCategory !== 'subscription' && activeCategory !== 'platform' && activeCategory !== 'workers' && (
+            {activeCategory !== 'subscription' && activeCategory !== 'platform' && activeCategory !== 'workers' && activeCategory !== 'security' && (
               <div className="flex items-center justify-between pt-2">
                 <span className="text-xs text-slate-400">
                   All changes take effect immediately across all POS and reporting views.
@@ -1047,8 +1202,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <button
                   type="button"
                   onClick={handleSave}
+                  disabled={!canEditSettings}
                   id="settings-save-bottom-btn"
-                  className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
                 >
                   <Save className="w-4 h-4" />
                   <span>Save All Settings</span>

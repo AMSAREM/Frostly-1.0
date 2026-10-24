@@ -25,6 +25,7 @@ import {
   normalizeOrderPaymentStatus,
 } from './src/mappers/orderMapper';
 import { ensureValidUuid } from './src/mappers/notificationMapper';
+import { validatePassword } from './src/utils/passwordValidation';
 
 dotenv.config();
 
@@ -362,6 +363,15 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       return;
     }
 
+    const passCheck = validatePassword(password);
+    if (!passCheck.isValid) {
+      res.status(400).json({
+        error: passCheck.errorMessage || 'Password does not meet enterprise security requirements.',
+        ruleChecks: passCheck.ruleChecks,
+      });
+      return;
+    }
+
     const adminClient = getSupabaseAdmin();
     if (!adminClient) {
       res.status(500).json({ error: 'Supabase admin client is not configured on the server.' });
@@ -590,6 +600,13 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
     });
   });
 
+  // Password Validation & Security Analysis Endpoint
+  app.post('/api/auth/validate-password', (req, res) => {
+    const { password } = req.body;
+    const result = validatePassword(password || '');
+    res.json(result);
+  });
+
   // Onboarding Bootstrap Endpoint: Ensures tenant organization and admin profile are created reliably
   app.post('/api/tenant/bootstrap-onboarding', async (req, res) => {
     const { userId, email, adminFullName, adminDepartment, options } = req.body;
@@ -767,6 +784,68 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       console.error('[requireTenantAdmin Middleware Error]:', authErr);
       res.status(500).json({ error: authErr?.message || 'Authentication error.' });
     }
+  };
+
+  // Role-Level Security (RLS) Middleware: Enforces that caller holds one of the specified roles
+  const requireTenantRole = (allowedRoles: string[]) => {
+    return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        res.status(401).json({ error: 'Missing or invalid Authorization bearer token.' });
+        return;
+      }
+
+      const token = authHeader.slice(7).trim();
+      if (!token) {
+        res.status(401).json({ error: 'Empty bearer token supplied.' });
+        return;
+      }
+
+      const adminClient = adminClientGetter();
+      if (!adminClient) {
+        res.status(500).json({ error: 'Supabase admin client is not configured.' });
+        return;
+      }
+
+      try {
+        const { data: userData, error: userErr } = await adminClient.auth.getUser(token);
+        if (userErr || !userData?.user) {
+          res.status(401).json({ error: 'Unauthorized: Invalid or expired session token.' });
+          return;
+        }
+
+        const user = userData.user;
+        const { data: callerProfile } = await adminClient
+          .from('staff_profiles')
+          .select('id, organization_id, role, is_active')
+          .eq('id', user.id)
+          .eq('is_active', true)
+          .maybeSingle();
+
+        if (!callerProfile) {
+          res.status(403).json({ error: 'Forbidden: No active staff profile found for authenticated user.' });
+          return;
+        }
+
+        const role = callerProfile.role;
+        const isCreator = role === 'creator';
+        if (!isCreator && !allowedRoles.includes(role)) {
+          res.status(403).json({
+            error: `Forbidden: Your assigned role (${role}) lacks permission for this operation. Required: ${allowedRoles.join(' or ')}.`,
+            currentRole: role,
+            allowedRoles,
+          });
+          return;
+        }
+
+        (req as any).callerUser = user;
+        (req as any).callerProfile = callerProfile;
+        next();
+      } catch (authErr: any) {
+        console.error('[requireTenantRole Middleware Error]:', authErr);
+        res.status(500).json({ error: authErr?.message || 'Authentication error.' });
+      }
+    };
   };
 
   // 1. List Workers and Pending Invites for a Tenant Workspace
@@ -968,7 +1047,16 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       }
       const targetWebsite = websiteUrl || detectedOrigin || 'https://frostly.io';
 
-      if (password && password.trim().length >= 6) {
+      if (password) {
+        const passCheck = validatePassword(password);
+        if (!passCheck.isValid) {
+          res.status(400).json({
+            error: passCheck.errorMessage || 'Worker password does not satisfy security requirements.',
+            ruleChecks: passCheck.ruleChecks,
+          });
+          return;
+        }
+
         // DIRECT ACCOUNT CREATION MODE: Worker can log in immediately
         const cleanPassword = password.trim();
 
@@ -1319,6 +1407,15 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
 
     if (!id || !password) {
       res.status(400).json({ error: 'Worker ID and New Password are required.' });
+      return;
+    }
+
+    const passCheck = validatePassword(password);
+    if (!passCheck.isValid) {
+      res.status(400).json({
+        error: passCheck.errorMessage || 'New password does not satisfy security requirements.',
+        ruleChecks: passCheck.ruleChecks,
+      });
       return;
     }
 

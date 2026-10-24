@@ -47,9 +47,12 @@ import { LotDetailsModal } from './Inventory/LotDetailsModal';
 import { StockAdjustmentModal, StockAdjustmentData } from './Inventory/StockAdjustmentModal';
 import { AdjustmentAccountsModal } from './Inventory/AdjustmentAccountsModal';
 import { BatchImageUploadModal } from './Inventory/BatchImageUploadModal';
+import { StaffProfile } from '../data/auth';
+import { canUserPerform } from '../utils/rbac';
 
 interface InventoryLedgerViewProps {
   batches: InventoryBatch[];
+  staffProfile?: StaffProfile | null;
   products?: RetailWholesaleProduct[];
   adjustmentAccounts?: InventoryAdjustmentAccount[];
   stockAdjustments?: InventoryStockAdjustment[];
@@ -69,6 +72,7 @@ type QuickFilterStatus = 'all' | 'retail_cuts' | 'in_stock' | 'low_stock' | 'fre
 
 export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
   batches = [],
+  staffProfile,
   products = [],
   adjustmentAccounts = [],
   stockAdjustments = [],
@@ -83,6 +87,8 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
   setSearchQuery,
   useImperial
 }) => {
+  const canCreateBatch = canUserPerform(staffProfile?.role, 'create_batch');
+  const canAdjustInventory = canUserPerform(staffProfile?.role, 'adjust_inventory');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedZone, setSelectedZone] = useState<string>('All');
   const [selectedGrade, setSelectedGrade] = useState<string>('All');
@@ -243,13 +249,24 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
               </button>
             )}
 
-            <button
-              onClick={onOpenNewBatch}
-              className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition-all cursor-pointer w-full sm:w-auto"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Intake Landed Catch</span>
-            </button>
+            {canCreateBatch ? (
+              <button
+                onClick={onOpenNewBatch}
+                className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-xs transition-all cursor-pointer w-full sm:w-auto"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Intake Landed Catch</span>
+              </button>
+            ) : (
+              <button
+                disabled
+                title="Intake restricted: Requires Operations or Admin permissions"
+                className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-slate-100 text-slate-400 text-xs font-bold border border-slate-200 cursor-not-allowed w-full sm:w-auto opacity-70"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Intake Landed Catch</span>
+              </button>
+            )}
           </div>
         </div>
 
