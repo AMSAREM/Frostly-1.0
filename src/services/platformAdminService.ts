@@ -169,15 +169,60 @@ export async function checkIsPlatformAdmin(): Promise<boolean> {
   }
 }
 
+async function platformServerFetch(
+  path: string,
+  options: RequestInit = {}
+): Promise<{ ok: boolean; status: number; body: any }> {
+  if (typeof window === 'undefined' || typeof fetch !== 'function') {
+    return { ok: false, status: 0, body: null };
+  }
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    if (!token || token.startsWith('local-token-')) {
+      return { ok: false, status: 0, body: null };
+    }
+    const res = await fetch(path, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...(options.headers || {}),
+      },
+    });
+    const body = await res.json().catch(() => null);
+    return { ok: res.ok, status: res.status, body };
+  } catch {
+    return { ok: false, status: 0, body: null };
+  }
+}
+
 export async function fetchPlatformOrganizations(): Promise<PlatformOrganization[]> {
+  const apiRes = await platformServerFetch('/api/platform/organizations');
+  if (apiRes.ok && Array.isArray(apiRes.body?.organizations)) {
+    const liveOrgs = apiRes.body.organizations.map((d: any) => ({
+      ...d,
+      staff_count: Number(d.staff_count || 0),
+      pending_invites_count: Number(d.pending_invites_count || 0),
+    }));
+    try {
+      localStorage.setItem(STORAGE_KEY_ORGS, JSON.stringify(liveOrgs));
+    } catch {}
+    return liveOrgs;
+  }
+
   try {
     const { data, error } = await supabase.rpc('platform_list_organizations');
     if (!error && Array.isArray(data) && data.length > 0) {
-      return data.map((d: any) => ({
+      const liveOrgs = data.map((d: any) => ({
         ...d,
         staff_count: Number(d.staff_count || 0),
         pending_invites_count: Number(d.pending_invites_count || 0),
       }));
+      try {
+        localStorage.setItem(STORAGE_KEY_ORGS, JSON.stringify(liveOrgs));
+      } catch {}
+      return liveOrgs;
     }
   } catch (err) {
     console.warn('Falling back to local platform organizations storage:', err);
@@ -197,6 +242,14 @@ export async function fetchPlatformOrganizations(): Promise<PlatformOrganization
 }
 
 export async function fetchPlatformAuditLogs(): Promise<PlatformAuditLog[]> {
+  const apiRes = await platformServerFetch('/api/platform/audit-logs');
+  if (apiRes.ok && Array.isArray(apiRes.body?.logs)) {
+    try {
+      localStorage.setItem(STORAGE_KEY_AUDIT, JSON.stringify(apiRes.body.logs));
+    } catch {}
+    return apiRes.body.logs;
+  }
+
   try {
     const { data, error } = await supabase
       .from('platform_audit_logs')
@@ -205,6 +258,9 @@ export async function fetchPlatformAuditLogs(): Promise<PlatformAuditLog[]> {
       .limit(50);
 
     if (!error && Array.isArray(data) && data.length > 0) {
+      try {
+        localStorage.setItem(STORAGE_KEY_AUDIT, JSON.stringify(data));
+      } catch {}
       return data;
     }
   } catch (err) {
@@ -232,6 +288,14 @@ export async function updatePlatformOrganizationSubscription(params: {
   reason: string;
 }): Promise<any> {
   const { orgId, status, planTier, maxSeats, trialEndsAt, reason } = params;
+
+  const apiRes = await platformServerFetch(`/api/platform/organizations/${encodeURIComponent(orgId)}/subscription`, {
+    method: 'POST',
+    body: JSON.stringify({ status, planTier, maxSeats, trialEndsAt, reason }),
+  });
+  if (apiRes.ok && apiRes.body?.success) {
+    return apiRes.body;
+  }
 
   try {
     const { data, error } = await supabase.rpc('platform_update_organization_subscription', {
@@ -310,6 +374,14 @@ export async function updatePlatformOrganizationSubscription(params: {
  * Updates status to 'suspended', invalidates active invites, and writes immutable audit log.
  */
 export async function revokePlatformOrganization(orgId: string, reason: string): Promise<any> {
+  const apiRes = await platformServerFetch(`/api/platform/organizations/${encodeURIComponent(orgId)}/revoke`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+  if (apiRes.ok && apiRes.body?.success) {
+    return apiRes.body;
+  }
+
   try {
     const { data, error } = await supabase.rpc('platform_revoke_organization_access', {
       p_org_id: orgId,
@@ -371,6 +443,14 @@ export async function reinstatePlatformOrganization(
   reason: string,
   targetStatus: 'active' | 'trial' = 'active'
 ): Promise<any> {
+  const apiRes = await platformServerFetch(`/api/platform/organizations/${encodeURIComponent(orgId)}/reinstate`, {
+    method: 'POST',
+    body: JSON.stringify({ reason, targetStatus }),
+  });
+  if (apiRes.ok && apiRes.body?.success) {
+    return apiRes.body;
+  }
+
   try {
     const { data, error } = await supabase.rpc('platform_reinstate_organization_access', {
       p_org_id: orgId,
@@ -432,6 +512,17 @@ export async function deletePlatformOrganization(
   reason: string,
   confirmName?: string
 ): Promise<any> {
+  const apiRes = await platformServerFetch(`/api/platform/organizations/${encodeURIComponent(orgId)}/delete`, {
+    method: 'POST',
+    body: JSON.stringify({ reason, confirmName }),
+  });
+  if (apiRes.status >= 400 && apiRes.body?.error) {
+    throw new Error(apiRes.body.error);
+  }
+  if (apiRes.ok && apiRes.body?.success) {
+    return apiRes.body;
+  }
+
   try {
     const { data, error } = await supabase.rpc('platform_delete_organization', {
       p_org_id: orgId,

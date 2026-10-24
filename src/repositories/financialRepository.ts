@@ -2,6 +2,7 @@ import { BaseRepository } from './base';
 import { FinancialLedgerEntry } from '../types';
 import { financialMapper, DatabaseFinancialEntryRow } from '../mappers/financialMapper';
 import { supabase } from '../utils/supabase';
+import { erpServerUpsert } from '../services/erpPersistenceClient';
 
 export class FinancialRepository extends BaseRepository<FinancialLedgerEntry, DatabaseFinancialEntryRow> {
   constructor() {
@@ -31,6 +32,20 @@ export class FinancialRepository extends BaseRepository<FinancialLedgerEntry, Da
         if (orgId) {
           payload.organization_id = orgId;
         }
+
+        const serverRes = await erpServerUpsert<DatabaseFinancialEntryRow>({
+          tableName: this.tableName,
+          payload,
+          organizationId: orgId,
+        });
+
+        if (serverRes.handled && !serverRes.error) {
+          const created = serverRes.row ? this.toDomain(serverRes.row) : this.toDomain(payload);
+          const current = this.getLocalCache([], orgId);
+          this.setLocalCache([created, ...current.filter((item) => item.id !== created.id)], orgId);
+          return created;
+        }
+
         const { data, error } = await supabase
           .from(this.tableName)
           .insert(payload)
@@ -40,7 +55,7 @@ export class FinancialRepository extends BaseRepository<FinancialLedgerEntry, Da
         if (!error && data) {
           const created = this.toDomain(data);
           const current = this.getLocalCache([], orgId);
-          this.setLocalCache([created, ...current], orgId);
+          this.setLocalCache([created, ...current.filter((item) => item.id !== created.id)], orgId);
           return created;
         } else if (error) {
           console.warn('[FinancialRepository] Insert error:', error.message);
@@ -50,7 +65,7 @@ export class FinancialRepository extends BaseRepository<FinancialLedgerEntry, Da
       }
     }
 
-    return this.save(entry);
+    return this.save(entry, true);
   }
 }
 

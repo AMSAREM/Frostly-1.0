@@ -3,6 +3,32 @@ import { getSession, getStaffProfile, getCurrentOrganizationId } from '../data/a
 import { syncQueue } from '../sync/queue';
 import { SyncOperationType } from '../sync/types';
 import { ensureValidUuid } from '../mappers/notificationMapper';
+import { encodeFinancialDescriptionMeta } from '../mappers/financialMapper';
+import {
+  erpServerQuery,
+  erpServerUpsert,
+  erpServerDelete,
+} from '../services/erpPersistenceClient';
+
+const UUID_PK_TABLES = new Set([
+  'system_notifications',
+  'financial_ledger_entries',
+  'haccp_audit_records',
+  'inventory_adjustments',
+]);
+
+const INSERT_ONLY_TABLES = new Set([
+  'financial_ledger_entries',
+  'haccp_audit_records',
+  'inventory_adjustments',
+]);
+
+const SOFT_DELETE_TABLES = new Set([
+  'retail_wholesale_products',
+  'customers',
+  'suppliers',
+  'inventory_adjustment_accounts',
+]);
 
 export const INVALID_ORG_IDS = new Set([
   'org-frostly-hq',
@@ -34,6 +60,10 @@ export interface RepositoryOptions<TDomain, TDatabaseRow> {
 export class BaseRepository<TDomain, TDatabaseRow> {
   protected static unknownColumnsByTable: Map<string, Set<string>> = new Map([
     ['retail_wholesale_products', new Set(['linked_batch_id', 'storage_zone'])],
+    [
+      'financial_ledger_entries',
+      new Set(['customer_id', 'supplier_id', 'receipt_number', 'voucher_number', 'notes']),
+    ],
   ]);
 
   public static registerMissingColumn(tableName: string, columnName: string) {
@@ -183,6 +213,19 @@ export class BaseRepository<TDomain, TDatabaseRow> {
 
     if (canQuery) {
       try {
+        const serverRes = await erpServerQuery<any>({
+          tableName: this.tableName,
+          organizationId: orgId,
+        });
+
+        if (serverRes.handled && !serverRes.error && Array.isArray(serverRes.rows)) {
+          const domainItems = serverRes.rows
+            .filter((row: any) => row?.is_active !== false)
+            .map((row: any) => this.toDomain(row as unknown as TDatabaseRow));
+          this.setLocalCache(domainItems, orgId);
+          return domainItems;
+        }
+
         let query = supabase
           .from(this.tableName)
           .select('*')
@@ -202,7 +245,9 @@ export class BaseRepository<TDomain, TDatabaseRow> {
         }
 
         if (data && Array.isArray(data)) {
-          const domainItems = data.map((row) => this.toDomain(row as unknown as TDatabaseRow));
+          const domainItems = data
+            .filter((row: any) => row?.is_active !== false)
+            .map((row) => this.toDomain(row as unknown as TDatabaseRow));
           this.setLocalCache(domainItems, orgId);
           return domainItems;
         }
@@ -224,8 +269,21 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     if (canQuery) {
       try {
         let lookupId = id;
-        if (this.tableName === 'system_notifications') {
+        if (UUID_PK_TABLES.has(this.tableName)) {
           lookupId = ensureValidUuid(id);
+        }
+
+        const serverRes = await erpServerQuery<any>({
+          tableName: this.tableName,
+          organizationId: orgId,
+          recordId: lookupId,
+        });
+
+        if (serverRes.handled && !serverRes.error) {
+          if (!serverRes.row || serverRes.row.is_active === false) {
+            return null;
+          }
+          return this.toDomain(serverRes.row as unknown as TDatabaseRow);
         }
 
         let query = supabase
@@ -241,7 +299,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
 
         const { data, error } = await query.maybeSingle();
 
-        if (!error && data) {
+        if (!error && data && (data as any).is_active !== false) {
           return this.toDomain(data as unknown as TDatabaseRow);
         }
       } catch (err) {
@@ -266,10 +324,10 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     const dbPayload: Record<string, any> = { ...rawPayload };
 
     // Sanitize special types for Postgres compliance
+    if (UUID_PK_TABLES.has(this.tableName) && dbPayload.id) {
+      dbPayload.id = ensureValidUuid(dbPayload.id);
+    }
     if (this.tableName === 'system_notifications') {
-      if (dbPayload.id) {
-        dbPayload.id = ensureValidUuid(dbPayload.id);
-      }
       if (!dbPayload.created_at || isNaN(Date.parse(dbPayload.created_at))) {
         dbPayload.created_at = new Date().toISOString();
       }
@@ -340,8 +398,18 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     if (canQuery) {
       try {
         let lookupId = id;
-        if (this.tableName === 'system_notifications') {
+        if (UUID_PK_TABLES.has(this.tableName)) {
           lookupId = ensureValidUuid(id);
+        }
+
+        const serverDel = await erpServerDelete({
+          tableName: this.tableName,
+          recordId: lookupId,
+          organizationId: orgId,
+        });
+
+        if (serverDel.handled && !serverDel.error) {
+          return;
         }
 
         let query = supabase
@@ -360,6 +428,21 @@ export class BaseRepository<TDomain, TDatabaseRow> {
         if (!error) {
           return;
         }
+
+        if (SOFT_DELETE_TABLES.has(this.tableName)) {
+          let softQuery = supabase
+            .from(this.tableName)
+            .update({ is_active: false })
+            .eq('id', lookupId);
+          if (orgId) {
+            softQuery = softQuery.eq('organization_id', orgId);
+          }
+          const softRes = await softQuery;
+          if (!softRes.error) {
+            return;
+          }
+        }
+
         console.warn(`[BaseRepository:${this.tableName}] Supabase delete returned error:`, error.message);
       } catch (err) {
         console.warn(`[BaseRepository:${this.tableName}] Supabase delete exception:`, err);
@@ -403,7 +486,7 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     let conflictTarget = initialConflictTarget;
     const cleanPayload = { ...payload };
 
-    // 0. Migrate any legacy retail_wholesale_products payload fields into origin metadata before pruning
+    // 0A. Migrate any legacy retail_wholesale_products payload fields into origin metadata before pruning
     if (
       this.tableName === 'retail_wholesale_products' &&
       ('linked_batch_id' in cleanPayload || 'storage_zone' in cleanPayload)
@@ -423,6 +506,32 @@ export class BaseRepository<TDomain, TDatabaseRow> {
       delete cleanPayload.storage_zone;
     }
 
+    // 0B. Migrate any legacy financial_ledger_entries optional fields into description metadata before pruning
+    if (
+      this.tableName === 'financial_ledger_entries' &&
+      ('customer_id' in cleanPayload ||
+        'supplier_id' in cleanPayload ||
+        'receipt_number' in cleanPayload ||
+        'voucher_number' in cleanPayload ||
+        'notes' in cleanPayload)
+    ) {
+      cleanPayload.description = encodeFinancialDescriptionMeta(
+        String(cleanPayload.description || ''),
+        {
+          customerId: cleanPayload.customer_id,
+          supplierId: cleanPayload.supplier_id,
+          receiptNumber: cleanPayload.receipt_number,
+          voucherNumber: cleanPayload.voucher_number,
+          notes: cleanPayload.notes,
+        }
+      );
+      delete cleanPayload.customer_id;
+      delete cleanPayload.supplier_id;
+      delete cleanPayload.receipt_number;
+      delete cleanPayload.voucher_number;
+      delete cleanPayload.notes;
+    }
+
     // 1. Prune known missing schema cache columns before sending
     const knownMissing = BaseRepository.unknownColumnsByTable.get(this.tableName);
     if (knownMissing && knownMissing.size > 0) {
@@ -431,10 +540,26 @@ export class BaseRepository<TDomain, TDatabaseRow> {
       }
     }
 
-    let res = await supabase
-      .from(this.tableName)
-      .upsert(cleanPayload, { onConflict: conflictTarget });
+    // 2. Prefer authenticated server persistence endpoint (handles RLS, FK prerequisites, and insert-only tables)
+    const serverUpsert = await erpServerUpsert({
+      tableName: this.tableName,
+      payload: cleanPayload,
+      onConflict: conflictTarget,
+      organizationId: cleanPayload.organization_id,
+    });
+    if (serverUpsert.handled && !serverUpsert.error) {
+      return { error: null, cleanPayload };
+    }
+
+    // 3. Direct Supabase fallback
+    let res = INSERT_ONLY_TABLES.has(this.tableName)
+      ? await supabase.from(this.tableName).insert(cleanPayload)
+      : await supabase.from(this.tableName).upsert(cleanPayload, { onConflict: conflictTarget });
     let error = res.error;
+
+    if (error && INSERT_ONLY_TABLES.has(this.tableName) && error.code === '23505') {
+      return { error: null, cleanPayload };
+    }
 
     // Retry loop for any missing columns or constraint mismatches (up to 5 iterations)
     for (let attempt = 0; attempt < 5 && error; attempt++) {
@@ -463,10 +588,13 @@ export class BaseRepository<TDomain, TDatabaseRow> {
 
       if (!recovered) break;
 
-      const retryRes = await supabase
-        .from(this.tableName)
-        .upsert(cleanPayload, { onConflict: conflictTarget });
+      const retryRes = INSERT_ONLY_TABLES.has(this.tableName)
+        ? await supabase.from(this.tableName).insert(cleanPayload)
+        : await supabase.from(this.tableName).upsert(cleanPayload, { onConflict: conflictTarget });
       error = retryRes.error;
+      if (error && INSERT_ONLY_TABLES.has(this.tableName) && error.code === '23505') {
+        error = null;
+      }
     }
 
     return { error, cleanPayload };
@@ -498,10 +626,10 @@ export class BaseRepository<TDomain, TDatabaseRow> {
           const payload = { ...item.payload };
 
           // Sanitize special types for Postgres compliance
+          if (UUID_PK_TABLES.has(this.tableName) && payload.id) {
+            payload.id = ensureValidUuid(payload.id);
+          }
           if (this.tableName === 'system_notifications') {
-            if (payload.id) {
-              payload.id = ensureValidUuid(payload.id);
-            }
             if (!payload.created_at || isNaN(Date.parse(payload.created_at))) {
               payload.created_at = new Date().toISOString();
             }
@@ -524,24 +652,43 @@ export class BaseRepository<TDomain, TDatabaseRow> {
           }
         } else if (item.operation === 'DELETE') {
           let lookupId = item.recordId;
-          if (this.tableName === 'system_notifications') {
+          if (UUID_PK_TABLES.has(this.tableName)) {
             lookupId = ensureValidUuid(item.recordId);
           }
 
-          let query = supabase
-            .from(this.tableName)
-            .delete()
-            .eq('id', lookupId);
+          const serverDel = await erpServerDelete({
+            tableName: this.tableName,
+            recordId: lookupId,
+            organizationId: orgId,
+          });
 
-          if (this.onConflict.includes('organization_id')) {
-            const orgId = await this.getOrganizationId();
-            if (orgId) {
+          if (!serverDel.handled || serverDel.error) {
+            let query = supabase
+              .from(this.tableName)
+              .delete()
+              .eq('id', lookupId);
+
+            if (this.onConflict.includes('organization_id') && orgId) {
               query = query.eq('organization_id', orgId);
             }
-          }
 
-          const res = await query;
-          error = res.error;
+            const res = await query;
+            error = res.error;
+
+            if (error && SOFT_DELETE_TABLES.has(this.tableName)) {
+              let softQuery = supabase
+                .from(this.tableName)
+                .update({ is_active: false })
+                .eq('id', lookupId);
+              if (orgId) {
+                softQuery = softQuery.eq('organization_id', orgId);
+              }
+              const softRes = await softQuery;
+              if (!softRes.error) {
+                error = null;
+              }
+            }
+          }
         }
 
         if (!error) {

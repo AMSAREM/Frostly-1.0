@@ -2,6 +2,7 @@ import { AppSettings } from '../types';
 import { settingsMapper, DatabaseAppSettingsRow } from '../mappers/settingsMapper';
 import { supabase, isSupabaseConfigured } from '../utils/supabase';
 import { getStaffProfile, getCurrentOrganizationId } from '../data/auth';
+import { erpServerGetSettings, erpServerSaveSettings } from '../services/erpPersistenceClient';
 
 const STORAGE_KEY = 'frostly_settings_v3';
 
@@ -30,6 +31,13 @@ export class SettingsRepository {
     const orgId = await this.getOrganizationId();
     if (isSupabaseConfigured) {
       try {
+        const serverRes = await erpServerGetSettings(orgId);
+        if (serverRes.handled && !serverRes.error && serverRes.row) {
+          const domainSettings = settingsMapper.toDomain(serverRes.row as DatabaseAppSettingsRow);
+          this.setLocalCache(domainSettings, orgId);
+          return domainSettings;
+        }
+
         const { data, error } = await supabase
           .from('app_settings')
           .select('*')
@@ -60,6 +68,11 @@ export class SettingsRepository {
         const dbPayload: Record<string, any> = { ...settingsMapper.toDatabase(settings) };
         if (!dbPayload.organization_id) {
           dbPayload.organization_id = orgId;
+        }
+
+        const serverRes = await erpServerSaveSettings(dbPayload, orgId);
+        if (serverRes.handled && !serverRes.error) {
+          return settings;
         }
 
         const { error } = await supabase

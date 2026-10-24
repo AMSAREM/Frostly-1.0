@@ -1,4 +1,12 @@
 import { HaccpAuditRecord } from '../types';
+import { ensureValidUuid } from './notificationMapper';
+
+const VALID_HACCP_COMPLIANCE = new Set<string>([
+  'Approved - Grade AAA',
+  'Approved - Standard',
+  'Quarantine - Re-inspect',
+  'Rejected',
+]);
 
 export interface DatabaseHaccpRow {
   id: string;
@@ -26,7 +34,9 @@ export const haccpMapper = {
       id: row.id,
       lotId: row.lot_id,
       speciesName: row.species_name,
-      inspectionDate: row.inspection_date ? row.inspection_date.split('T')[0] : new Date().toISOString().split('T')[0],
+      inspectionDate: row.inspection_date
+        ? row.inspection_date.split('T')[0]
+        : new Date().toISOString().split('T')[0],
       inspectorName: row.inspector_name || 'Inspector',
       inspectorId: row.inspector_id || 'AUD-001',
       coreTemperature: Number(row.core_temperature ?? 0),
@@ -41,25 +51,25 @@ export const haccpMapper = {
   },
 
   toDatabase(record: HaccpAuditRecord): Record<string, any> {
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.id);
-    const payload: Record<string, any> = {
+    const cleanCompliance = VALID_HACCP_COMPLIANCE.has(record.finalCompliance)
+      ? record.finalCompliance
+      : 'Approved - Standard';
+
+    return {
+      id: ensureValidUuid(record.id || `haccp-${Date.now()}`),
       lot_id: record.lotId,
       species_name: record.speciesName,
       inspection_date: record.inspectionDate || new Date().toISOString(),
-      inspector_name: record.inspectorName,
-      inspector_id: record.inspectorId,
-      core_temperature: record.coreTemperature,
-      histamine_level_ppm: record.histamineLevelPpm,
-      organoleptic_score: record.organolepticScore,
-      parasite_visual_check: record.parasiteVisualCheck,
-      sanitization_log_pass: record.sanitizationLogPass,
-      final_compliance: record.finalCompliance,
-      certification_ref: record.certificationRef,
+      inspector_name: record.inspectorName || 'Quality Inspector',
+      inspector_id: record.inspectorId || 'AUD-001',
+      core_temperature: Number(record.coreTemperature ?? -22),
+      histamine_level_ppm: Math.max(0, Number(record.histamineLevelPpm ?? 0)),
+      organoleptic_score: Math.min(10, Math.max(1, Number(record.organolepticScore ?? 10))),
+      parasite_visual_check: record.parasiteVisualCheck || 'Clean',
+      sanitization_log_pass: Boolean(record.sanitizationLogPass),
+      final_compliance: cleanCompliance,
+      certification_ref: record.certificationRef || 'CERT-FDA-HACCP',
       notes: record.notes || null,
     };
-    if (isUuid) {
-      payload.id = record.id;
-    }
-    return payload;
-  }
+  },
 };

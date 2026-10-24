@@ -11,6 +11,20 @@ import {
   AmansoceanCategory,
   AmansoceanOfficialCatalogItem,
 } from './src/data/amansoceanProducts';
+import {
+  parseFinancialDescriptionMeta,
+  encodeFinancialDescriptionMeta,
+} from './src/mappers/financialMapper';
+import {
+  normalizeRetailCutType,
+  normalizeRetailPaymentMethod,
+} from './src/mappers/retailMapper';
+import {
+  normalizeOrderCustomerCategory,
+  normalizeQualityGrade,
+  normalizeOrderPaymentStatus,
+} from './src/mappers/orderMapper';
+import { ensureValidUuid } from './src/mappers/notificationMapper';
 
 dotenv.config();
 
@@ -2477,7 +2491,10 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         entry_date: todayDate,
         type: 'Income',
         category: 'Revenue (Retail POS)',
-        description: `Amansocean Online Order ${orderNumber} — ${verifiedLines.length} item(s)`,
+        description: encodeFinancialDescriptionMeta(
+          `Amansocean Online Order ${orderNumber} — ${verifiedLines.length} item(s)`,
+          { customerId, receiptNumber: orderNumber }
+        ),
         reference_id: orderNumber,
         entity_name: cleanName,
         amount: totalAmount,
@@ -2490,7 +2507,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         organization_id: org.id,
         type: 'order_update',
         title: `Online Order ${orderNumber} Received`,
-        message: `${cleanName} placed a $${totalAmount.toFixed(2)} storefront order (${verifiedLines.reduce((s, i) => s + i.quantity, 0)} packs) for delivery to ${cleanAddress}.`,
+        message: `${cleanName} placed a GH₵ ${totalAmount.toFixed(2)} storefront order (${verifiedLines.reduce((s, i) => s + i.quantity, 0)} packs) for delivery to ${cleanAddress}.`,
         urgency: 'medium',
         read: false,
         related_entity_id: orderNumber,
@@ -3848,6 +3865,98 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
 
   const posRegisterSessions = new Map<string, PosRegisterSessionRecord>();
 
+  async function hydratePosRegisterSession(
+    adminClient: any,
+    orgId: string | null,
+    registerId: string
+  ): Promise<PosRegisterSessionRecord> {
+    const key = `${orgId || 'default'}:${registerId}`;
+    const inMemory = posRegisterSessions.get(key);
+    if (inMemory) {
+      return inMemory;
+    }
+
+    if (adminClient && orgId) {
+      try {
+        const { data: rows } = await adminClient
+          .from('user_feature_usage_logs')
+          .select('id, metadata')
+          .eq('organization_id', orgId)
+          .eq('category', 'pos_register_internal')
+          .eq('feature_key', 'pos_register_session')
+          .eq('feature_name', registerId)
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        const storedMeta = rows && rows[0]?.metadata;
+        if (storedMeta && typeof storedMeta === 'object' && storedMeta.registerId) {
+          const restored: PosRegisterSessionRecord = {
+            ...createEmptyPosSession(registerId, orgId),
+            ...storedMeta,
+            registerId,
+            organizationId: orgId,
+          };
+          posRegisterSessions.set(key, restored);
+          return restored;
+        }
+      } catch {
+        // Fallback to fresh session if table read fails
+      }
+    }
+
+    const empty = createEmptyPosSession(registerId, orgId);
+    posRegisterSessions.set(key, empty);
+    return empty;
+  }
+
+  async function persistPosRegisterSession(
+    adminClient: any,
+    orgId: string | null,
+    registerId: string,
+    session: PosRegisterSessionRecord
+  ): Promise<void> {
+    const key = `${orgId || 'default'}:${registerId}`;
+    posRegisterSessions.set(key, session);
+
+    if (!adminClient || !orgId) return;
+    try {
+      const { data: existingRows } = await adminClient
+        .from('user_feature_usage_logs')
+        .select('id')
+        .eq('organization_id', orgId)
+        .eq('category', 'pos_register_internal')
+        .eq('feature_key', 'pos_register_session')
+        .eq('feature_name', registerId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (existingRows && existingRows[0]?.id) {
+        await adminClient
+          .from('user_feature_usage_logs')
+          .update({
+            metadata: session,
+            action_type: 'update',
+          })
+          .eq('id', existingRows[0].id);
+      } else {
+        await adminClient.from('user_feature_usage_logs').insert({
+          user_id: null,
+          organization_id: orgId,
+          user_email: 'pos@amansocean.store',
+          user_name: `POS Register ${registerId}`,
+          organization_name: 'Amansocean POS',
+          feature_key: 'pos_register_session',
+          feature_name: registerId,
+          category: 'pos_register_internal',
+          action_type: 'update',
+          metadata: session,
+        });
+      }
+    } catch (err) {
+      console.warn('[POS Register Session Persist Notice]:', err);
+    }
+  }
+
   async function resolvePosCustomerOrg(
     req: express.Request,
     adminClient: any
@@ -3984,12 +4093,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         orgId = org.id;
       }
 
-      const key = `${orgId || 'default'}:${registerId}`;
-      let session = posRegisterSessions.get(key);
-      if (!session) {
-        session = createEmptyPosSession(registerId, orgId);
-        posRegisterSessions.set(key, session);
-      }
+      const session = await hydratePosRegisterSession(adminClient, orgId, registerId);
 
       res.json({ success: true, session });
     } catch (err: any) {
@@ -4010,8 +4114,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         orgId = org.id;
       }
 
-      const key = `${orgId || 'default'}:${registerId}`;
-      const prev = posRegisterSessions.get(key) || createEmptyPosSession(registerId, orgId);
+      const prev = await hydratePosRegisterSession(adminClient, orgId, registerId);
 
       const rawItems = Array.isArray(body.items) ? body.items : prev.items;
       const mappedItems: PosRegisterLineServer[] = rawItems.map((it: any) => ({
@@ -4062,7 +4165,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       };
 
       const finalized = recomputePosSessionTotals(nextBase);
-      posRegisterSessions.set(key, finalized);
+      await persistPosRegisterSession(adminClient, orgId, registerId, finalized);
 
       res.json({ success: true, session: finalized });
     } catch (err: any) {
@@ -4103,8 +4206,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         }
       }
 
-      const key = `${orgId || 'default'}:${registerId}`;
-      const current = posRegisterSessions.get(key) || createEmptyPosSession(registerId, orgId);
+      const current = await hydratePosRegisterSession(adminClient, orgId, registerId);
 
       if (action === 'start_new_basket' || action === 'clear_basket') {
         const cleared = recomputePosSessionTotals({
@@ -4115,7 +4217,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
           version: current.version + 1,
           updatedAt: new Date().toISOString(),
         });
-        posRegisterSessions.set(key, cleared);
+        await persistPosRegisterSession(adminClient, orgId, registerId, cleared);
         res.json({ success: true, session: cleared, stockNotices: [] });
         return;
       }
@@ -4291,7 +4393,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         updatedAt: new Date().toISOString(),
       });
 
-      posRegisterSessions.set(key, updatedSession);
+      await persistPosRegisterSession(adminClient, orgId, registerId, updatedSession);
       res.json({
         success: true,
         session: updatedSession,
@@ -4574,7 +4676,11 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
 
       const receiptNumbersSet = new Set(receipts.map((r) => r.receiptNumber));
       const matchedFinRows = (finRows || []).filter((fe: any) => {
-        if (fe.customer_id && matchedCustIds.has(String(fe.customer_id))) return true;
+        const finMeta = parseFinancialDescriptionMeta(fe.description);
+        const effectiveCustId = fe.customer_id || finMeta.customerId;
+        const effectiveReceiptNo = fe.receipt_number || finMeta.receiptNumber;
+        if (effectiveCustId && matchedCustIds.has(String(effectiveCustId))) return true;
+        if (effectiveReceiptNo && receiptNumbersSet.has(String(effectiveReceiptNo))) return true;
         if (fe.reference_id && (matchedOrderIdSet.has(String(fe.reference_id)) || receiptNumbersSet.has(String(fe.reference_id)))) {
           return true;
         }
@@ -4587,7 +4693,9 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       const creditLedger = matchedFinRows.map((fe: any) => {
         const amt = Number(fe.amount || 0);
         const statusStr = String(fe.status || 'Settled');
-        const descStr = String(fe.description || '');
+        const finMeta = parseFinancialDescriptionMeta(fe.description);
+        const descStr = finMeta.cleanDescription || String(fe.description || '');
+        const effectiveReceiptNo = fe.receipt_number || finMeta.receiptNumber;
         const isPaymentReceived =
           /payment received|settlement|credit note|collection/i.test(descStr) ||
           (statusStr === 'Settled' && /ar|receivable|payment/i.test(String(fe.category || '')));
@@ -4610,7 +4718,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         return {
           id: String(fe.id),
           date: String(fe.entry_date || (fe.created_at ? fe.created_at.slice(0, 10) : '')),
-          referenceId: String(fe.reference_id || fe.receipt_number || 'LEDGER'),
+          referenceId: String(fe.reference_id || effectiveReceiptNo || 'LEDGER'),
           type: isPaymentReceived ? 'Payment' : isOnAccountCharge ? 'Credit Invoice' : 'Paid Sale',
           description: descStr || 'Amansocean Transaction',
           debit,
@@ -4961,7 +5069,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
             id: customerId,
             name: cleanName,
             company_name: cleanMode === 'wholesale' ? cleanName : 'POS Counter Customer',
-            type: cleanMode === 'wholesale' ? 'Seafood Wholesaler' : 'Direct Retail VIP',
+            type: cleanMode === 'wholesale' ? 'Fishmonger / Distributor' : 'Direct Retail VIP',
             tier: cleanMode === 'wholesale' ? 'Tier 2 (Standard Wholesale)' : 'Retail Standard',
             contact_person: cleanName,
             email: cleanEmail || `pos.${custHash.toLowerCase()}@amansocean.store`,
@@ -4970,7 +5078,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
             city: 'Coldstore Counter',
             credit_limit_usd: 0,
             outstanding_balance_usd: 0,
-            payment_terms: 'Instant Card/Cash',
+            payment_terms: 'Cash on Delivery',
             total_orders_count: 1,
             total_spend_usd: totalAmount,
             status: 'Active',
@@ -5010,12 +5118,14 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
           : 'Pending Net-30'
         : 'Paid';
 
+      const dbOrderPaymentStatus = normalizeOrderPaymentStatus(paymentStatus);
+
       await adminClient.from('client_orders').insert({
         organization_id: org.id,
         id: orderNumber,
         customer_id: customerId,
         client_name: matchedCust?.company_name || cleanName,
-        client_category: cleanMode === 'wholesale' ? 'Seafood Wholesaler' : 'Gourmet Fishmonger',
+        client_category: cleanMode === 'wholesale' ? 'Fishmonger / Distributor' : 'Direct Retail VIP',
         contact_person: cleanName,
         contact_email: cleanEmail || matchedCust?.email || 'counter@amansocean.store',
         contact_phone: cleanPhone || matchedCust?.phone || 'N/A',
@@ -5026,7 +5136,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         status: 'Pending Confirmation',
         quoted_total_usd: totalAmount,
         adjusted_total_usd: totalAmount,
-        payment_status: paymentStatus,
+        payment_status: dbOrderPaymentStatus,
         packaging_requirement:
           cleanMode === 'wholesale'
             ? 'Dry Ice & Insulated Wax Carton'
@@ -5041,7 +5151,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
           order_id: orderNumber,
           species_id: l.product.species_id,
           species_name: l.product.name,
-          grade: l.product.grade,
+          grade: normalizeQualityGrade(l.product.grade),
           lot_id: l.lotId,
           requested_weight_kg: l.quantity,
           actual_weighed_kg: l.quantity,
@@ -5062,7 +5172,9 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         total_amount: totalAmount,
         cost_total: costTotal,
         gross_margin: Number((subtotal - costTotal).toFixed(2)),
-        payment_method: isCreditAccountPayment ? 'Store Credit' : 'Credit Card',
+        payment_method: isCreditAccountPayment
+          ? 'Store Credit'
+          : normalizeRetailPaymentMethod(cleanPayment),
         cashier_name: `POS Kiosk (${registerId})`,
         status: 'Completed',
       });
@@ -5073,7 +5185,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
           transaction_id: txId,
           product_id: l.product.id,
           product_name: l.product.name,
-          cut_type: l.product.cut_type,
+          cut_type: normalizeRetailCutType(l.product.cut_type),
           quantity: l.quantity,
           unit: cleanMode === 'wholesale' ? 'kg' : l.product.unit || 'pack',
           unit_price: l.unitPrice,
@@ -5084,13 +5196,14 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
 
       await adminClient.from('financial_ledger_entries').insert({
         organization_id: org.id,
-        customer_id: customerId,
         entry_date: todayDate,
         type: 'Income',
         category: cleanMode === 'wholesale' ? 'Revenue (Wholesale)' : 'Revenue (Retail POS)',
-        description: `POS Customer Kiosk ${orderNumber} (${receiptNumber})`,
+        description: encodeFinancialDescriptionMeta(
+          `POS Customer Kiosk ${orderNumber} (${receiptNumber})`,
+          { customerId, receiptNumber }
+        ),
         reference_id: orderNumber,
-        receipt_number: receiptNumber,
         entity_name: matchedCust?.company_name || cleanName,
         amount: totalAmount,
         payment_method: cleanPayment,
@@ -5108,7 +5221,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       });
 
       // Update active register session with completed receipt & clear basket
-      const sessionKey = `${org.id}:${String(registerId).trim().toUpperCase()}`;
+      const normRegId = String(registerId).trim().toUpperCase();
       const completedReceiptPayload = {
         id: txId,
         receiptNumber,
@@ -5135,9 +5248,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         })),
       };
 
-      const existingSession =
-        posRegisterSessions.get(sessionKey) ||
-        createEmptyPosSession(String(registerId).trim().toUpperCase(), org.id);
+      const existingSession = await hydratePosRegisterSession(adminClient, org.id, normRegId);
 
       const postCheckoutSession = recomputePosSessionTotals({
         ...existingSession,
@@ -5147,7 +5258,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         version: existingSession.version + 1,
         updatedAt: nowIso,
       });
-      posRegisterSessions.set(sessionKey, postCheckoutSession);
+      await persistPosRegisterSession(adminClient, org.id, normRegId, postCheckoutSession);
 
       res.status(201).json({
         success: true,
@@ -5160,6 +5271,1537 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
     } catch (err: any) {
       console.error('[POS Customer Order Submission Error]:', err);
       res.status(500).json({ error: err?.message || 'Failed to submit POS customer order.' });
+    }
+  });
+
+  // ==========================================
+  // 10. UNIFIED ERP SUPABASE PERSISTENCE ROUTES
+  // ==========================================
+
+  const ALLOWED_ERP_TABLES = new Set<string>([
+    'species',
+    'inventory_batches',
+    'inventory_adjustments',
+    'inventory_adjustment_accounts',
+    'customers',
+    'client_orders',
+    'order_line_items',
+    'retail_wholesale_products',
+    'retail_transactions',
+    'retail_sale_items',
+    'suppliers',
+    'purchase_order_landings',
+    'purchase_order_items',
+    'financial_ledger_entries',
+    'haccp_audit_records',
+    'system_notifications',
+    'app_settings',
+    'reefer_vehicles',
+    'fleet_vessels',
+    'market_price_index',
+  ]);
+
+  const ERP_INSERT_ONLY_TABLES = new Set<string>([
+    'financial_ledger_entries',
+    'haccp_audit_records',
+    'inventory_adjustments',
+  ]);
+
+  const ERP_SOFT_DELETE_TABLES = new Set<string>([
+    'species',
+    'retail_wholesale_products',
+    'customers',
+    'suppliers',
+    'inventory_adjustment_accounts',
+  ]);
+
+  const ERP_UUID_REGEX =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  function resolveErpTenantOrgId(req: express.Request): string {
+    const callerProfile = (req as any).callerProfile;
+    const requested = String(
+      req.body?.organizationId || req.query?.organizationId || ''
+    ).trim();
+    if (callerProfile?.role === 'creator' && requested && ERP_UUID_REGEX.test(requested)) {
+      return requested;
+    }
+    return String(callerProfile?.organization_id || '');
+  }
+
+  async function ensureSpeciesRowExists(
+    adminClient: any,
+    orgId: string,
+    speciesId?: string | null,
+    speciesName?: string | null,
+    category?: string | null
+  ): Promise<string> {
+    const sid = String(speciesId || 'spec-tilapia').trim();
+    const { data: existing } = await adminClient
+      .from('species')
+      .select('id')
+      .eq('organization_id', orgId)
+      .eq('id', sid)
+      .maybeSingle();
+    if (!existing) {
+      await adminClient.from('species').upsert(
+        {
+          organization_id: orgId,
+          id: sid,
+          name: String(speciesName || sid.replace(/^spec-/, '')).trim() || 'Seafood Catch',
+          scientific_name: 'Marine / Cold-Chain Species',
+          category:
+            category === 'Pelagic' ||
+            category === 'Groundfish' ||
+            category === 'Crustacean' ||
+            category === 'Mollusk' ||
+            category === 'Salmonid'
+              ? category
+              : 'Groundfish',
+          default_zone: 'Commercial Cold Storage (-22°C)',
+          standard_price_per_kg: 65,
+          available_grades: ['Sashimi AAA', 'Grade #1'],
+          fao_zones: ['FAO 34'],
+          gear_types: ['Sustainable Trawl & Trap'],
+          seasonal_peak: 'Year-Round Cold Chain',
+          image: '/images/products/tilapia.jpg',
+          shelf_life_fresh_days: 5,
+          shelf_life_frozen_months: 18,
+          is_active: true,
+        },
+        { onConflict: 'organization_id,id' }
+      );
+    }
+    return sid;
+  }
+
+  async function ensureBatchRowExists(
+    adminClient: any,
+    orgId: string,
+    batchId: string,
+    speciesId?: string | null,
+    speciesName?: string | null,
+    minWeightKg = 100
+  ): Promise<void> {
+    if (!batchId) return;
+    const { data: existing } = await adminClient
+      .from('inventory_batches')
+      .select('id')
+      .eq('organization_id', orgId)
+      .eq('id', batchId)
+      .maybeSingle();
+    if (existing) return;
+
+    const resolvedSpecId = await ensureSpeciesRowExists(adminClient, orgId, speciesId, speciesName);
+    const today = new Date().toISOString().split('T')[0];
+    const safeWeight = Math.max(10, Number(minWeightKg) || 100);
+    const orgShort = orgId.replace(/-/g, '').slice(0, 4).toUpperCase();
+    await adminClient.from('inventory_batches').upsert(
+      {
+        organization_id: orgId,
+        id: batchId,
+        species_id: resolvedSpecId,
+        species_name: String(speciesName || 'Cold Vault Lot'),
+        scientific_name: 'Marine / Cold-Chain Species',
+        category: 'Groundfish',
+        harvest_date: today,
+        landing_port: 'Port of Tema Coldstore Hub',
+        vessel_name: 'MV Amansocean Star',
+        vessel_registration: 'GH-TMA-402',
+        captain_name: 'Capt. Kwame Boateng',
+        fao_area: 'FAO 34 Eastern Central Atlantic',
+        gps_coordinates: { latitude: 5.6265, longitude: 0.0061 },
+        location_description: 'Amans Ocean Coldstore · Abrepo, Barekese Rd',
+        gear_type: 'IQF Cryo Line',
+        grade: 'Grade #1',
+        initial_weight_kg: safeWeight,
+        available_weight_kg: safeWeight,
+        allocated_weight_kg: 0,
+        storage_zone: 'Commercial Cold Storage (-22°C)',
+        current_temp_celsius: -22,
+        target_temp_celsius: -22,
+        cost_per_kg: 45,
+        wholesale_price_per_kg: 65,
+        certifications: ['HACCP Certified', 'FDA Approved'],
+        inspection_status: 'Passed',
+        histamine_ppm: 4.5,
+        core_temp_celsius: -22,
+        received_date: today,
+        expiry_date: '2027-12-31',
+        qr_code_seed: `QR-${batchId}-${orgShort}`,
+        notes: `Auto-provisioned cold storage batch for ${speciesName || batchId}`,
+      },
+      { onConflict: 'organization_id,id' }
+    );
+  }
+
+  async function ensureErpForeignKeys(
+    adminClient: any,
+    orgId: string,
+    tableName: string,
+    payload: Record<string, any>,
+    childItems?: Array<Record<string, any>>
+  ): Promise<void> {
+    if (
+      (tableName === 'inventory_batches' ||
+        tableName === 'retail_wholesale_products' ||
+        tableName === 'haccp_audit_records' ||
+        tableName === 'market_price_index') &&
+      payload.species_id
+    ) {
+      await ensureSpeciesRowExists(
+        adminClient,
+        orgId,
+        payload.species_id,
+        payload.species_name || payload.name,
+        payload.category
+      );
+    }
+
+    if (tableName === 'client_orders') {
+      const custId = String(payload.customer_id || 'CUST-WALKIN').trim();
+      payload.customer_id = custId;
+      const { data: existingCust } = await adminClient
+        .from('customers')
+        .select('id')
+        .eq('organization_id', orgId)
+        .eq('id', custId)
+        .maybeSingle();
+
+      if (!existingCust) {
+        await adminClient.from('customers').upsert(
+          {
+            organization_id: orgId,
+            id: custId,
+            name: String(payload.client_name || 'Walk-in / Counter Client'),
+            company_name: String(payload.client_name || 'Walk-in / Counter Client'),
+            type: normalizeOrderCustomerCategory(payload.client_category),
+            tier: 'Tier 2 (Standard Wholesale)',
+            contact_person: String(payload.contact_person || payload.client_name || 'Client'),
+            email: String(payload.contact_email || 'client@amansocean.store'),
+            phone: String(payload.contact_phone || 'N/A'),
+            address: String(payload.delivery_address || 'Tema / Accra'),
+            city: String(payload.destination_city || 'Accra'),
+            credit_limit_usd: 50000,
+            outstanding_balance_usd: 0,
+            payment_terms: 'Net-30',
+            total_orders_count: 1,
+            total_spend_usd: Number(payload.adjusted_total_usd || payload.quoted_total_usd || 0),
+            status: 'Active',
+            is_active: true,
+          },
+          { onConflict: 'organization_id,id' }
+        );
+      }
+    }
+
+    if (tableName === 'purchase_order_landings') {
+      const supId = String(payload.supplier_id || 'SUP-DEFAULT').trim();
+      payload.supplier_id = supId;
+      const { data: existingSup } = await adminClient
+        .from('suppliers')
+        .select('id')
+        .eq('organization_id', orgId)
+        .eq('id', supId)
+        .maybeSingle();
+
+      if (!existingSup) {
+        await adminClient.from('suppliers').upsert(
+          {
+            organization_id: orgId,
+            id: supId,
+            name: String(payload.supplier_name || 'Harvester Supplier'),
+            contact_person: String(payload.received_by || 'Harbor Master'),
+            type: 'Fishermen Co-op',
+            email: 'supply@amansocean.store',
+            phone: 'N/A',
+            port_location: String(payload.port_location || 'Tema Fishing Harbour'),
+            country: 'Ghana',
+            vessel_names: payload.vessel_name ? [String(payload.vessel_name)] : [],
+            supplied_species: [],
+            payment_terms: 'Net-30',
+            outstanding_payable_usd: 0,
+            total_purchased_usd: Number(payload.total_cost_usd || 0),
+            total_weight_supplied_kg: 0,
+            rating: 5,
+            status: 'Active',
+            is_active: true,
+          },
+          { onConflict: 'organization_id,id' }
+        );
+      }
+    }
+
+    const haccpLotId = payload.lot_id || payload.batch_id;
+    if (tableName === 'haccp_audit_records' && haccpLotId) {
+      payload.lot_id = String(haccpLotId);
+      delete payload.batch_id;
+      delete payload.species_id;
+      await ensureBatchRowExists(
+        adminClient,
+        orgId,
+        String(haccpLotId),
+        null,
+        payload.species_name
+      );
+    }
+
+    if (tableName === 'inventory_adjustments') {
+      if (payload.batch_id) {
+        await ensureBatchRowExists(
+          adminClient,
+          orgId,
+          String(payload.batch_id),
+          null,
+          payload.species_name,
+          Math.max(100, Number(payload.previous_weight_kg || payload.new_weight_kg || 100))
+        );
+      }
+
+      if (
+        payload.adjustment_account_id &&
+        !ERP_UUID_REGEX.test(String(payload.adjustment_account_id))
+      ) {
+        payload.adjustment_account_id = null;
+      }
+
+      if (!payload.adjustment_account_id && payload.adjustment_account_code) {
+        const code = String(payload.adjustment_account_code).trim();
+        const { data: accRow } = await adminClient
+          .from('inventory_adjustment_accounts')
+          .select('id')
+          .eq('organization_id', orgId)
+          .eq('account_code', code)
+          .maybeSingle();
+
+        if (accRow?.id) {
+          payload.adjustment_account_id = accRow.id;
+        } else {
+          const { data: createdAcc } = await adminClient
+            .from('inventory_adjustment_accounts')
+            .upsert(
+              {
+                organization_id: orgId,
+                account_code: code,
+                account_name: String(payload.adjustment_account_name || 'Inventory Variance Account'),
+                account_type: 'COGS',
+                description: 'Auto-provisioned Cold Vault Adjustment Account',
+                is_default: false,
+                balance_usd: 0,
+                is_active: true,
+              },
+              { onConflict: 'organization_id,account_code' }
+            )
+            .select('id')
+            .maybeSingle();
+          if (createdAcc?.id) {
+            payload.adjustment_account_id = createdAcc.id;
+          }
+        }
+      }
+
+      if (payload.financial_ledger_id && !ERP_UUID_REGEX.test(String(payload.financial_ledger_id))) {
+        payload.financial_ledger_id = ensureValidUuid(String(payload.financial_ledger_id));
+      }
+      if (payload.financial_ledger_id) {
+        const { data: finRow } = await adminClient
+          .from('financial_ledger_entries')
+          .select('id')
+          .eq('organization_id', orgId)
+          .eq('id', payload.financial_ledger_id)
+          .maybeSingle();
+        if (!finRow) {
+          payload.financial_ledger_id = null;
+        }
+      }
+    }
+
+    if (Array.isArray(childItems) && childItems.length > 0) {
+      if (tableName === 'client_orders') {
+        for (const item of childItems) {
+          const sid = await ensureSpeciesRowExists(
+            adminClient,
+            orgId,
+            item.species_id,
+            item.species_name
+          );
+          item.species_id = sid;
+          item.lot_id = String(item.lot_id || `LOT-ORD-${payload.id}`);
+          await ensureBatchRowExists(
+            adminClient,
+            orgId,
+            item.lot_id,
+            sid,
+            item.species_name,
+            Math.max(50, Number(item.requested_weight_kg || 50))
+          );
+        }
+      } else if (tableName === 'purchase_order_landings') {
+        for (const item of childItems) {
+          const sid = await ensureSpeciesRowExists(
+            adminClient,
+            orgId,
+            item.species_id,
+            item.species_name
+          );
+          item.species_id = sid;
+        }
+      } else if (tableName === 'retail_transactions') {
+        for (const item of childItems) {
+          const pid = String(item.product_id || 'PROD-COUNTER').trim();
+          item.product_id = pid;
+          item.cut_type = normalizeRetailCutType(item.cut_type);
+          const { data: existingProd } = await adminClient
+            .from('retail_wholesale_products')
+            .select('id')
+            .eq('organization_id', orgId)
+            .eq('id', pid)
+            .maybeSingle();
+
+          if (!existingProd) {
+            const sid = await ensureSpeciesRowExists(
+              adminClient,
+              orgId,
+              'spec-tilapia',
+              item.product_name
+            );
+            await adminClient.from('retail_wholesale_products').upsert(
+              {
+                organization_id: orgId,
+                id: pid,
+                species_id: sid,
+                name: String(item.product_name || 'Counter Seafood Item'),
+                cut_type: item.cut_type,
+                category: 'Groundfish',
+                grade: 'Grade #1',
+                stock_kg: 100,
+                unit: ['kg', 'lb', 'piece', 'pack'].includes(String(item.unit)) ? item.unit : 'kg',
+                cost_price_per_unit: Math.max(0, Number(item.cost_price || 0)),
+                wholesale_price_per_unit: Math.max(0, Number(item.unit_price || 0)),
+                retail_price_per_unit: Math.max(0, Number(item.unit_price || 0)),
+                wholesale_min_qty: 1,
+                sku: `SKU-${pid}`,
+                image_url: '/images/products/tilapia.jpg',
+                origin: 'Ghana Coldstore',
+                is_available_for_retail: true,
+                is_available_for_wholesale: true,
+                is_active: true,
+              },
+              { onConflict: 'organization_id,id' }
+            );
+          }
+        }
+      }
+    }
+  }
+
+  // 10A. GET Query ERP Table (Scoped to Tenant Organization)
+  app.get('/api/erp/persistence/query', requireStaffSession, async (req, res) => {
+    const adminClient = adminClientGetter()!;
+    const tableName = String(req.query.table || '').trim();
+    const recordId = req.query.recordId ? String(req.query.recordId).trim() : '';
+    const includeChildren = req.query.includeChildren === 'true';
+    const limitVal = Math.min(2000, Math.max(1, Number(req.query.limit || 1000)));
+
+    if (!ALLOWED_ERP_TABLES.has(tableName)) {
+      res.status(400).json({ error: `Unsupported ERP table '${tableName}'.` });
+      return;
+    }
+
+    const targetOrgId = resolveErpTenantOrgId(req);
+    if (!targetOrgId) {
+      res.status(400).json({ error: 'Tenant organization ID could not be resolved.' });
+      return;
+    }
+
+    try {
+      let selectClause = '*';
+      if (includeChildren) {
+        if (tableName === 'client_orders') selectClause = '*, order_line_items(*)';
+        else if (tableName === 'retail_transactions') selectClause = '*, retail_sale_items(*)';
+        else if (tableName === 'purchase_order_landings') selectClause = '*, purchase_order_items(*)';
+      }
+
+      if (recordId) {
+        const { data: row, error } = await adminClient
+          .from(tableName)
+          .select(selectClause)
+          .eq('organization_id', targetOrgId)
+          .eq('id', recordId)
+          .maybeSingle();
+        if (error) throw error;
+        res.json({ success: true, row: row || null });
+        return;
+      }
+
+      let listQuery = adminClient
+        .from(tableName)
+        .select(selectClause)
+        .eq('organization_id', targetOrgId);
+
+      if (tableName === 'client_orders' || tableName === 'purchase_order_landings') {
+        listQuery = listQuery.order('order_date', { ascending: false });
+      } else if (tableName === 'financial_ledger_entries') {
+        listQuery = listQuery.order('entry_date', { ascending: false });
+      } else if (tableName === 'retail_wholesale_products') {
+        listQuery = listQuery.order('created_at', { ascending: true });
+      } else if (tableName === 'species') {
+        listQuery = listQuery.order('name', { ascending: true });
+      } else if (tableName !== 'app_settings') {
+        listQuery = listQuery.order('created_at', { ascending: false });
+      }
+
+      const { data: rows, error } = await listQuery.limit(limitVal);
+      if (error) throw error;
+
+      res.json({ success: true, rows: rows || [] });
+    } catch (err: any) {
+      console.error(`[ERP Persistence Query Error - ${tableName}]:`, err);
+      res.status(500).json({ error: err?.message || `Failed to query ${tableName}.` });
+    }
+  });
+
+  // 10B. POST Upsert / Insert ERP Record (+ Optional Child Line Items)
+  app.post('/api/erp/persistence/upsert', requireStaffSession, async (req, res) => {
+    const adminClient = adminClientGetter()!;
+    const callerProfile = (req as any).callerProfile;
+    const { tableName, payload, onConflict, childItems } = req.body || {};
+
+    if (!tableName || !ALLOWED_ERP_TABLES.has(String(tableName))) {
+      res.status(400).json({ error: `Unsupported ERP table '${tableName}'.` });
+      return;
+    }
+    if (!payload || typeof payload !== 'object') {
+      res.status(400).json({ error: 'Valid record payload object is required.' });
+      return;
+    }
+
+    const targetOrgId = resolveErpTenantOrgId(req);
+    if (!targetOrgId) {
+      res.status(400).json({ error: 'Tenant organization ID could not be resolved.' });
+      return;
+    }
+
+    try {
+      const cleanPayload: Record<string, any> = {
+        ...payload,
+        organization_id: targetOrgId,
+      };
+
+      if (tableName === 'retail_wholesale_products') {
+        delete cleanPayload.linked_batch_id;
+        delete cleanPayload.storage_zone;
+        if (cleanPayload.cut_type) {
+          cleanPayload.cut_type = normalizeRetailCutType(cleanPayload.cut_type);
+        }
+      }
+
+      if (tableName === 'financial_ledger_entries') {
+        if (
+          'customer_id' in cleanPayload ||
+          'supplier_id' in cleanPayload ||
+          'receipt_number' in cleanPayload ||
+          'voucher_number' in cleanPayload ||
+          'notes' in cleanPayload
+        ) {
+          cleanPayload.description = encodeFinancialDescriptionMeta(
+            String(cleanPayload.description || ''),
+            {
+              customerId: cleanPayload.customer_id,
+              supplierId: cleanPayload.supplier_id,
+              receiptNumber: cleanPayload.receipt_number,
+              voucherNumber: cleanPayload.voucher_number,
+              notes: cleanPayload.notes,
+            }
+          );
+          delete cleanPayload.customer_id;
+          delete cleanPayload.supplier_id;
+          delete cleanPayload.receipt_number;
+          delete cleanPayload.voucher_number;
+          delete cleanPayload.notes;
+        }
+        if (cleanPayload.id) {
+          cleanPayload.id = ensureValidUuid(String(cleanPayload.id));
+        }
+        const validFinTypes = new Set(['Income', 'COGS', 'OpEx']);
+        cleanPayload.type = validFinTypes.has(String(cleanPayload.type))
+          ? cleanPayload.type
+          : 'Income';
+        const validFinCats = new Set([
+          'Revenue (Wholesale)',
+          'Revenue (Retail POS)',
+          'COGS (Catch Intake)',
+          'Logistics & Reefer Freight',
+          'Cold Storage Utilities',
+          'Packaging & Ice',
+          'Labor & Cutting Crew',
+          'Dock Fees & Port Taxes',
+          'Inventory Adjustment',
+        ]);
+        if (!validFinCats.has(String(cleanPayload.category))) {
+          cleanPayload.category = /retail/i.test(String(cleanPayload.category || ''))
+            ? 'Revenue (Retail POS)'
+            : cleanPayload.type === 'Income'
+            ? 'Revenue (Wholesale)'
+            : cleanPayload.type === 'COGS'
+            ? 'COGS (Catch Intake)'
+            : 'Cold Storage Utilities';
+        }
+        const validFinStatuses = new Set(['Settled', 'Pending', 'Overdue']);
+        if (!validFinStatuses.has(String(cleanPayload.status))) {
+          cleanPayload.status = 'Settled';
+        }
+        if (cleanPayload.created_by && !ERP_UUID_REGEX.test(String(cleanPayload.created_by))) {
+          delete cleanPayload.created_by;
+        }
+        if (!cleanPayload.created_by && callerProfile?.id && ERP_UUID_REGEX.test(callerProfile.id)) {
+          cleanPayload.created_by = callerProfile.id;
+        }
+      }
+
+      if (
+        (tableName === 'system_notifications' ||
+          tableName === 'haccp_audit_records' ||
+          tableName === 'inventory_adjustments') &&
+        cleanPayload.id
+      ) {
+        cleanPayload.id = ensureValidUuid(String(cleanPayload.id));
+      }
+
+      if (tableName === 'haccp_audit_records') {
+        if (cleanPayload.created_by && !ERP_UUID_REGEX.test(String(cleanPayload.created_by))) {
+          delete cleanPayload.created_by;
+        }
+        if (!cleanPayload.created_by && callerProfile?.id && ERP_UUID_REGEX.test(callerProfile.id)) {
+          cleanPayload.created_by = callerProfile.id;
+        }
+      }
+
+      if (tableName === 'inventory_adjustments') {
+        if ('variance_weight_kg' in cleanPayload && !('delta_weight_kg' in cleanPayload)) {
+          cleanPayload.delta_weight_kg = Number(cleanPayload.variance_weight_kg || 0);
+        }
+        if ('unit_cost_per_kg' in cleanPayload && !('unit_cost_usd' in cleanPayload)) {
+          cleanPayload.unit_cost_usd = Math.max(0, Number(cleanPayload.unit_cost_per_kg || 0));
+        }
+        if ('authorized_by' in cleanPayload && !('created_by' in cleanPayload)) {
+          cleanPayload.created_by = String(cleanPayload.authorized_by);
+        }
+        delete cleanPayload.variance_weight_kg;
+        delete cleanPayload.unit_cost_per_kg;
+        delete cleanPayload.storage_zone;
+        delete cleanPayload.authorized_by;
+      }
+
+      if (tableName === 'system_notifications') {
+        if ('severity' in cleanPayload && !('urgency' in cleanPayload)) {
+          const sev = String(cleanPayload.severity).toLowerCase();
+          cleanPayload.urgency =
+            sev === 'critical' || sev === 'high' || sev === 'medium' ? sev : 'low';
+        }
+        if ('category' in cleanPayload && !('type' in cleanPayload)) {
+          cleanPayload.type = String(cleanPayload.category);
+        }
+        if ('is_read' in cleanPayload && !('read' in cleanPayload)) {
+          cleanPayload.read = Boolean(cleanPayload.is_read);
+        }
+        delete cleanPayload.severity;
+        delete cleanPayload.category;
+        delete cleanPayload.is_read;
+        const validNotifTypes = new Set([
+          'temp_alert',
+          'order_update',
+          'catch_landed',
+          'haccp_pass',
+          'system',
+          'payment_received',
+          'invoice_due',
+          'supplier_delivery',
+        ]);
+        if (!validNotifTypes.has(String(cleanPayload.type))) {
+          cleanPayload.type = 'system';
+        }
+        const validUrgencies = new Set(['low', 'medium', 'high', 'critical']);
+        if (!validUrgencies.has(String(cleanPayload.urgency))) {
+          cleanPayload.urgency = 'low';
+        }
+      }
+
+      if (tableName === 'inventory_adjustment_accounts') {
+        if (cleanPayload.id && !ERP_UUID_REGEX.test(String(cleanPayload.id))) {
+          delete cleanPayload.id;
+        }
+        const validAccTypes = new Set(['COGS', 'OpEx', 'Contra-Asset', 'Income']);
+        if (!validAccTypes.has(String(cleanPayload.account_type))) {
+          cleanPayload.account_type = 'COGS';
+        }
+      }
+
+      if (tableName === 'inventory_batches') {
+        const avail = Math.max(0, Number(cleanPayload.available_weight_kg) || 0);
+        const alloc = Math.max(0, Number(cleanPayload.allocated_weight_kg) || 0);
+        const rawInit = Number(cleanPayload.initial_weight_kg) || 0;
+        cleanPayload.available_weight_kg = avail;
+        cleanPayload.allocated_weight_kg = alloc;
+        cleanPayload.initial_weight_kg = Math.max(rawInit, avail + alloc, 0.01);
+        cleanPayload.grade = normalizeQualityGrade(cleanPayload.grade);
+      }
+
+      if (tableName === 'client_orders') {
+        cleanPayload.client_category = normalizeOrderCustomerCategory(cleanPayload.client_category);
+        cleanPayload.payment_status = normalizeOrderPaymentStatus(cleanPayload.payment_status);
+        const orderRanks: Record<string, number> = {
+          'Pending Confirmation': 1,
+          'Weighing & Grading': 2,
+          'Cryo-Packed & Iced': 3,
+          'In Reefer Transit': 4,
+          Delivered: 5,
+        };
+        if (
+          !orderRanks[String(cleanPayload.status)] &&
+          cleanPayload.status !== 'Cancelled'
+        ) {
+          cleanPayload.status = 'Pending Confirmation';
+        }
+        if (cleanPayload.id) {
+          const { data: existingOrd } = await adminClient
+            .from('client_orders')
+            .select('status')
+            .eq('organization_id', targetOrgId)
+            .eq('id', cleanPayload.id)
+            .maybeSingle();
+          if (existingOrd?.status) {
+            if (existingOrd.status === 'Delivered' || existingOrd.status === 'Cancelled') {
+              cleanPayload.status = existingOrd.status;
+            } else if (
+              cleanPayload.status !== 'Cancelled' &&
+              (orderRanks[String(cleanPayload.status)] || 0) <
+                (orderRanks[String(existingOrd.status)] || 0)
+            ) {
+              cleanPayload.status = existingOrd.status;
+            }
+          }
+        }
+      }
+
+      if (tableName === 'purchase_order_landings') {
+        const today = new Date().toISOString().split('T')[0];
+        if (!cleanPayload.delivery_date) {
+          cleanPayload.delivery_date = cleanPayload.expected_landing_date || cleanPayload.order_date || today;
+        }
+        if (!cleanPayload.payment_due_date) {
+          cleanPayload.payment_due_date = cleanPayload.delivery_date || today;
+        }
+        delete cleanPayload.expected_landing_date;
+        delete cleanPayload.total_expected_weight_kg;
+        delete cleanPayload.total_received_weight_kg;
+        const validPoStatuses = new Set([
+          'Received & In Stock',
+          'Pending Dock Inspection',
+          'In Transit',
+        ]);
+        if (!validPoStatuses.has(String(cleanPayload.status))) {
+          cleanPayload.status = 'Received & In Stock';
+        }
+        const validPoPaymentStatuses = new Set([
+          'Paid',
+          'Pending Net-30',
+          'Invoiced',
+          'Overdue',
+          'Paid in Full',
+          'Pending Settlement',
+          'Partial Paid',
+        ]);
+        if (!validPoPaymentStatuses.has(String(cleanPayload.payment_status))) {
+          cleanPayload.payment_status = /paid/i.test(String(cleanPayload.payment_status || '')) &&
+            !/unpaid/i.test(String(cleanPayload.payment_status || ''))
+            ? 'Paid in Full'
+            : 'Pending Settlement';
+        }
+      }
+
+      if (tableName === 'retail_transactions') {
+        delete cleanPayload.customer_id;
+        delete cleanPayload.sale_type;
+        if (cleanPayload.cashier_id && !ERP_UUID_REGEX.test(String(cleanPayload.cashier_id))) {
+          delete cleanPayload.cashier_id;
+        }
+        cleanPayload.payment_method = normalizeRetailPaymentMethod(cleanPayload.payment_method);
+        cleanPayload.status = cleanPayload.status === 'Refunded' ? 'Refunded' : 'Completed';
+      }
+
+      const normalizedChildren = Array.isArray(childItems)
+        ? childItems.map((it: any) => ({
+            ...it,
+            organization_id: targetOrgId,
+          }))
+        : undefined;
+
+      await ensureErpForeignKeys(
+        adminClient,
+        targetOrgId,
+        tableName,
+        cleanPayload,
+        normalizedChildren
+      );
+
+      let savedRow: any = null;
+
+      if (ERP_INSERT_ONLY_TABLES.has(tableName)) {
+        if (cleanPayload.id) {
+          const { data: existingRow } = await adminClient
+            .from(tableName)
+            .select('*')
+            .eq('organization_id', targetOrgId)
+            .eq('id', cleanPayload.id)
+            .maybeSingle();
+
+          if (existingRow) {
+            savedRow = existingRow;
+          }
+        }
+
+        if (!savedRow) {
+          const { data: inserted, error: insertErr } = await adminClient
+            .from(tableName)
+            .insert(cleanPayload)
+            .select('*')
+            .maybeSingle();
+          if (insertErr) throw insertErr;
+          savedRow = inserted;
+        }
+      } else {
+        const defaultConflict =
+          tableName === 'inventory_adjustment_accounts'
+            ? 'organization_id,account_code'
+            : String(onConflict || 'organization_id,id');
+
+        let { data: upserted, error: upsertErr } = await adminClient
+          .from(tableName)
+          .upsert(cleanPayload, { onConflict: defaultConflict })
+          .select('*')
+          .maybeSingle();
+
+        if (
+          upsertErr &&
+          upsertErr.message?.includes('no unique or exclusion constraint matching the ON CONFLICT')
+        ) {
+          const fallbackConflict = defaultConflict.includes('organization_id')
+            ? 'id'
+            : 'organization_id,id';
+          const retry = await adminClient
+            .from(tableName)
+            .upsert(cleanPayload, { onConflict: fallbackConflict })
+            .select('*')
+            .maybeSingle();
+          upserted = retry.data;
+          upsertErr = retry.error;
+        }
+
+        if (upsertErr) throw upsertErr;
+        savedRow = upserted;
+      }
+
+      // Synchronize child line items atomically if provided
+      if (normalizedChildren) {
+        if (tableName === 'client_orders') {
+          await adminClient
+            .from('order_line_items')
+            .delete()
+            .eq('organization_id', targetOrgId)
+            .eq('order_id', cleanPayload.id);
+          if (normalizedChildren.length > 0) {
+            const { error: childErr } = await adminClient
+              .from('order_line_items')
+              .insert(
+                normalizedChildren.map((it) => ({
+                  ...it,
+                  order_id: cleanPayload.id,
+                  grade: normalizeQualityGrade(it.grade),
+                }))
+              );
+            if (childErr) throw childErr;
+          }
+        } else if (tableName === 'retail_transactions') {
+          await adminClient
+            .from('retail_sale_items')
+            .delete()
+            .eq('organization_id', targetOrgId)
+            .eq('transaction_id', cleanPayload.id);
+          if (normalizedChildren.length > 0) {
+            const { error: childErr } = await adminClient
+              .from('retail_sale_items')
+              .insert(
+                normalizedChildren.map((it) => ({
+                  ...it,
+                  transaction_id: cleanPayload.id,
+                  cut_type: normalizeRetailCutType(it.cut_type),
+                }))
+              );
+            if (childErr) throw childErr;
+          }
+        } else if (tableName === 'purchase_order_landings') {
+          await adminClient
+            .from('purchase_order_items')
+            .delete()
+            .eq('organization_id', targetOrgId)
+            .eq('po_id', cleanPayload.id);
+          if (normalizedChildren.length > 0) {
+            const validZones = new Set([
+              'Super-Cryo Deep Freeze (-60°C)',
+              'Commercial Cold Storage (-22°C)',
+              'Fresh Slush Ice (0°C to +2°C)',
+              'Live Seawater Tank (+8°C)',
+            ]);
+            const { error: childErr } = await adminClient
+              .from('purchase_order_items')
+              .insert(
+                normalizedChildren.map((it) => {
+                  const weightKg = Math.max(
+                    0.01,
+                    Number(it.weight_kg ?? it.received_weight_kg ?? it.ordered_weight_kg ?? 1)
+                  );
+                  const costPerKg = Math.max(
+                    0,
+                    Number(it.cost_per_kg ?? it.agreed_cost_per_kg ?? 0)
+                  );
+                  const totalCost = Math.max(
+                    0,
+                    Number(it.total_cost ?? it.line_total_usd ?? weightKg * costPerKg)
+                  );
+                  const storageZone = validZones.has(String(it.storage_zone))
+                    ? it.storage_zone
+                    : 'Commercial Cold Storage (-22°C)';
+                  return {
+                    organization_id: targetOrgId,
+                    po_id: cleanPayload.id,
+                    species_id: it.species_id,
+                    species_name: String(it.species_name || 'Seafood Catch'),
+                    weight_kg: weightKg,
+                    cost_per_kg: costPerKg,
+                    total_cost: totalCost,
+                    grade: normalizeQualityGrade(it.grade),
+                    storage_zone: storageZone,
+                  };
+                })
+              );
+            if (childErr) throw childErr;
+          }
+        }
+      }
+
+      res.json({ success: true, row: savedRow });
+    } catch (err: any) {
+      console.error(`[ERP Persistence Upsert Error - ${tableName}]:`, err);
+      res.status(500).json({ error: err?.message || `Failed to save ${tableName}.` });
+    }
+  });
+
+  // 10C. POST Delete / Soft-Delete ERP Record
+  app.post('/api/erp/persistence/delete', requireStaffSession, async (req, res) => {
+    const adminClient = adminClientGetter()!;
+    const { tableName, recordId } = req.body || {};
+
+    if (!tableName || !ALLOWED_ERP_TABLES.has(String(tableName)) || !recordId) {
+      res.status(400).json({ error: 'Valid tableName and recordId are required.' });
+      return;
+    }
+
+    if (ERP_INSERT_ONLY_TABLES.has(String(tableName))) {
+      res.json({ success: true, immutable: true });
+      return;
+    }
+
+    const targetOrgId = resolveErpTenantOrgId(req);
+    if (!targetOrgId) {
+      res.status(400).json({ error: 'Tenant organization ID could not be resolved.' });
+      return;
+    }
+
+    const lookupId =
+      tableName === 'system_notifications' || tableName === 'inventory_adjustments'
+        ? ensureValidUuid(String(recordId))
+        : String(recordId);
+
+    try {
+      if (tableName === 'client_orders') {
+        await adminClient
+          .from('order_line_items')
+          .delete()
+          .eq('organization_id', targetOrgId)
+          .eq('order_id', lookupId);
+      } else if (tableName === 'retail_transactions') {
+        await adminClient
+          .from('retail_sale_items')
+          .delete()
+          .eq('organization_id', targetOrgId)
+          .eq('transaction_id', lookupId);
+      } else if (tableName === 'purchase_order_landings') {
+        await adminClient
+          .from('purchase_order_items')
+          .delete()
+          .eq('organization_id', targetOrgId)
+          .eq('po_id', lookupId);
+      }
+
+      const { error: delErr } = await adminClient
+        .from(tableName)
+        .delete()
+        .eq('organization_id', targetOrgId)
+        .eq('id', lookupId);
+      if (delErr) {
+        if (ERP_SOFT_DELETE_TABLES.has(String(tableName))) {
+          const { error: softErr } = await adminClient
+            .from(tableName)
+            .update({ is_active: false })
+            .eq('organization_id', targetOrgId)
+            .eq('id', lookupId);
+          if (softErr) throw softErr;
+          res.json({ success: true, softDeleted: true });
+          return;
+        }
+        throw delErr;
+      }
+
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error(`[ERP Persistence Delete Error - ${tableName}]:`, err);
+      res.status(500).json({ error: err?.message || `Failed to delete from ${tableName}.` });
+    }
+  });
+
+  // 10D. GET & POST Tenant App Settings (`app_settings`)
+  app.get('/api/erp/persistence/settings', requireStaffSession, async (req, res) => {
+    const adminClient = adminClientGetter()!;
+    const targetOrgId = resolveErpTenantOrgId(req);
+    try {
+      const { data: row, error } = await adminClient
+        .from('app_settings')
+        .select('*')
+        .eq('organization_id', targetOrgId)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      res.json({ success: true, row: row || null });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to read app_settings.' });
+    }
+  });
+
+  app.post('/api/erp/persistence/settings', requireStaffSession, async (req, res) => {
+    const adminClient = adminClientGetter()!;
+    const targetOrgId = resolveErpTenantOrgId(req);
+    const rawPayload = req.body?.payload;
+    if (!rawPayload || typeof rawPayload !== 'object') {
+      res.status(400).json({ error: 'Valid settings payload is required.' });
+      return;
+    }
+
+    try {
+      const dbPayload = {
+        ...rawPayload,
+        id: 1,
+        organization_id: targetOrgId,
+        updated_at: new Date().toISOString(),
+      };
+      const { data: row, error } = await adminClient
+        .from('app_settings')
+        .upsert(dbPayload, { onConflict: 'organization_id,id' })
+        .select('*')
+        .maybeSingle();
+      if (error) throw error;
+      res.json({ success: true, row: row || dbPayload });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to save app_settings.' });
+    }
+  });
+
+  // ==========================================
+  // 11. PLATFORM CREATOR CONSOLE & ACTIVITY TELEMETRY ROUTES
+  // ==========================================
+
+  const requirePlatformCreator = async (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction
+  ) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({ error: 'Missing Authorization bearer token.' });
+      return;
+    }
+    const token = authHeader.slice(7).trim();
+    const adminClient = adminClientGetter();
+    if (!adminClient) {
+      res.status(500).json({ error: 'Supabase admin client is not configured.' });
+      return;
+    }
+
+    try {
+      const { data: userData, error: userErr } = await adminClient.auth.getUser(token);
+      if (userErr || !userData?.user) {
+        res.status(401).json({ error: 'Invalid or expired session token.' });
+        return;
+      }
+
+      const user = userData.user;
+      const creatorEmail = (process.env.VITE_DEV_CREATOR_EMAIL || '').trim().toLowerCase();
+      const { data: callerProfile } = await adminClient
+        .from('staff_profiles')
+        .select('id, organization_id, role, email, full_name')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      const { data: platformAdminRow } = await adminClient
+        .from('platform_admins')
+        .select('user_id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      const isAuthorizedCreator =
+        callerProfile?.role === 'creator' ||
+        Boolean(platformAdminRow) ||
+        (creatorEmail && user.email?.toLowerCase() === creatorEmail) ||
+        user.user_metadata?.role === 'platform_creator' ||
+        user.app_metadata?.role === 'platform_creator';
+
+      if (!isAuthorizedCreator) {
+        res.status(403).json({ error: 'Forbidden: Platform Creator privileges required.' });
+        return;
+      }
+
+      (req as any).callerUser = user;
+      (req as any).callerProfile = callerProfile;
+      next();
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Platform authorization failed.' });
+    }
+  };
+
+  app.get('/api/platform/organizations', requirePlatformCreator, async (req, res) => {
+    const adminClient = adminClientGetter()!;
+    try {
+      const { data: orgs, error: orgErr } = await adminClient
+        .from('organizations')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (orgErr) throw orgErr;
+
+      const { data: staffRows } = await adminClient
+        .from('staff_profiles')
+        .select('organization_id, is_active');
+      const { data: inviteRows } = await adminClient
+        .from('invites')
+        .select('organization_id, used_at, expires_at');
+
+      const nowIso = new Date().toISOString();
+      const staffCountMap = new Map<string, number>();
+      for (const s of staffRows || []) {
+        if (s.is_active !== false && s.organization_id) {
+          staffCountMap.set(s.organization_id, (staffCountMap.get(s.organization_id) || 0) + 1);
+        }
+      }
+
+      const inviteCountMap = new Map<string, number>();
+      for (const inv of inviteRows || []) {
+        if (!inv.used_at && (!inv.expires_at || inv.expires_at > nowIso) && inv.organization_id) {
+          inviteCountMap.set(
+            inv.organization_id,
+            (inviteCountMap.get(inv.organization_id) || 0) + 1
+          );
+        }
+      }
+
+      const formatted = (orgs || []).map((o: any) => ({
+        id: o.id,
+        name: o.name,
+        company_name: o.company_name || o.name,
+        subscription_status: o.subscription_status || 'active',
+        plan_tier: o.plan_tier || 'standard',
+        billing_provider: o.billing_provider || 'none',
+        billing_currency: o.billing_currency || 'GHS',
+        max_staff_seats: Number(o.max_staff_seats || 5),
+        staff_count: staffCountMap.get(o.id) || 0,
+        pending_invites_count: inviteCountMap.get(o.id) || 0,
+        trial_ends_at: o.trial_ends_at || null,
+        current_period_ends_at: o.current_period_ends_at || null,
+        created_at: o.created_at,
+      }));
+
+      res.json({ success: true, organizations: formatted });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to list platform organizations.' });
+    }
+  });
+
+  app.get('/api/platform/audit-logs', requirePlatformCreator, async (req, res) => {
+    const adminClient = adminClientGetter()!;
+    try {
+      const { data: logs, error } = await adminClient
+        .from('platform_audit_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      res.json({ success: true, logs: logs || [] });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to fetch platform audit logs.' });
+    }
+  });
+
+  app.post(
+    '/api/platform/organizations/:orgId/subscription',
+    requirePlatformCreator,
+    async (req, res) => {
+      const adminClient = adminClientGetter()!;
+      const callerUser = (req as any).callerUser;
+      const { orgId } = req.params;
+      const { status, planTier, maxSeats, trialEndsAt, reason } = req.body || {};
+
+      try {
+        const { data: existing, error: fetchErr } = await adminClient
+          .from('organizations')
+          .select('*')
+          .eq('id', orgId)
+          .maybeSingle();
+        if (fetchErr || !existing) {
+          res.status(404).json({ error: 'Organization not found.' });
+          return;
+        }
+
+        const calculatedSeats =
+          maxSeats ?? (planTier === 'enterprise' ? 9999 : planTier === 'standard' ? 20 : 5);
+        const updates: Record<string, any> = {
+          subscription_status: status || existing.subscription_status,
+          plan_tier: planTier || existing.plan_tier,
+          max_staff_seats: calculatedSeats,
+          is_active: status !== 'suspended',
+          updated_at: new Date().toISOString(),
+        };
+        if (trialEndsAt !== undefined) {
+          updates.trial_ends_at = trialEndsAt;
+        }
+
+        const { error: updErr } = await adminClient
+          .from('organizations')
+          .update(updates)
+          .eq('id', orgId);
+        if (updErr) throw updErr;
+
+        await adminClient.from('platform_audit_logs').insert({
+          actor_id: callerUser.id,
+          action: 'manual_subscription_update',
+          target_organization_id: orgId,
+          previous_state: {
+            subscription_status: existing.subscription_status,
+            plan_tier: existing.plan_tier,
+            max_staff_seats: existing.max_staff_seats,
+          },
+          new_state: {
+            subscription_status: updates.subscription_status,
+            plan_tier: updates.plan_tier,
+            max_staff_seats: updates.max_staff_seats,
+          },
+          reason: reason || 'Manual subscription update via Platform Console',
+        });
+
+        res.json({
+          success: true,
+          organization_id: orgId,
+          subscription_status: updates.subscription_status,
+          plan_tier: updates.plan_tier,
+          max_staff_seats: updates.max_staff_seats,
+          reason,
+        });
+      } catch (err: any) {
+        res.status(500).json({ error: err?.message || 'Failed to update subscription.' });
+      }
+    }
+  );
+
+  app.post('/api/platform/organizations/:orgId/revoke', requirePlatformCreator, async (req, res) => {
+    const adminClient = adminClientGetter()!;
+    const callerUser = (req as any).callerUser;
+    const { orgId } = req.params;
+    const { reason } = req.body || {};
+
+    try {
+      const { data: existing } = await adminClient
+        .from('organizations')
+        .select('*')
+        .eq('id', orgId)
+        .maybeSingle();
+      if (!existing) {
+        res.status(404).json({ error: 'Organization not found.' });
+        return;
+      }
+
+      const { error: updErr } = await adminClient
+        .from('organizations')
+        .update({
+          subscription_status: 'suspended',
+          is_active: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', orgId);
+      if (updErr) throw updErr;
+
+      await adminClient
+        .from('invites')
+        .update({ expires_at: new Date().toISOString() })
+        .eq('organization_id', orgId)
+        .is('used_at', null);
+
+      await adminClient.from('platform_audit_logs').insert({
+        actor_id: callerUser.id,
+        action: 'revoke_organization_access',
+        target_organization_id: orgId,
+        previous_state: { subscription_status: existing.subscription_status },
+        new_state: { subscription_status: 'suspended' },
+        reason: reason || 'Access revoked by platform administrator',
+      });
+
+      res.json({
+        success: true,
+        organization_id: orgId,
+        subscription_status: 'suspended',
+        reason,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to revoke organization access.' });
+    }
+  });
+
+  app.post(
+    '/api/platform/organizations/:orgId/reinstate',
+    requirePlatformCreator,
+    async (req, res) => {
+      const adminClient = adminClientGetter()!;
+      const callerUser = (req as any).callerUser;
+      const { orgId } = req.params;
+      const { reason, targetStatus = 'active' } = req.body || {};
+
+      try {
+        const { data: existing } = await adminClient
+          .from('organizations')
+          .select('*')
+          .eq('id', orgId)
+          .maybeSingle();
+        if (!existing) {
+          res.status(404).json({ error: 'Organization not found.' });
+          return;
+        }
+
+        const cleanStatus = targetStatus === 'trial' ? 'trial' : 'active';
+        const { error: updErr } = await adminClient
+          .from('organizations')
+          .update({
+            subscription_status: cleanStatus,
+            is_active: true,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', orgId);
+        if (updErr) throw updErr;
+
+        await adminClient.from('platform_audit_logs').insert({
+          actor_id: callerUser.id,
+          action: 'reinstate_organization_access',
+          target_organization_id: orgId,
+          previous_state: { subscription_status: existing.subscription_status },
+          new_state: { subscription_status: cleanStatus },
+          reason: reason || 'Tenant access reinstated by platform administrator',
+        });
+
+        res.json({
+          success: true,
+          organization_id: orgId,
+          subscription_status: cleanStatus,
+          reason,
+        });
+      } catch (err: any) {
+        res.status(500).json({ error: err?.message || 'Failed to reinstate organization.' });
+      }
+    }
+  );
+
+  app.post('/api/platform/organizations/:orgId/delete', requirePlatformCreator, async (req, res) => {
+    const adminClient = adminClientGetter()!;
+    const callerUser = (req as any).callerUser;
+    const { orgId } = req.params;
+    const { reason, confirmName } = req.body || {};
+
+    try {
+      const { data: existing } = await adminClient
+        .from('organizations')
+        .select('*')
+        .eq('id', orgId)
+        .maybeSingle();
+      if (!existing) {
+        res.status(404).json({ error: 'Organization not found.' });
+        return;
+      }
+
+      if (
+        confirmName &&
+        String(confirmName).trim().toLowerCase() !== String(existing.name).trim().toLowerCase()
+      ) {
+        res.status(400).json({
+          error: `Confirmation name "${confirmName}" does not match "${existing.name}"`,
+        });
+        return;
+      }
+
+      await adminClient.from('platform_audit_logs').insert({
+        actor_id: callerUser.id,
+        action: 'delete_organization',
+        target_organization_id: null,
+        previous_state: {
+          id: existing.id,
+          name: existing.name,
+          plan_tier: existing.plan_tier,
+          subscription_status: existing.subscription_status,
+        },
+        new_state: {
+          status: 'deleted',
+          deleted_at: new Date().toISOString(),
+        },
+        reason: reason || `Organization "${existing.name}" permanently deleted`,
+      });
+
+      const { error: delErr } = await adminClient.from('organizations').delete().eq('id', orgId);
+      if (delErr) {
+        await adminClient
+          .from('organizations')
+          .update({ subscription_status: 'suspended', is_active: false })
+          .eq('id', orgId);
+      }
+
+      res.json({
+        success: true,
+        deleted_organization_id: orgId,
+        deleted_name: existing.name,
+        reason,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to delete organization.' });
+    }
+  });
+
+  // Activity Login / Logout Persistence Endpoints
+  app.get('/api/activity/logins', requireStaffSession, async (req, res) => {
+    const adminClient = adminClientGetter()!;
+    const callerProfile = (req as any).callerProfile;
+    try {
+      let query = adminClient
+        .from('user_login_logs')
+        .select('*')
+        .order('login_at', { ascending: false })
+        .limit(150);
+
+      if (callerProfile.role !== 'creator') {
+        query = query.eq('organization_id', callerProfile.organization_id);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      res.json({ success: true, logins: data || [] });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to fetch login history.' });
+    }
+  });
+
+  app.post('/api/activity/logins', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const adminClient = adminClientGetter();
+    if (!authHeader || !authHeader.startsWith('Bearer ') || !adminClient) {
+      res.status(401).json({ error: 'Authentication required.' });
+      return;
+    }
+
+    try {
+      const token = authHeader.slice(7).trim();
+      const { data: userData, error: userErr } = await adminClient.auth.getUser(token);
+      if (userErr || !userData?.user) {
+        res.status(401).json({ error: 'Invalid session token.' });
+        return;
+      }
+
+      const user = userData.user;
+      const { data: profile } = await adminClient
+        .from('staff_profiles')
+        .select('organization_id, role, full_name, email')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      const resolvedOrgId =
+        profile?.organization_id ||
+        (ERP_UUID_REGEX.test(String(req.body?.organizationId || ''))
+          ? String(req.body.organizationId)
+          : null);
+
+      let resolvedOrgName = String(req.body?.organizationName || 'Amansocean Coldstore');
+      if (resolvedOrgId) {
+        const { data: orgRow } = await adminClient
+          .from('organizations')
+          .select('name')
+          .eq('id', resolvedOrgId)
+          .maybeSingle();
+        if (orgRow?.name) resolvedOrgName = orgRow.name;
+      }
+
+      const clientIp =
+        (typeof req.headers['x-forwarded-for'] === 'string'
+          ? req.headers['x-forwarded-for'].split(',')[0].trim()
+          : req.socket.remoteAddress) || null;
+
+      const { data: row, error: insErr } = await adminClient
+        .from('user_login_logs')
+        .insert({
+          user_id: user.id,
+          organization_id: resolvedOrgId,
+          organization_name: resolvedOrgName,
+          email: user.email || String(req.body?.email || ''),
+          full_name:
+            profile?.full_name ||
+            String(req.body?.fullName || user.email?.split('@')[0] || 'Staff'),
+          role: profile?.role || String(req.body?.role || 'staff'),
+          device_type: String(req.body?.deviceType || 'desktop'),
+          user_agent: String(req.body?.userAgent || req.headers['user-agent'] || 'Web Client'),
+          client_ip: clientIp,
+          session_status: 'active',
+        })
+        .select('*')
+        .maybeSingle();
+
+      if (insErr) throw insErr;
+      res.status(201).json({ success: true, login: row });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to record login log.' });
+    }
+  });
+
+  app.post('/api/activity/logout', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const adminClient = adminClientGetter();
+    if (!authHeader || !authHeader.startsWith('Bearer ') || !adminClient) {
+      res.status(401).json({ error: 'Authentication required.' });
+      return;
+    }
+
+    try {
+      const token = authHeader.slice(7).trim();
+      const { data: userData } = await adminClient.auth.getUser(token);
+      const uid = userData?.user?.id || req.body?.userId;
+      if (uid && ERP_UUID_REGEX.test(String(uid))) {
+        await adminClient
+          .from('user_login_logs')
+          .update({ session_status: 'expired' })
+          .eq('user_id', uid)
+          .eq('session_status', 'active');
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to record logout.' });
     }
   });
 

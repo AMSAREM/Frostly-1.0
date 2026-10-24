@@ -8,6 +8,10 @@ import { haccpRepository } from '../repositories/haccpRepository';
 import { purchaseOrderRepository } from '../repositories/purchaseOrderRepository';
 import { productRepository, retailTransactionRepository } from '../repositories/retailRepository';
 import { notificationRepository } from '../repositories/notificationRepository';
+import {
+  adjustmentAccountRepository,
+  stockAdjustmentRepository,
+} from '../repositories/adjustmentRepository';
 import { getSession } from '../data/auth';
 
 type FlushHandler = () => Promise<{ processed: number; failed: number }>;
@@ -41,6 +45,12 @@ class SyncManager {
     this.registerHandler('retail_wholesale_products', () => productRepository.flushTableQueue());
     this.registerHandler('retail_transactions', () => retailTransactionRepository.flushTableQueue());
     this.registerHandler('system_notifications', () => notificationRepository.flushTableQueue());
+    this.registerHandler('inventory_adjustment_accounts', () =>
+      adjustmentAccountRepository.flushTableQueue()
+    );
+    this.registerHandler('inventory_adjustments', () =>
+      stockAdjustmentRepository.flushTableQueue()
+    );
 
     // Listen for online events to automatically flush all queued changes
     if (typeof window !== 'undefined') {

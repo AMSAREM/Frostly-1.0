@@ -752,27 +752,72 @@ export default function App() {
     financialEntries?: FinancialLedgerEntry[];
     settings?: AppSettings;
   }) => {
-    if (imported.batches) {
-      setBatches(imported.batches);
-      batchRepository.resetCache(imported.batches);
-    }
-    if (imported.orders) setOrders(imported.orders);
     if (imported.customers) {
       setCustomers(imported.customers);
       customerRepository.resetCache(imported.customers);
+      customerRepository.saveAll(imported.customers).catch((err) => {
+        console.warn('[App] customerRepository restore error:', err);
+      });
     }
-    if (imported.suppliers) setSuppliers(imported.suppliers);
-    if (imported.products) setProducts(imported.products);
-    if (imported.retailSales) setRetailSales(imported.retailSales);
-    if (imported.purchaseOrders) setPurchaseOrders(imported.purchaseOrders);
-    if (imported.financialEntries) setFinancialEntries(imported.financialEntries);
+    if (imported.suppliers) {
+      setSuppliers(imported.suppliers);
+      supplierRepository.resetCache(imported.suppliers);
+      supplierRepository.saveAll(imported.suppliers).catch((err) => {
+        console.warn('[App] supplierRepository restore error:', err);
+      });
+    }
+    if (imported.products) {
+      setProducts(imported.products);
+      productRepository.resetCache(imported.products);
+      productRepository.saveAll(imported.products).catch((err) => {
+        console.warn('[App] productRepository restore error:', err);
+      });
+    }
+    if (imported.batches) {
+      setBatches(imported.batches);
+      batchRepository.resetCache(imported.batches);
+      batchRepository.saveAll(imported.batches).catch((err) => {
+        console.warn('[App] batchRepository restore error:', err);
+      });
+    }
+    if (imported.orders) {
+      setOrders(imported.orders);
+      orderRepository.resetCache(imported.orders);
+      Promise.all(imported.orders.map((ord) => orderRepository.saveOrderWithItems(ord))).catch((err) => {
+        console.warn('[App] orderRepository restore error:', err);
+      });
+    }
+    if (imported.retailSales) {
+      setRetailSales(imported.retailSales);
+      retailTransactionRepository.resetCache(imported.retailSales);
+      Promise.all(imported.retailSales.map((tx) => retailTransactionRepository.recordSaleWithItems(tx))).catch((err) => {
+        console.warn('[App] retailTransactionRepository restore error:', err);
+      });
+    }
+    if (imported.purchaseOrders) {
+      setPurchaseOrders(imported.purchaseOrders);
+      purchaseOrderRepository.resetCache(imported.purchaseOrders);
+      Promise.all(imported.purchaseOrders.map((po) => purchaseOrderRepository.savePurchaseOrderWithItems(po))).catch((err) => {
+        console.warn('[App] purchaseOrderRepository restore error:', err);
+      });
+    }
+    if (imported.financialEntries) {
+      setFinancialEntries(imported.financialEntries);
+      financialRepository.resetCache(imported.financialEntries);
+      Promise.all(imported.financialEntries.map((fe) => financialRepository.addEntry(fe))).catch((err) => {
+        console.warn('[App] financialRepository restore error:', err);
+      });
+    }
     if (imported.settings) {
       setSettings(imported.settings);
       setUseImperial(imported.settings.useImperial);
+      settingsRepository.saveSettings(imported.settings).catch((err) => {
+        console.warn('[App] settingsRepository restore error:', err);
+      });
     }
     addNotification({
       title: 'Database Restored',
-      message: 'Complete ERP records restored from JSON backup archive.',
+      message: 'Complete ERP records restored from JSON backup archive and synced to Supabase.',
       type: 'system',
       urgency: 'low'
     });
@@ -1724,7 +1769,11 @@ export default function App() {
       const targetPOId = specificOrderId || refId;
       setPurchaseOrders(prev => prev.map(po => {
         if (po.id === targetPOId || (!specificOrderId && po.supplierId === entityId && po.paymentStatus !== 'Paid in Full')) {
-          return { ...po, paymentStatus: 'Paid in Full' };
+          const updatedPo: PurchaseOrderLanding = { ...po, paymentStatus: 'Paid in Full' };
+          purchaseOrderRepository.save(updatedPo, false).catch(err => {
+            console.warn('[App] purchaseOrderRepository save on AP settlement failed:', err);
+          });
+          return updatedPo;
         }
         return po;
       }));

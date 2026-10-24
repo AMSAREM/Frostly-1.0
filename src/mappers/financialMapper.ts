@@ -1,4 +1,5 @@
 import { FinancialLedgerEntry, FinancialEntryCategory } from '../types';
+import { ensureValidUuid } from './notificationMapper';
 
 export interface DatabaseFinancialEntryRow {
   id: string;
@@ -21,49 +22,154 @@ export interface DatabaseFinancialEntryRow {
   notes?: string;
 }
 
+const VALID_FIN_CATEGORIES = new Set<string>([
+  'Revenue (Wholesale)',
+  'Revenue (Retail POS)',
+  'COGS (Catch Intake)',
+  'Logistics & Reefer Freight',
+  'Cold Storage Utilities',
+  'Packaging & Ice',
+  'Labor & Cutting Crew',
+  'Dock Fees & Port Taxes',
+  'Inventory Adjustment',
+]);
+
+export function parseFinancialDescriptionMeta(rawDescription?: string | null): {
+  cleanDescription: string;
+  customerId?: string;
+  supplierId?: string;
+  receiptNumber?: string;
+  voucherNumber?: string;
+  notes?: string;
+} {
+  let cleanDescription = String(rawDescription || '');
+  let customerId: string | undefined;
+  let supplierId: string | undefined;
+  let receiptNumber: string | undefined;
+  let voucherNumber: string | undefined;
+  let notes: string | undefined;
+
+  if (cleanDescription.includes('<!--frostly_fin:')) {
+    try {
+      const match = cleanDescription.match(/<!--frostly_fin:(\{.*?\})-->/);
+      if (match && match[1]) {
+        const parsed = JSON.parse(match[1]);
+        if (parsed.customerId) customerId = String(parsed.customerId);
+        if (parsed.supplierId) supplierId = String(parsed.supplierId);
+        if (parsed.receiptNumber) receiptNumber = String(parsed.receiptNumber);
+        if (parsed.voucherNumber) voucherNumber = String(parsed.voucherNumber);
+        if (parsed.notes) notes = String(parsed.notes);
+      }
+    } catch {
+      // ignore malformed metadata
+    }
+    cleanDescription = cleanDescription.replace(/<!--frostly_fin:.*?-->/g, '').trim();
+  }
+
+  return {
+    cleanDescription,
+    customerId,
+    supplierId,
+    receiptNumber,
+    voucherNumber,
+    notes,
+  };
+}
+
+export function encodeFinancialDescriptionMeta(
+  description: string,
+  meta: {
+    customerId?: string | null;
+    supplierId?: string | null;
+    receiptNumber?: string | null;
+    voucherNumber?: string | null;
+    notes?: string | null;
+  }
+): string {
+  const { cleanDescription } = parseFinancialDescriptionMeta(description);
+  const payload: Record<string, string> = {};
+  if (meta.customerId) payload.customerId = String(meta.customerId);
+  if (meta.supplierId) payload.supplierId = String(meta.supplierId);
+  if (meta.receiptNumber) payload.receiptNumber = String(meta.receiptNumber);
+  if (meta.voucherNumber) payload.voucherNumber = String(meta.voucherNumber);
+  if (meta.notes) payload.notes = String(meta.notes);
+
+  if (Object.keys(payload).length === 0) {
+    return cleanDescription || 'Financial Ledger Transaction';
+  }
+  const encoded = JSON.stringify(payload);
+  return cleanDescription
+    ? `${cleanDescription} <!--frostly_fin:${encoded}-->`
+    : `Financial Ledger Transaction <!--frostly_fin:${encoded}-->`;
+}
+
 export const financialMapper = {
   toDomain(row: DatabaseFinancialEntryRow): FinancialLedgerEntry {
+    const meta = parseFinancialDescriptionMeta(row.description);
     return {
       id: row.id,
       date: row.entry_date ? row.entry_date.split('T')[0] : new Date().toISOString().split('T')[0],
       type: (row.type as any) || 'Income',
       category: (row.category as FinancialEntryCategory) || 'Revenue (Wholesale)',
-      description: row.description || '',
+      description: meta.cleanDescription,
       referenceId: row.reference_id || '',
       entityName: row.entity_name || '',
       amount: Number(row.amount ?? 0),
       paymentMethod: row.payment_method || 'Bank Transfer (ACH / SEPA)',
       status: (row.status as any) || 'Settled',
-      customerId: row.customer_id || undefined,
-      supplierId: row.supplier_id || undefined,
-      receiptNumber: row.receipt_number || undefined,
-      voucherNumber: row.voucher_number || undefined,
-      notes: row.notes || undefined,
+      customerId: row.customer_id || meta.customerId || undefined,
+      supplierId: row.supplier_id || meta.supplierId || undefined,
+      receiptNumber: row.receipt_number || meta.receiptNumber || undefined,
+      voucherNumber: row.voucher_number || meta.voucherNumber || undefined,
+      notes: row.notes || meta.notes || undefined,
     };
   },
 
   toDatabase(entry: FinancialLedgerEntry): Record<string, any> {
-    // Generate valid UUID if needed or omit to let db gen_random_uuid()
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.id);
+    const cleanType =
+      entry.type === 'Income' || entry.type === 'COGS' || entry.type === 'OpEx'
+        ? entry.type
+        : 'Income';
+
+    const cleanCategory = VALID_FIN_CATEGORIES.has(entry.category)
+      ? entry.category
+      : cleanType === 'Income'
+      ? 'Revenue (Wholesale)'
+      : cleanType === 'COGS'
+      ? 'COGS (Catch Intake)'
+      : 'Cold Storage Utilities';
+
+    const cleanStatus =
+      entry.status === 'Settled' || entry.status === 'Pending' || entry.status === 'Overdue'
+        ? entry.status
+        : 'Settled';
+
+    const rawDate = entry.date ? entry.date.split('T')[0].split(' ')[0] : '';
+    const validDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
+      ? rawDate
+      : new Date().toISOString().split('T')[0];
+
+    const encodedDescription = encodeFinancialDescriptionMeta(entry.description, {
+      customerId: entry.customerId,
+      supplierId: entry.supplierId,
+      receiptNumber: entry.receiptNumber,
+      voucherNumber: entry.voucherNumber,
+      notes: entry.notes,
+    });
+
     const payload: Record<string, any> = {
-      entry_date: entry.date || new Date().toISOString().split('T')[0],
-      type: entry.type,
-      category: entry.category,
-      description: entry.description,
-      reference_id: entry.referenceId,
-      entity_name: entry.entityName,
-      amount: entry.amount,
-      payment_method: entry.paymentMethod,
-      status: entry.status,
+      id: ensureValidUuid(entry.id || `fin-${Date.now()}`),
+      entry_date: validDate,
+      type: cleanType,
+      category: cleanCategory,
+      description: encodedDescription,
+      reference_id: entry.referenceId || 'LEDGER',
+      entity_name: entry.entityName || 'Counterparty',
+      amount: Math.max(0, Number(entry.amount) || 0),
+      payment_method: entry.paymentMethod || 'Cash / Bank Transfer',
+      status: cleanStatus,
     };
-    if (entry.customerId) payload.customer_id = entry.customerId;
-    if (entry.supplierId) payload.supplier_id = entry.supplierId;
-    if (entry.receiptNumber) payload.receipt_number = entry.receiptNumber;
-    if (entry.voucherNumber) payload.voucher_number = entry.voucherNumber;
-    if (entry.notes) payload.notes = entry.notes;
-    if (isUuid) {
-      payload.id = entry.id;
-    }
+
     return payload;
-  }
+  },
 };

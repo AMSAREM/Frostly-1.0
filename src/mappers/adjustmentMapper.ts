@@ -1,4 +1,8 @@
 import { InventoryAdjustmentAccount, InventoryStockAdjustment } from '../types';
+import { ensureValidUuid } from './notificationMapper';
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const VALID_ACCOUNT_TYPES = new Set(['COGS', 'OpEx', 'Contra-Asset', 'Income']);
 
 export interface DatabaseAdjustmentAccountRow {
   id: string;
@@ -47,19 +51,20 @@ export const adjustmentAccountMapper = {
       isActive: row.is_active !== false,
       balanceUSD: Number(row.balance_usd ?? 0),
       createdAt: row.created_at,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
     };
   },
 
   toDatabase(entity: InventoryAdjustmentAccount): Record<string, any> {
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entity.id);
+    const isUuid = UUID_REGEX.test(entity.id || '');
+    const cleanType = VALID_ACCOUNT_TYPES.has(entity.accountType) ? entity.accountType : 'COGS';
     const payload: Record<string, any> = {
       account_code: entity.accountCode,
       account_name: entity.accountName,
-      account_type: entity.accountType,
-      description: entity.description,
-      is_default: entity.isDefault,
-      is_active: entity.isActive,
+      account_type: cleanType,
+      description: entity.description || null,
+      is_default: Boolean(entity.isDefault),
+      is_active: entity.isActive !== false,
       balance_usd: Number(entity.balanceUSD ?? 0),
     };
     if (isUuid) {
@@ -69,7 +74,7 @@ export const adjustmentAccountMapper = {
       payload.organization_id = entity.organizationId;
     }
     return payload;
-  }
+  },
 };
 
 export const stockAdjustmentMapper = {
@@ -91,34 +96,40 @@ export const stockAdjustmentMapper = {
       financialLedgerId: row.financial_ledger_id || undefined,
       notes: row.notes || undefined,
       createdBy: row.created_by || undefined,
-      createdAt: row.created_at || new Date().toISOString()
+      createdAt: row.created_at || new Date().toISOString(),
     };
   },
 
   toDatabase(entity: InventoryStockAdjustment): Record<string, any> {
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entity.id);
+    const validAccountUuid =
+      entity.adjustmentAccountId && UUID_REGEX.test(entity.adjustmentAccountId)
+        ? entity.adjustmentAccountId
+        : null;
+    const validFinUuid =
+      entity.financialLedgerId && UUID_REGEX.test(entity.financialLedgerId)
+        ? entity.financialLedgerId
+        : null;
+
     const payload: Record<string, any> = {
+      id: ensureValidUuid(entity.id || `adj-${Date.now()}`),
       batch_id: entity.batchId,
       species_name: entity.speciesName,
-      previous_weight_kg: entity.previousWeightKg,
-      new_weight_kg: entity.newWeightKg,
-      delta_weight_kg: entity.deltaWeightKg,
-      unit_cost_usd: entity.unitCostUSD,
-      valuation_variance_usd: entity.valuationVarianceUSD,
-      reason: entity.reason,
-      adjustment_account_id: entity.adjustmentAccountId || null,
-      adjustment_account_code: entity.adjustmentAccountCode,
-      adjustment_account_name: entity.adjustmentAccountName,
-      financial_ledger_id: entity.financialLedgerId || null,
+      previous_weight_kg: Math.max(0, Number(entity.previousWeightKg) || 0),
+      new_weight_kg: Math.max(0, Number(entity.newWeightKg) || 0),
+      delta_weight_kg: Number(entity.deltaWeightKg) || 0,
+      unit_cost_usd: Math.max(0, Number(entity.unitCostUSD) || 0),
+      valuation_variance_usd: Number(entity.valuationVarianceUSD) || 0,
+      reason: entity.reason || 'Stock Reconciliation',
+      adjustment_account_id: validAccountUuid,
+      adjustment_account_code: entity.adjustmentAccountCode || '5150',
+      adjustment_account_name: entity.adjustmentAccountName || 'Inventory Shrinkage & Variance',
+      financial_ledger_id: validFinUuid,
       notes: entity.notes || null,
-      created_by: entity.createdBy || null
+      created_by: entity.createdBy || null,
     };
-    if (isUuid) {
-      payload.id = entity.id;
-    }
     if (entity.organizationId) {
       payload.organization_id = entity.organizationId;
     }
     return payload;
-  }
+  },
 };
