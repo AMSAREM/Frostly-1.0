@@ -441,12 +441,22 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       key={product.id}
                       className="flex gap-3 bg-white p-3 rounded-2xl border border-amber-200 shadow-xs items-center"
                     >
-                      <img
-                        src={product.image}
-                        alt={product.name}
-                        referrerPolicy="no-referrer"
-                        className="w-20 h-20 rounded-xl object-cover bg-amber-50 shrink-0"
-                      />
+                      <div className="relative w-20 h-20 rounded-xl overflow-hidden bg-amber-50 shrink-0 border border-amber-200/60">
+                        <img
+                          src={product.image}
+                          alt={product.name}
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                            const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
+                            if (fb) (fb as HTMLElement).style.display = 'flex';
+                          }}
+                        />
+                        <div className="w-full h-full hidden items-center justify-center text-amber-500 bg-amber-50/80 img-fallback">
+                          <PackageSearch className="w-8 h-8 opacity-60" />
+                        </div>
+                      </div>
                       <div className="flex-1 min-w-0">
                         <h4 className="font-bold text-sm text-[#1A1A1A] truncate">{product.name}</h4>
                         <p className="text-xs text-neutral-500 font-medium tabular-nums">

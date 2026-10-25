@@ -1,12 +1,13 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import Stripe from 'https://esm.sh/stripe@14.25.0?target=deno';
 
 /**
  * Supabase Edge Function: Stripe Webhook Processor
  * 
  * Secure, server-side-only entry point for Stripe subscription webhooks.
  * Enforces:
- * 1. Webhook signature validation using STRIPE_WEBHOOK_SECRET
+ * 1. Webhook signature validation using STRIPE_WEBHOOK_SECRET and SubtleCryptoProvider
  * 2. Idempotent processing via the `stripe_webhook_events` database journal
  * 3. Atomic status transitions via public.apply_stripe_subscription_update
  */
@@ -15,6 +16,11 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, stripe-signature',
 };
+
+const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY') || '', {
+  apiVersion: '2023-10-16',
+  httpClient: Stripe.createFetchHttpClient(),
+});
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -36,10 +42,16 @@ serve(async (req) => {
     let event: any;
 
     try {
-      // In production with Stripe SDK: stripe.webhooks.constructEvent(rawBody, signature, webhookSecret)
-      event = JSON.parse(rawBody);
+      event = await stripe.webhooks.constructEventAsync(
+        rawBody,
+        signature,
+        webhookSecret,
+        undefined,
+        Stripe.createSubtleCryptoProvider()
+      );
     } catch (err: any) {
-      return new Response(JSON.stringify({ error: `Webhook payload parsing failed: ${err.message}` }), {
+      console.error('[Stripe Webhook Verification Error]:', err.message);
+      return new Response(JSON.stringify({ error: `Webhook signature verification failed: ${err.message}` }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

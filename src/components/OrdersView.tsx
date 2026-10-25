@@ -16,18 +16,14 @@ import {
   Sparkles,
   Layers,
   MapPin,
-  Calendar,
-  ZoomIn
+  Calendar
 } from 'lucide-react';
-import { ClientOrder, OrderStatus, InventoryBatch, RetailWholesaleProduct } from '../types';
+import { ClientOrder, OrderStatus, InventoryBatch } from '../types';
 import { formatCurrency, formatWeight, getYieldVariance } from '../utils/formatters';
-import { resolveProductImage } from '../utils/productImageResolver';
-import { ImageLightboxModal, ImageLightboxDetails } from './Common/ImageLightboxModal';
 
 interface OrdersViewProps {
   orders: ClientOrder[];
   batches: InventoryBatch[];
-  products?: RetailWholesaleProduct[];
   onOpenNewOrder: () => void;
   onOpenWeigher: (order: ClientOrder) => void;
   onOpenInvoice: (order: ClientOrder) => void;
@@ -40,7 +36,6 @@ interface OrdersViewProps {
 export const OrdersView: React.FC<OrdersViewProps> = ({
   orders,
   batches,
-  products = [],
   onOpenNewOrder,
   onOpenWeigher,
   onOpenInvoice,
@@ -51,7 +46,6 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 }) => {
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
-  const [lightboxDetails, setLightboxDetails] = useState<ImageLightboxDetails | null>(null);
 
   const filteredOrders = orders.filter((o) => {
     const matchesSearch =
@@ -263,53 +257,34 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                       {order.items.map((item) => {
                         const hasWeighed = item.actualWeighedKg !== null;
                         const variance = getYieldVariance(item.requestedWeightKg, item.actualWeighedKg);
-
-                        const linkedBatch = batches.find(b => b.id === item.lotId);
-                        const linkedProd = products.find(p => 
-                          (item.speciesId && p.sku === item.speciesId) ||
-                          (p.linkedBatchId && p.linkedBatchId === item.lotId) ||
-                          p.name.toLowerCase() === item.speciesName.toLowerCase()
-                        );
-                        const resolvedImg = resolveProductImage(linkedProd, linkedBatch);
+                        const matchedLot = batches.find(b => b.id === item.lotId);
+                        const imgUrl = item.imageUrl || matchedLot?.imageUrl;
 
                         return (
                           <div
                             key={item.id}
-                            className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                            className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
                           >
-                            <div className="flex items-center gap-3">
-                              {resolvedImg.url ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setLightboxDetails({
-                                    imageUrl: resolvedImg.url!,
-                                    title: item.speciesName,
-                                    subtitle: `Order ${order.id} · Lot ${item.lotId || 'N/A'}`,
-                                    sourceLabel: resolvedImg.source === 'product' ? 'Product Catalog Photo' : 'Intake Catch Photo',
-                                    sourceType: resolvedImg.source === 'product' ? 'product' : 'batch',
-                                    lotId: item.lotId,
-                                    grade: item.grade,
-                                  })}
-                                  className="relative group/thumb shrink-0 rounded-xl overflow-hidden border border-slate-200 cursor-zoom-in"
-                                  title="Click to view full resolution"
-                                >
+                            <div className="flex items-center gap-3 min-w-0">
+                              {imgUrl ? (
+                                <div className="relative w-11 h-11 rounded-xl border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
                                   <img
-                                    src={resolvedImg.url}
+                                    src={imgUrl}
                                     alt={item.speciesName}
-                                    loading="lazy"
-                                    decoding="async"
+                                    className="w-full h-full object-cover"
                                     referrerPolicy="no-referrer"
                                     onError={(e) => {
-                                      (e.target as HTMLImageElement).src = '/logofrostly1.png';
+                                      e.currentTarget.style.display = 'none';
+                                      const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
+                                      if (fb) (fb as HTMLElement).style.display = 'flex';
                                     }}
-                                    className="w-11 h-11 object-cover bg-slate-100 group-hover/thumb:scale-105 transition-transform"
                                   />
-                                  <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
-                                    <ZoomIn className="w-3.5 h-3.5" />
+                                  <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
+                                    <Package className="w-5 h-5" />
                                   </div>
-                                </button>
+                                </div>
                               ) : (
-                                <div className="w-11 h-11 rounded-xl bg-slate-200/60 border border-slate-200 flex items-center justify-center text-slate-400 shrink-0">
+                                <div className="w-11 h-11 rounded-xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
                                   <Package className="w-5 h-5" />
                                 </div>
                               )}
@@ -415,13 +390,6 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           })
         )}
       </div>
-
-      {/* Enlarged High-Resolution Image Preview Lightbox */}
-      <ImageLightboxModal
-        isOpen={Boolean(lightboxDetails)}
-        onClose={() => setLightboxDetails(null)}
-        details={lightboxDetails}
-      />
     </div>
   );
 };

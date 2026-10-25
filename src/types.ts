@@ -79,6 +79,7 @@ export interface OrderLineItem {
   actualWeighedKg: number | null;
   pricePerKg: number;
   notes?: string;
+  imageUrl?: string;
 }
 
 export interface ClientOrder {
@@ -342,6 +343,7 @@ export interface RetailSaleItem {
   unitPrice: number;
   costPrice: number;
   lineTotal: number;
+  imageUrl?: string;
 }
 
 export interface RetailTransaction {

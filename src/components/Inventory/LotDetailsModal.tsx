@@ -88,6 +88,9 @@ export const LotDetailsModal: React.FC<LotDetailsModalProps> = ({
                 (e.target as HTMLImageElement).src = '/logofrostly1.png';
               }}
               className="absolute inset-0 w-full h-full object-cover opacity-35 mix-blend-luminosity filter saturate-150"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
             />
           ) : (
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-900/40 via-slate-950/80 to-slate-950" />

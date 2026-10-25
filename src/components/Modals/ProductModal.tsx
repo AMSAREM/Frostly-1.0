@@ -10,8 +10,7 @@ import {
   AlertCircle,
   Upload,
   Info,
-  Warehouse,
-  Loader2
+  Warehouse
 } from 'lucide-react';
 import { 
   RetailWholesaleProduct, 
@@ -22,7 +21,7 @@ import {
   StorageZone
 } from '../../types';
 import { SPECIES_CATALOG } from '../../data/mockData';
-import { processImageFile } from '../../utils/imageUpload';
+import { uploadImageToStorage } from '../../utils/imageUpload';
 
 interface ProductModalProps {
   isOpen: boolean;
@@ -107,7 +106,6 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const [linkedBatchId, setLinkedBatchId] = useState<string>(editingProduct?.linkedBatchId || '');
   const [imagePreviewError, setImagePreviewError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
   // Sync state if editingProduct prop updates
@@ -207,28 +205,28 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     }
   }, [speciesId, cutType, isEditing, sku]);
 
-  // Handle local image file selection / upload as optimized base64 or object URL
+  // Handle local image file selection / upload securely via storage
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 15 * 1024 * 1024) {
-      setErrorMsg('Image size exceeds 15MB limit. Please choose a smaller image.');
+    if (file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg')) {
+      setErrorMsg('SVG format is not allowed for security reasons. Please upload JPG, PNG, or WebP.');
       return;
     }
 
-    setIsProcessingImage(true);
-    setErrorMsg('');
+    if (file.size > 5 * 1024 * 1024) {
+      setErrorMsg('Image size exceeds 5MB limit. Please choose a smaller image or use an image URL.');
+      return;
+    }
 
     try {
-      // Process, scale to max 1000x1000, and compress to high-quality lightweight JPEG data URL (~60-120KB)
-      const optimizedDataUrl = await processImageFile(file, 1000, 1000, 0.82);
-      setImageUrl(optimizedDataUrl);
+      setErrorMsg('');
+      const uploadedUrl = await uploadImageToStorage(file, 'products');
+      setImageUrl(uploadedUrl);
       setImagePreviewError(false);
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Failed to process image file. Please try another file or enter an image URL.');
-    } finally {
-      setIsProcessingImage(false);
+      setErrorMsg(err.message || 'Failed to process image file.');
     }
   };
 
@@ -397,38 +395,16 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
                 <div className="flex items-center gap-3">
                   <label className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-semibold text-slate-700 cursor-pointer shadow-2xs">
-                    {isProcessingImage ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 text-emerald-600 animate-spin" />
-                        <span>Optimizing Photo...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="w-3.5 h-3.5 text-slate-500" />
-                        <span>Upload from Device</span>
-                      </>
-                    )}
+                    <Upload className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Upload from Device</span>
                     <input
                       type="file"
                       accept="image/*"
-                      disabled={isProcessingImage}
                       onChange={handleImageFileChange}
                       className="hidden"
                     />
                   </label>
-                  {imageUrl && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setImageUrl('');
-                        setImagePreviewError(false);
-                      }}
-                      className="text-xs text-rose-600 hover:text-rose-700 font-semibold cursor-pointer"
-                    >
-                      Clear
-                    </button>
-                  )}
-                  <span className="text-[11px] text-slate-400">PNG, JPG, WebP auto-compressed</span>
+                  <span className="text-[11px] text-slate-400">PNG, JPG, WebP up to 2MB</span>
                 </div>
               </div>
             </div>

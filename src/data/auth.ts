@@ -155,12 +155,14 @@ export function isAmansoceanEmail(email?: string | null): boolean {
   );
 }
 
-// Development test user credentials (with instant fallback for frictionless preview)
+// Development test user credentials (with instant fallback for frictionless preview - omitted in production)
 export const DEFAULT_TEST_USER_EMAIL =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_EMAIL) || 'admin@amansocean.com';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_EMAIL) ||
+  (isDev ? 'admin@amansocean.com' : '');
 
 export const DEFAULT_TEST_USER_PASSWORD =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) || 'frostly2026';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) ||
+  (isDev ? 'frostly2026' : '');
 
 export const DEFAULT_TEST_USER = {
   email: DEFAULT_TEST_USER_EMAIL,

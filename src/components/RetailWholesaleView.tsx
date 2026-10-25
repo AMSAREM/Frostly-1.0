@@ -35,8 +35,7 @@ import {
   Monitor,
   Copy,
   Check,
-  FileText,
-  ZoomIn
+  FileText
 } from 'lucide-react';
 import { 
   RetailWholesaleProduct, 
@@ -48,8 +47,6 @@ import {
   InventoryBatch 
 } from '../types';
 import { ProductModal } from './Modals/ProductModal';
-import { resolveProductImage } from '../utils/productImageResolver';
-import { ImageLightboxModal, ImageLightboxDetails } from './Common/ImageLightboxModal';
 import {
   ErpStorefrontOrder,
   StorefrontFulfillmentStatus,
@@ -111,7 +108,6 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   const [matrixCategory, setMatrixCategory] = useState<string>('all');
   const [syncingPriceList, setSyncingPriceList] = useState<boolean>(false);
   const [showFlyerPdfModal, setShowFlyerPdfModal] = useState<boolean>(false);
-  const [lightboxDetails, setLightboxDetails] = useState<ImageLightboxDetails | null>(null);
   
   // Online Storefront Queue State
   const [storefrontOrders, setStorefrontOrders] = useState<ErpStorefrontOrder[]>([]);
@@ -528,6 +524,7 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
         productId: item.product.id,
         productName: item.product.name,
         cutType: item.product.cutType,
+        imageUrl: item.product.imageUrl || '',
         quantity: item.quantity,
         unit: posPricingMode === 'wholesale' ? 'kg' : item.product.unit,
         unitPrice,
@@ -727,54 +724,28 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
 
             {/* Product Card Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {filteredPOSProducts.map(prod => {
-                const linkedBatch = batches.find(b => 
-                  (prod.linkedBatchId && b.id === prod.linkedBatchId) ||
-                  (b.linkedProductId && b.linkedProductId === prod.id) ||
-                  (b.productSku && prod.sku && b.productSku.toLowerCase() === prod.sku.toLowerCase()) ||
-                  b.id === `LOT-RET-${prod.id.replace('prod-', '')}`
-                );
-                const resolvedImg = resolveProductImage(prod, linkedBatch);
-
-                return (
+              {filteredPOSProducts.map(prod => (
                 <div 
                   key={prod.id}
                   onClick={() => handleAddToCart(prod)}
                   className="bg-white rounded-3xl border border-slate-200 p-4 shadow-xs hover:border-emerald-400 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between space-y-3 group"
                 >
                   <div className="flex items-start gap-3">
-                    {resolvedImg.url ? (
-                      <div 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setLightboxDetails({
-                            imageUrl: resolvedImg.url!,
-                            title: prod.name,
-                            subtitle: `${prod.cutType} · SKU: ${prod.sku}`,
-                            sourceLabel: resolvedImg.source === 'product' ? 'Product Catalog Photo' : 'Intake Catch Photo',
-                            sourceType: resolvedImg.source === 'product' ? 'product' : 'batch',
-                            sku: prod.sku,
-                            lotId: linkedBatch?.id,
-                            grade: prod.grade,
-                            origin: prod.origin || linkedBatch?.landingPort,
-                          });
-                        }}
-                        className="relative group/thumb shrink-0 cursor-zoom-in rounded-2xl overflow-hidden"
-                        title="Click to preview high-resolution image"
-                      >
+                    {prod.imageUrl ? (
+                      <div className="relative w-16 h-16 rounded-2xl border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
                         <img 
-                          src={resolvedImg.url} 
-                          alt={resolvedImg.alt} 
-                          loading="lazy"
-                          decoding="async"
-                          className="w-16 h-16 rounded-2xl object-cover border border-slate-200 shrink-0 bg-slate-100 group-hover/thumb:scale-105 transition-transform"
+                          src={prod.imageUrl} 
+                          alt={prod.name} 
+                          className="w-full h-full object-cover"
                           referrerPolicy="no-referrer"
                           onError={(e) => {
-                            (e.target as HTMLImageElement).src = '/logofrostly1.png';
+                            e.currentTarget.style.display = 'none';
+                            const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
+                            if (fb) (fb as HTMLElement).style.display = 'flex';
                           }}
                         />
-                        <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
-                          <ZoomIn className="w-4 h-4 drop-shadow" />
+                        <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
+                          <Package className="w-6 h-6" />
                         </div>
                       </div>
                     ) : (
@@ -812,8 +783,7 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                     </div>
                   </div>
                 </div>
-                );
-              })}
+              ))}
             </div>
           </div>
 
@@ -919,63 +889,39 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                   Cart is empty. Click any seafood item on the left to add.
                 </div>
               ) : (
-                posCart.map(item => {
-                  const linkedBatch = batches.find(b => 
-                    (item.product.linkedBatchId && b.id === item.product.linkedBatchId) ||
-                    (b.linkedProductId && b.linkedProductId === item.product.id) ||
-                    (b.productSku && item.product.sku && b.productSku.toLowerCase() === item.product.sku.toLowerCase()) ||
-                    b.id === `LOT-RET-${item.product.id.replace('prod-', '')}`
-                  );
-                  const resolvedImg = resolveProductImage(item.product, linkedBatch);
-
-                  return (
+                posCart.map(item => (
                   <div 
                     key={item.product.id}
-                    className="p-2.5 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-2.5 text-xs"
+                    className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-2 text-xs"
                   >
-                    {/* Item Thumbnail */}
-                    {resolvedImg.url ? (
-                      <button
-                        type="button"
-                        onClick={() => setLightboxDetails({
-                          imageUrl: resolvedImg.url!,
-                          title: item.product.name,
-                          subtitle: `${item.product.cutType} · SKU: ${item.product.sku}`,
-                          sourceLabel: resolvedImg.source === 'product' ? 'Product Catalog Photo' : 'Intake Catch Photo',
-                          sourceType: resolvedImg.source === 'product' ? 'product' : 'batch',
-                          sku: item.product.sku,
-                          lotId: linkedBatch?.id,
-                          grade: item.product.grade,
-                          origin: item.product.origin || linkedBatch?.landingPort,
-                        })}
-                        className="relative group/thumb shrink-0 rounded-xl overflow-hidden border border-slate-200 cursor-zoom-in"
-                        title="Click to preview enlarged photo"
-                      >
-                        <img
-                          src={resolvedImg.url}
-                          alt={item.product.name}
-                          loading="lazy"
-                          decoding="async"
-                          className="w-10 h-10 object-cover bg-slate-100 group-hover/thumb:scale-105 transition-transform"
-                          referrerPolicy="no-referrer"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).src = '/logofrostly1.png';
-                          }}
-                        />
-                        <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
-                          <ZoomIn className="w-3.5 h-3.5" />
+                    <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                      {item.product.imageUrl ? (
+                        <div className="relative w-10 h-10 rounded-xl border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
+                          <img
+                            src={item.product.imageUrl}
+                            alt={item.product.name}
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                              const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
+                              if (fb) (fb as HTMLElement).style.display = 'flex';
+                            }}
+                          />
+                          <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
+                            <Package className="w-4 h-4" />
+                          </div>
                         </div>
-                      </button>
-                    ) : (
-                      <div className="w-10 h-10 rounded-xl bg-slate-200/60 border border-slate-200 flex items-center justify-center text-slate-400 shrink-0">
-                        <Package className="w-4 h-4" />
-                      </div>
-                    )}
-
-                    <div className="flex-1 min-w-0">
-                      <div className="font-bold text-slate-900 truncate">{item.product.name}</div>
-                      <div className="text-[11px] text-slate-500">
-                        {formatCurrency(getActivePosUnitPrice(item.product))}/{posPricingMode === 'wholesale' ? 'kg' : item.product.unit}
+                      ) : (
+                        <div className="w-10 h-10 rounded-xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
+                          <Package className="w-4 h-4" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-900 truncate">{item.product.name}</div>
+                        <div className="text-[11px] text-slate-500">
+                          {formatCurrency(getActivePosUnitPrice(item.product))}/{posPricingMode === 'wholesale' ? 'kg' : item.product.unit}
+                        </div>
                       </div>
                     </div>
 
@@ -1010,9 +956,8 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                       </button>
                     </div>
                   </div>
-                );
-              })
-            )}
+                ))
+              )}
             </div>
 
             {/* Calculations Breakdown */}
@@ -1475,23 +1420,50 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                           </div>
                         </div>
 
-                        <div className="pt-2 border-t border-slate-100 text-xs text-slate-700 space-y-1">
-                          {order.items.map((it, idx) => (
-                            <div
-                              key={`${order.orderNumber}-${it.productId}-${idx}`}
-                              className="flex items-center justify-between gap-2"
-                            >
-                              <span className="truncate">
-                                <span className="font-mono tabular-nums font-bold">
-                                  {it.quantity}×
-                                </span>{' '}
-                                {it.productName}
-                              </span>
-                              <span className="font-mono tabular-nums text-slate-600 shrink-0">
-                                {formatCurrency(it.lineTotal)}
-                              </span>
-                            </div>
-                          ))}
+                        <div className="pt-2 border-t border-slate-100 text-xs text-slate-700 space-y-1.5">
+                          {order.items.map((it, idx) => {
+                            const matchedImg = (it as any).imageUrl || products.find(p => p.id === it.productId || p.name.toLowerCase() === it.productName.toLowerCase())?.imageUrl;
+                            return (
+                              <div
+                                key={`${order.orderNumber}-${it.productId}-${idx}`}
+                                className="flex items-center justify-between gap-2"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {matchedImg ? (
+                                    <div className="relative w-7 h-7 rounded-lg border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
+                                      <img
+                                        src={matchedImg}
+                                        alt={it.productName}
+                                        className="w-full h-full object-cover"
+                                        referrerPolicy="no-referrer"
+                                        onError={(e) => {
+                                          e.currentTarget.style.display = 'none';
+                                          const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
+                                          if (fb) (fb as HTMLElement).style.display = 'flex';
+                                        }}
+                                      />
+                                      <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
+                                        <Package className="w-3.5 h-3.5" />
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="w-7 h-7 rounded-lg border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
+                                      <Package className="w-3.5 h-3.5" />
+                                    </div>
+                                  )}
+                                  <span className="truncate">
+                                    <span className="font-mono tabular-nums font-bold">
+                                      {it.quantity}×
+                                    </span>{' '}
+                                    {it.productName}
+                                  </span>
+                                </div>
+                                <span className="font-mono tabular-nums text-slate-600 shrink-0">
+                                  {formatCurrency(it.lineTotal)}
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
@@ -1938,53 +1910,10 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                           </td>
 
                           <td className="py-4 px-4">
-                            <div className="flex flex-col gap-1.5">
-                              {order.items.map((i, itemIdx) => {
-                                const linkedBatch = batches.find(b => b.id === i.lotId);
-                                const linkedProd = products.find(p => 
-                                  (i.speciesId && p.sku === i.speciesId) || 
-                                  (p.linkedBatchId && p.linkedBatchId === i.lotId) ||
-                                  p.name.toLowerCase() === i.speciesName.toLowerCase()
-                                );
-                                const resolvedImg = resolveProductImage(linkedProd, linkedBatch);
-                                return (
-                                  <div key={itemIdx} className="flex items-center gap-2">
-                                    {resolvedImg.url ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => setLightboxDetails({
-                                          imageUrl: resolvedImg.url!,
-                                          title: i.speciesName,
-                                          subtitle: `Order ${order.id} · Lot ${i.lotId || 'N/A'}`,
-                                          sourceLabel: resolvedImg.source === 'product' ? 'Product Catalog Photo' : 'Intake Catch Photo',
-                                          sourceType: resolvedImg.source === 'product' ? 'product' : 'batch',
-                                          lotId: i.lotId,
-                                          grade: i.grade,
-                                        })}
-                                        className="w-7 h-7 rounded-lg overflow-hidden border border-slate-200 shrink-0 cursor-zoom-in"
-                                        title="Click to view photo"
-                                      >
-                                        <img 
-                                          src={resolvedImg.url} 
-                                          alt={i.speciesName} 
-                                          loading="lazy"
-                                          decoding="async"
-                                          className="w-full h-full object-cover" 
-                                          referrerPolicy="no-referrer" 
-                                          onError={(e) => {
-                                            (e.target as HTMLImageElement).src = '/logofrostly1.png';
-                                          }}
-                                        />
-                                      </button>
-                                    ) : null}
-                                    <span className="font-medium text-slate-800">
-                                      {i.speciesName} <span className="text-slate-400 font-normal">({i.requestedWeightKg}kg)</span>
-                                    </span>
-                                  </div>
-                                );
-                              })}
+                            <div className="font-medium text-slate-800">
+                              {order.items.map(i => `${i.speciesName} (${i.requestedWeightKg}kg)`).join(', ')}
                             </div>
-                            <div className="text-[10px] text-indigo-600 font-bold mt-1">{order.packagingRequirement}</div>
+                            <div className="text-[10px] text-indigo-600 font-bold">{order.packagingRequirement}</div>
                           </td>
 
                           <td className="py-4 px-4">
@@ -2184,57 +2113,28 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                 <div key={prod.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2.5">
-                      {(() => {
-                        const linkedBatch = batches.find(b => 
-                          (prod.linkedBatchId && b.id === prod.linkedBatchId) ||
-                          (b.linkedProductId && b.linkedProductId === prod.id) ||
-                          (b.productSku && prod.sku && b.productSku.toLowerCase() === prod.sku.toLowerCase()) ||
-                          b.id === `LOT-RET-${prod.id.replace('prod-', '')}`
-                        );
-                        const resolvedImg = resolveProductImage(prod, linkedBatch);
-
-                        if (resolvedImg.url) {
-                          return (
-                            <button
-                              type="button"
-                              onClick={() => setLightboxDetails({
-                                imageUrl: resolvedImg.url!,
-                                title: prod.name,
-                                subtitle: `${prod.cutType} · SKU: ${prod.sku}`,
-                                sourceLabel: resolvedImg.source === 'product' ? 'Product Catalog Photo' : 'Intake Catch Photo',
-                                sourceType: resolvedImg.source === 'product' ? 'product' : 'batch',
-                                sku: prod.sku,
-                                lotId: linkedBatch?.id,
-                                grade: prod.grade,
-                                origin: prod.origin || linkedBatch?.landingPort,
-                              })}
-                              className="relative group/thumb shrink-0 rounded-xl overflow-hidden border border-slate-200 cursor-zoom-in"
-                              title="Click to preview enlarged photo"
-                            >
-                              <img
-                                src={resolvedImg.url}
-                                alt={prod.name}
-                                loading="lazy"
-                                decoding="async"
-                                className="w-11 h-11 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100 group-hover/thumb:scale-105 transition-transform"
-                                referrerPolicy="no-referrer"
-                                onError={(e) => {
-                                  (e.target as HTMLImageElement).src = '/logofrostly1.png';
-                                }}
-                              />
-                              <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
-                                <ZoomIn className="w-3.5 h-3.5" />
-                              </div>
-                            </button>
-                          );
-                        }
-
-                        return (
-                          <div className="w-11 h-11 rounded-xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
+                      {prod.imageUrl ? (
+                        <div className="relative w-11 h-11 rounded-xl border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
+                          <img
+                            src={prod.imageUrl}
+                            alt={prod.name}
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                              const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
+                              if (fb) (fb as HTMLElement).style.display = 'flex';
+                            }}
+                          />
+                          <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
                             <Package className="w-5 h-5" />
                           </div>
-                        );
-                      })()}
+                        </div>
+                      ) : (
+                        <div className="w-11 h-11 rounded-xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
+                          <Package className="w-5 h-5" />
+                        </div>
+                      )}
                       <div>
                         <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
                         <div className="text-[11px] text-slate-500">{prod.cutType} • {prod.sku}</div>
@@ -2381,57 +2281,28 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                     <tr key={prod.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
-                          {(() => {
-                            const linkedBatch = batches.find(b => 
-                              (prod.linkedBatchId && b.id === prod.linkedBatchId) ||
-                              (b.linkedProductId && b.linkedProductId === prod.id) ||
-                              (b.productSku && prod.sku && b.productSku.toLowerCase() === prod.sku.toLowerCase()) ||
-                              b.id === `LOT-RET-${prod.id.replace('prod-', '')}`
-                            );
-                            const resolvedImg = resolveProductImage(prod, linkedBatch);
-
-                            if (resolvedImg.url) {
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => setLightboxDetails({
-                                    imageUrl: resolvedImg.url!,
-                                    title: prod.name,
-                                    subtitle: `${prod.cutType} · SKU: ${prod.sku}`,
-                                    sourceLabel: resolvedImg.source === 'product' ? 'Product Catalog Photo' : 'Intake Catch Photo',
-                                    sourceType: resolvedImg.source === 'product' ? 'product' : 'batch',
-                                    sku: prod.sku,
-                                    lotId: linkedBatch?.id,
-                                    grade: prod.grade,
-                                    origin: prod.origin || linkedBatch?.landingPort,
-                                  })}
-                                  className="relative group/thumb shrink-0 rounded-xl overflow-hidden border border-slate-200 cursor-zoom-in"
-                                  title="Click to preview enlarged photo"
-                                >
-                                  <img
-                                    src={resolvedImg.url}
-                                    alt={prod.name}
-                                    loading="lazy"
-                                    decoding="async"
-                                    className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100 group-hover/thumb:scale-105 transition-transform"
-                                    referrerPolicy="no-referrer"
-                                    onError={(e) => {
-                                      (e.target as HTMLImageElement).src = '/logofrostly1.png';
-                                    }}
-                                  />
-                                  <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
-                                    <ZoomIn className="w-3.5 h-3.5" />
-                                  </div>
-                                </button>
-                              );
-                            }
-
-                            return (
-                              <div className="w-10 h-10 rounded-xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
+                          {prod.imageUrl ? (
+                            <div className="relative w-10 h-10 rounded-xl border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
+                              <img
+                                src={prod.imageUrl}
+                                alt={prod.name}
+                                className="w-full h-full object-cover"
+                                referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                  const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
+                                  if (fb) (fb as HTMLElement).style.display = 'flex';
+                                }}
+                              />
+                              <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
                                 <Package className="w-4 h-4" />
                               </div>
-                            );
-                          })()}
+                            </div>
+                          ) : (
+                            <div className="w-10 h-10 rounded-xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
+                              <Package className="w-4 h-4" />
+                            </div>
+                          )}
                           <div>
                             <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
                             <div className="text-slate-400 text-[11px]">{prod.cutType} • {prod.sku}</div>
@@ -2618,12 +2489,36 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
             {/* Receipt Item lines */}
             <div className="space-y-2 text-xs divide-y divide-slate-100">
               {completedReceiptModal.items.map(item => (
-                <div key={item.productId} className="pt-2 flex justify-between">
-                  <div>
-                    <div className="font-bold text-slate-900">{item.productName}</div>
-                    <div className="text-[11px] text-slate-400">{item.quantity} {item.unit} @ {formatCurrency(item.unitPrice)}</div>
+                <div key={item.productId} className="pt-2 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {item.imageUrl ? (
+                      <div className="relative w-8 h-8 rounded-lg border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
+                        <img
+                          src={item.imageUrl}
+                          alt={item.productName}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                            const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
+                            if (fb) (fb as HTMLElement).style.display = 'flex';
+                          }}
+                        />
+                        <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
+                          <Package className="w-3.5 h-3.5" />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="w-8 h-8 rounded-lg border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
+                        <Package className="w-3.5 h-3.5" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="font-bold text-slate-900 truncate">{item.productName}</div>
+                      <div className="text-[11px] text-slate-400">{item.quantity} {item.unit} @ {formatCurrency(item.unitPrice)}</div>
+                    </div>
                   </div>
-                  <div className="font-mono-code font-bold text-slate-900">{formatCurrency(item.lineTotal)}</div>
+                  <div className="font-mono-code font-bold text-slate-900 shrink-0">{formatCurrency(item.lineTotal)}</div>
                 </div>
               ))}
             </div>
@@ -2698,13 +2593,6 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
         }}
         productToEdit={editingProduct}
         inventoryBatches={batches}
-      />
-
-      {/* Enlarged High-Resolution Image Preview Lightbox */}
-      <ImageLightboxModal
-        isOpen={Boolean(lightboxDetails)}
-        onClose={() => setLightboxDetails(null)}
-        details={lightboxDetails}
       />
     </div>
   );

@@ -55,15 +55,21 @@ serve(async (req: Request) => {
       });
     }
 
-    // Verify signature with Paystack secret key if configured
-    if (PAYSTACK_SECRET_KEY) {
-      const isValid = await verifyHmacSha512(rawBody, signature, PAYSTACK_SECRET_KEY);
-      if (!isValid) {
-        return new Response(JSON.stringify({ error: 'Invalid webhook signature' }), {
-          status: 401,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
+    // Fail closed: enforce PAYSTACK_SECRET_KEY presence and verify signature
+    if (!PAYSTACK_SECRET_KEY) {
+      console.error('[Paystack Webhook] PAYSTACK_SECRET_KEY environment variable is missing.');
+      return new Response(JSON.stringify({ error: 'Server webhook secret configuration missing' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const isValid = await verifyHmacSha512(rawBody, signature, PAYSTACK_SECRET_KEY);
+    if (!isValid) {
+      return new Response(JSON.stringify({ error: 'Invalid webhook signature' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
 
     const payload = JSON.parse(rawBody);

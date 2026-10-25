@@ -57,53 +57,79 @@ export const TraceabilityPassportModal: React.FC<TraceabilityPassportModalProps>
         className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in-95 duration-200"
       >
         {/* Modal Header */}
-        <div className="relative bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-6 sm:p-8">
+        <div className="relative bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-6 sm:p-8 overflow-hidden">
+          {batch.imageUrl && (
+            <img 
+              src={batch.imageUrl} 
+              alt={batch.speciesName}
+              referrerPolicy="no-referrer"
+              className="absolute inset-0 w-full h-full object-cover opacity-20 mix-blend-luminosity filter saturate-150 pointer-events-none"
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-900/80 to-transparent pointer-events-none" />
+
           <button
             onClick={onClose}
-            className="absolute top-5 right-5 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+            className="absolute top-5 right-5 z-10 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
 
-          <div className="flex items-center gap-2 mb-2">
-            <span className="px-3 py-1 rounded-full bg-indigo-500/30 border border-indigo-400/40 text-indigo-200 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              Verified Seafood Digital Passport
-            </span>
-            <span className="text-xs text-slate-300 font-mono-code">
-              ISO 12875 / GDST 1.2
-            </span>
-          </div>
+          <div className="relative z-10">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="px-3 py-1 rounded-full bg-indigo-500/30 border border-indigo-400/40 text-indigo-200 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                Verified Seafood Digital Passport
+              </span>
+              <span className="text-xs text-slate-300 font-mono-code">
+                ISO 12875 / GDST 1.2
+              </span>
+            </div>
 
-          <h2 className="text-2xl sm:text-3xl font-heading font-extrabold text-white tracking-tight">
-            {batch.speciesName}
-          </h2>
-          <p className="text-sm italic text-indigo-200 mt-0.5">
-            {batch.scientificName}
-          </p>
+            <h2 className="text-2xl sm:text-3xl font-heading font-extrabold text-white tracking-tight">
+              {batch.speciesName}
+            </h2>
+            <p className="text-sm italic text-indigo-200 mt-0.5">
+              {batch.scientificName}
+            </p>
 
-          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-300">
-            <span className="font-mono-code font-bold bg-white/10 px-2.5 py-1 rounded-lg">
-              {batch.id}
-            </span>
-            <span>•</span>
-            <span>Grade: <strong className="text-white">{batch.grade}</strong></span>
-            <span>•</span>
-            <span>Storage: <strong className="text-white">{batch.storageZone}</strong></span>
+            <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-300">
+              <span className="font-mono-code font-bold bg-white/10 px-2.5 py-1 rounded-lg">
+                {batch.id}
+              </span>
+              <span>•</span>
+              <span>Grade: <strong className="text-white">{batch.grade}</strong></span>
+              <span>•</span>
+              <span>Storage: <strong className="text-white">{batch.storageZone}</strong></span>
+            </div>
           </div>
         </div>
 
         {/* Modal Content */}
         <div className="p-6 sm:p-8 space-y-6">
-          {/* Top summary row with QR Code */}
+          {/* Top summary row with QR Code & Catch Visual */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 items-center p-4 rounded-2xl bg-slate-50 border border-slate-200/80">
-            <div className="sm:col-span-1 flex justify-center">
+            <div className="sm:col-span-1 flex flex-col items-center justify-center gap-2">
               <TraceabilityQRCode
                 seed={batch.qrCodeSeed}
                 lotId={batch.id}
                 species={batch.speciesName}
-                size={130}
+                size={110}
               />
+              {batch.imageUrl && (
+                <div className="relative w-28 h-14 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 shrink-0">
+                  <img
+                    src={batch.imageUrl}
+                    alt={batch.speciesName}
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLElement).style.display = 'none';
+                    }}
+                  />
+                </div>
+              )}
             </div>
             <div className="sm:col-span-2 space-y-2.5 text-xs text-slate-700">
               <div className="flex items-center justify-between border-b border-slate-200/60 pb-1.5">

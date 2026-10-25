@@ -359,21 +359,48 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
               {/* Line Items & Totals */}
               <div className="pt-3 border-t border-amber-100 space-y-2">
                 <div className="text-xs font-bold text-neutral-700">Order Summary</div>
-                {trackedOrder.items.map((item, idx) => (
-                  <div
-                    key={`${item.productId}-${idx}`}
-                    className="flex items-center justify-between text-xs text-neutral-700"
-                  >
-                    <span className="truncate pr-3">
-                      <span className="font-mono font-bold">{item.quantity}x</span>{' '}
-                      {item.productName}
-                    </span>
-                    <span className="font-mono font-bold tabular-nums shrink-0">
-                      {CURRENCY}
-                      {Number(item.lineTotal).toFixed(2)}
-                    </span>
-                  </div>
-                ))}
+                {trackedOrder.items.map((item, idx) => {
+                  const itemImg = (item as any).imageUrl;
+                  return (
+                    <div
+                      key={`${item.productId}-${idx}`}
+                      className="flex items-center justify-between text-xs text-neutral-700 gap-2"
+                    >
+                      <div className="flex items-center gap-2 min-w-0 pr-2">
+                        {itemImg ? (
+                          <div className="relative w-8 h-8 rounded-lg overflow-hidden border border-amber-200 bg-amber-50 shrink-0">
+                            <img
+                              src={itemImg}
+                              alt={item.productName}
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                                const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
+                                if (fb) (fb as HTMLElement).style.display = 'flex';
+                              }}
+                            />
+                            <div className="w-full h-full hidden items-center justify-center text-amber-500 img-fallback">
+                              <Package className="w-4 h-4" />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="w-8 h-8 rounded-lg border border-amber-200 bg-amber-50 flex items-center justify-center text-amber-500 shrink-0">
+                            <Package className="w-4 h-4" />
+                          </div>
+                        )}
+                        <span className="truncate">
+                          <span className="font-mono font-bold">{item.quantity}x</span>{' '}
+                          {item.productName}
+                        </span>
+                      </div>
+                      <span className="font-mono font-bold tabular-nums shrink-0">
+                        {CURRENCY}
+                        {Number(item.lineTotal).toFixed(2)}
+                      </span>
+                    </div>
+                  );
+                })}
                 <div className="pt-2 border-t border-amber-100 flex items-center justify-between text-sm font-extrabold text-[#1A1A1A]">
                   <span>Total ({trackedOrder.paymentMethod})</span>
                   <span className="font-mono tabular-nums text-[#C8102E]">
