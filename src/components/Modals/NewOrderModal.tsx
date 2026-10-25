@@ -15,14 +15,18 @@ import {
   UserCheck,
   ShieldAlert,
   Building2,
-  Info
+  Info,
+  ZoomIn
 } from 'lucide-react';
-import { ClientOrder, OrderLineItem, InventoryBatch, Customer, PaymentTerms } from '../../types';
+import { ClientOrder, OrderLineItem, InventoryBatch, Customer, PaymentTerms, RetailWholesaleProduct } from '../../types';
 import { formatCurrency, formatWeight } from '../../utils/formatters';
+import { resolveBatchImage } from '../../utils/productImageResolver';
+import { ImageLightboxModal, ImageLightboxDetails } from '../Common/ImageLightboxModal';
 
 interface NewOrderModalProps {
   batches: InventoryBatch[];
   customers?: Customer[];
+  products?: RetailWholesaleProduct[];
   preselectedCustomerId?: string | null;
   onClose: () => void;
   onAddOrder: (order: ClientOrder) => void;
@@ -32,11 +36,13 @@ interface NewOrderModalProps {
 export const NewOrderModal: React.FC<NewOrderModalProps> = ({
   batches,
   customers = [],
+  products = [],
   preselectedCustomerId,
   onClose,
   onAddOrder,
   useImperial
 }) => {
+  const [lightboxDetails, setLightboxDetails] = useState<ImageLightboxDetails | null>(null);
   // Customer selection mode: registered account vs custom walk-in
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>(() => {
     if (preselectedCustomerId) return preselectedCustomerId;
@@ -597,23 +603,66 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
             </div>
 
             <div className="space-y-3">
-              {items.map((item, idx) => (
+              {items.map((item, idx) => {
+                const selectedBatch = batches.find(b => b.id === item.lotId);
+                const linkedProduct = products.find(p => 
+                  (selectedBatch?.linkedProductId && p.id === selectedBatch.linkedProductId) ||
+                  (p.linkedBatchId && p.linkedBatchId === item.lotId) ||
+                  (selectedBatch?.productSku && p.sku && selectedBatch.productSku.toLowerCase() === p.sku.toLowerCase()) ||
+                  (selectedBatch && item.lotId === `LOT-RET-${p.id.replace('prod-', '')}`)
+                );
+                const resolvedImg = resolveBatchImage(selectedBatch, linkedProduct);
+
+                return (
                 <div key={item.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
                   <div className="sm:col-span-6">
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">
                       Select Inventory Lot
                     </label>
-                    <select
-                      value={item.lotId}
-                      onChange={(e) => handleItemLotChange(idx, e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-semibold text-slate-900"
-                    >
-                      {batches.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.speciesName} ({b.grade}) — {b.id} [{formatWeight(b.availableWeightKg, useImperial)} avail]
-                        </option>
-                      ))}
-                    </select>
+                    <div className="flex items-center gap-2">
+                      {resolvedImg.url ? (
+                        <button
+                          type="button"
+                          onClick={() => setLightboxDetails({
+                            imageUrl: resolvedImg.url!,
+                            title: selectedBatch?.speciesName || item.speciesName,
+                            subtitle: `Lot: ${item.lotId} · Grade: ${item.grade}`,
+                            sourceLabel: resolvedImg.source === 'product' ? 'Product Catalog Photo' : 'Intake Catch Photo',
+                            sourceType: resolvedImg.source === 'product' ? 'product' : 'batch',
+                            lotId: item.lotId,
+                            grade: item.grade,
+                            origin: selectedBatch?.landingPort,
+                          })}
+                          className="relative group/thumb shrink-0 rounded-xl overflow-hidden border border-slate-200 cursor-zoom-in"
+                          title="Click to preview lot photo"
+                        >
+                          <img
+                            src={resolvedImg.url}
+                            alt={item.speciesName}
+                            referrerPolicy="no-referrer"
+                            className="w-9 h-9 object-cover bg-slate-100 group-hover/thumb:scale-105 transition-transform"
+                          />
+                          <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
+                            <ZoomIn className="w-3.5 h-3.5" />
+                          </div>
+                        </button>
+                      ) : (
+                        <div className="w-9 h-9 rounded-xl bg-slate-200/60 border border-slate-200 flex items-center justify-center text-slate-400 shrink-0">
+                          <Package className="w-4 h-4" />
+                        </div>
+                      )}
+                      <select
+                        value={item.lotId}
+                        onChange={(e) => handleItemLotChange(idx, e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-semibold text-slate-900"
+                      >
+                        {batches.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.speciesName} ({b.grade}) — {b.id} [{formatWeight(b.availableWeightKg, useImperial)} avail]
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   <div className="sm:col-span-3">
@@ -652,7 +701,8 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
                     )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -727,6 +777,13 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
           </div>
         </form>
       </div>
+
+      {/* Enlarged High-Resolution Image Preview Lightbox */}
+      <ImageLightboxModal
+        isOpen={Boolean(lightboxDetails)}
+        onClose={() => setLightboxDetails(null)}
+        details={lightboxDetails}
+      />
     </div>
   );
 };

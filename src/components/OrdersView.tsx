@@ -16,14 +16,18 @@ import {
   Sparkles,
   Layers,
   MapPin,
-  Calendar
+  Calendar,
+  ZoomIn
 } from 'lucide-react';
-import { ClientOrder, OrderStatus, InventoryBatch } from '../types';
+import { ClientOrder, OrderStatus, InventoryBatch, RetailWholesaleProduct } from '../types';
 import { formatCurrency, formatWeight, getYieldVariance } from '../utils/formatters';
+import { resolveProductImage } from '../utils/productImageResolver';
+import { ImageLightboxModal, ImageLightboxDetails } from './Common/ImageLightboxModal';
 
 interface OrdersViewProps {
   orders: ClientOrder[];
   batches: InventoryBatch[];
+  products?: RetailWholesaleProduct[];
   onOpenNewOrder: () => void;
   onOpenWeigher: (order: ClientOrder) => void;
   onOpenInvoice: (order: ClientOrder) => void;
@@ -36,6 +40,7 @@ interface OrdersViewProps {
 export const OrdersView: React.FC<OrdersViewProps> = ({
   orders,
   batches,
+  products = [],
   onOpenNewOrder,
   onOpenWeigher,
   onOpenInvoice,
@@ -46,6 +51,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 }) => {
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
+  const [lightboxDetails, setLightboxDetails] = useState<ImageLightboxDetails | null>(null);
 
   const filteredOrders = orders.filter((o) => {
     const matchesSearch =
@@ -258,19 +264,59 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                         const hasWeighed = item.actualWeighedKg !== null;
                         const variance = getYieldVariance(item.requestedWeightKg, item.actualWeighedKg);
 
+                        const linkedBatch = batches.find(b => b.id === item.lotId);
+                        const linkedProd = products.find(p => 
+                          (item.speciesId && p.sku === item.speciesId) ||
+                          (p.linkedBatchId && p.linkedBatchId === item.lotId) ||
+                          p.name.toLowerCase() === item.speciesName.toLowerCase()
+                        );
+                        const resolvedImg = resolveProductImage(linkedProd, linkedBatch);
+
                         return (
                           <div
                             key={item.id}
-                            className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                            className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
                           >
-                            <div>
-                              <div className="font-bold text-slate-900">
-                                {item.speciesName} <span className="text-slate-400 font-normal">({item.grade})</span>
-                              </div>
-                              <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
-                                <span>Lot: <strong className="font-mono-code text-indigo-600">{item.lotId}</strong></span>
-                                <span>•</span>
-                                <span>Rate: {formatCurrency(item.pricePerKg)}/kg</span>
+                            <div className="flex items-center gap-3">
+                              {resolvedImg.url ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setLightboxDetails({
+                                    imageUrl: resolvedImg.url!,
+                                    title: item.speciesName,
+                                    subtitle: `Order ${order.id} · Lot ${item.lotId || 'N/A'}`,
+                                    sourceLabel: resolvedImg.source === 'product' ? 'Product Catalog Photo' : 'Intake Catch Photo',
+                                    sourceType: resolvedImg.source === 'product' ? 'product' : 'batch',
+                                    lotId: item.lotId,
+                                    grade: item.grade,
+                                  })}
+                                  className="relative group/thumb shrink-0 rounded-xl overflow-hidden border border-slate-200 cursor-zoom-in"
+                                  title="Click to view full resolution"
+                                >
+                                  <img
+                                    src={resolvedImg.url}
+                                    alt={item.speciesName}
+                                    referrerPolicy="no-referrer"
+                                    className="w-11 h-11 object-cover bg-slate-100 group-hover/thumb:scale-105 transition-transform"
+                                  />
+                                  <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
+                                    <ZoomIn className="w-3.5 h-3.5" />
+                                  </div>
+                                </button>
+                              ) : (
+                                <div className="w-11 h-11 rounded-xl bg-slate-200/60 border border-slate-200 flex items-center justify-center text-slate-400 shrink-0">
+                                  <Package className="w-5 h-5" />
+                                </div>
+                              )}
+                              <div>
+                                <div className="font-bold text-slate-900">
+                                  {item.speciesName} <span className="text-slate-400 font-normal">({item.grade})</span>
+                                </div>
+                                <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                                  <span>Lot: <strong className="font-mono-code text-indigo-600">{item.lotId}</strong></span>
+                                  <span>•</span>
+                                  <span>Rate: {formatCurrency(item.pricePerKg)}/kg</span>
+                                </div>
                               </div>
                             </div>
 
@@ -364,6 +410,13 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           })
         )}
       </div>
+
+      {/* Enlarged High-Resolution Image Preview Lightbox */}
+      <ImageLightboxModal
+        isOpen={Boolean(lightboxDetails)}
+        onClose={() => setLightboxDetails(null)}
+        details={lightboxDetails}
+      />
     </div>
   );
 };

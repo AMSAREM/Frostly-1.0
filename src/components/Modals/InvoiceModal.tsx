@@ -13,14 +13,19 @@ import {
   CreditCard,
   Building2,
   Calendar,
-  AlertCircle
+  AlertCircle,
+  Package
 } from 'lucide-react';
-import { ClientOrder, Customer } from '../../types';
+import { ClientOrder, Customer, InventoryBatch, RetailWholesaleProduct } from '../../types';
 import { formatCurrency, formatWeight } from '../../utils/formatters';
+import { resolveProductImage } from '../../utils/productImageResolver';
+import { ImageLightboxModal, ImageLightboxDetails } from '../Common/ImageLightboxModal';
 
 interface InvoiceModalProps {
   order: ClientOrder | null;
   customers?: Customer[];
+  batches?: InventoryBatch[];
+  products?: RetailWholesaleProduct[];
   onClose: () => void;
   useImperial: boolean;
   onUpdatePaymentStatus: (orderId: string, status: ClientOrder['paymentStatus']) => void;
@@ -30,6 +35,8 @@ interface InvoiceModalProps {
 interface InvoiceModalContentProps {
   order: ClientOrder;
   customers?: Customer[];
+  batches?: InventoryBatch[];
+  products?: RetailWholesaleProduct[];
   onClose: () => void;
   useImperial: boolean;
   onUpdatePaymentStatus: (orderId: string, status: ClientOrder['paymentStatus']) => void;
@@ -39,12 +46,15 @@ interface InvoiceModalContentProps {
 const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
   order,
   customers = [],
+  batches = [],
+  products = [],
   onClose,
   useImperial,
   onUpdatePaymentStatus,
   onRecordPayment
 }) => {
   const [copied, setCopied] = useState(false);
+  const [lightboxDetails, setLightboxDetails] = useState<ImageLightboxDetails | null>(null);
 
   // Match customer for credit facility details
   const matchedCustomer = customers.find(
@@ -232,11 +242,52 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
                   const actualKg = item.actualWeighedKg ?? item.requestedWeightKg;
                   const itemTotal = actualKg * item.pricePerKg;
 
+                  const linkedBatch = batches.find(b => b.id === item.lotId);
+                  const linkedProd = products.find(p => 
+                    (item.speciesId && p.sku === item.speciesId) ||
+                    (p.linkedBatchId && p.linkedBatchId === item.lotId) ||
+                    p.name.toLowerCase() === item.speciesName.toLowerCase() ||
+                    p.sku.toLowerCase() === item.speciesName.toLowerCase()
+                  );
+                  const resolvedImg = resolveProductImage(linkedProd, linkedBatch);
+
                   return (
                     <tr key={item.id || idx}>
                       <td className="py-3 px-2">
-                        <div className="font-bold text-slate-900">{item.speciesName}</div>
-                        <div className="text-slate-400 text-[10px]">Grade: {item.grade}</div>
+                        <div className="flex items-center gap-3">
+                          {resolvedImg.url ? (
+                            <button
+                              type="button"
+                              onClick={() => setLightboxDetails({
+                                imageUrl: resolvedImg.url!,
+                                title: item.speciesName,
+                                subtitle: `Grade: ${item.grade} · Lot: ${item.lotId || 'N/A'}`,
+                                sourceLabel: resolvedImg.source === 'product' ? 'Product Catalog Photo' : 'Catch Intake Photo',
+                                sourceType: resolvedImg.source === 'product' ? 'product' : 'batch',
+                                lotId: item.lotId,
+                                grade: item.grade,
+                                origin: linkedBatch?.landingPort || linkedProd?.origin,
+                              })}
+                              className="relative group shrink-0 rounded-lg overflow-hidden border border-slate-200 hover:ring-2 hover:ring-indigo-500 transition-all cursor-pointer"
+                              title="Click to view high-resolution photo"
+                            >
+                              <img
+                                src={resolvedImg.url}
+                                alt={item.speciesName}
+                                referrerPolicy="no-referrer"
+                                className="w-10 h-10 object-cover bg-slate-100 group-hover:scale-105 transition-transform"
+                              />
+                            </button>
+                          ) : (
+                            <div className="w-10 h-10 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 shrink-0">
+                              <Package className="w-5 h-5" />
+                            </div>
+                          )}
+                          <div>
+                            <div className="font-bold text-slate-900">{item.speciesName}</div>
+                            <div className="text-slate-400 text-[10px]">Grade: {item.grade}</div>
+                          </div>
+                        </div>
                       </td>
                       <td className="py-3 px-2 font-mono-code text-slate-600">
                         {item.lotId || 'Lot Pending'}
@@ -328,6 +379,13 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
           </button>
         </div>
       </div>
+
+      {/* High-Resolution Picture Lightbox Modal */}
+      <ImageLightboxModal
+        isOpen={Boolean(lightboxDetails)}
+        onClose={() => setLightboxDetails(null)}
+        details={lightboxDetails}
+      />
     </div>
   );
 };

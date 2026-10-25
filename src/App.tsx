@@ -2217,6 +2217,7 @@ export default function App() {
       {passportBatch && (
         <TraceabilityPassportModal
           batch={passportBatch}
+          products={products}
           onClose={() => setPassportBatch(null)}
           useImperial={useImperial}
         />
@@ -2236,6 +2237,8 @@ export default function App() {
         <InvoiceModal
           order={invoiceOrder}
           customers={customers}
+          batches={batches}
+          products={products}
           onClose={() => setInvoiceOrder(null)}
           useImperial={useImperial}
           onUpdatePaymentStatus={handleUpdatePaymentStatus}
@@ -2255,6 +2258,7 @@ export default function App() {
         <NewOrderModal
           batches={batches}
           customers={customers}
+          products={products}
           preselectedCustomerId={preselectedCustomerId}
           onClose={() => {
             setIsNewOrderModalOpen(false);

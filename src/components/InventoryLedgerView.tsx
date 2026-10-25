@@ -29,7 +29,8 @@ import {
   Building2,
   Camera,
   Upload,
-  Image as ImageIcon
+  Image as ImageIcon,
+  ZoomIn
 } from 'lucide-react';
 import { 
   InventoryBatch, 
@@ -42,6 +43,8 @@ import {
 } from '../types';
 import { formatCurrency, formatWeight, formatTemp } from '../utils/formatters';
 import { SPECIES_CATALOG } from '../data/mockData';
+import { resolveBatchImage } from '../utils/productImageResolver';
+import { ImageLightboxModal, ImageLightboxDetails } from './Common/ImageLightboxModal';
 import { InventoryExplainerBanner } from './Inventory/InventoryExplainerBanner';
 import { LotDetailsModal } from './Inventory/LotDetailsModal';
 import { StockAdjustmentModal, StockAdjustmentData } from './Inventory/StockAdjustmentModal';
@@ -101,12 +104,19 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
   const [adjustingBatch, setAdjustingBatch] = useState<InventoryBatch | null>(null);
   const [uploadingImageBatch, setUploadingImageBatch] = useState<InventoryBatch | null>(null);
   const [isAdjustmentAccountsModalOpen, setIsAdjustmentAccountsModalOpen] = useState(false);
+  const [lightboxDetails, setLightboxDetails] = useState<ImageLightboxDetails | null>(null);
 
   const categories: ('All' | SpeciesCategory)[] = ['All', 'Pelagic', 'Salmonid', 'Crustacean', 'Mollusk', 'Groundfish'];
 
-  // User-provided images only - NEVER generate automatic or placeholder stock images
-  const getBatchUserImage = (batch: InventoryBatch): string | null => {
-    return batch.imageUrl?.trim() || null;
+  // Resolves batch catch photo with linked product catalog fallback
+  const getBatchUserImage = (batch: InventoryBatch) => {
+    const linkedProduct = products?.find(p => 
+      (batch.linkedProductId && p.id === batch.linkedProductId) ||
+      (p.linkedBatchId && p.linkedBatchId === batch.id) ||
+      (batch.productSku && p.sku && batch.productSku.toLowerCase() === p.sku.toLowerCase()) ||
+      batch.id === `LOT-RET-${p.id.replace('prod-', '')}`
+    );
+    return resolveBatchImage(batch, linkedProduct);
   };
 
   // Unlinked retail catalog products calculation for inventory reconciliation
@@ -666,13 +676,36 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
                     className="relative h-32 w-full bg-slate-900 overflow-hidden cursor-pointer group/banner"
                     onClick={() => setInspectingBatch(batch)}
                   >
-                    {userImg ? (
-                      <img 
-                        src={userImg} 
-                        alt={batch.speciesName}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 opacity-90"
-                      />
+                    {userImg.url ? (
+                      <div
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLightboxDetails({
+                            imageUrl: userImg.url!,
+                            title: batch.speciesName,
+                            subtitle: `${batch.scientificName} · Lot ${batch.id}`,
+                            sourceLabel: userImg.source === 'product' ? 'Product Catalog Photo' : 'Catch Intake Photo',
+                            sourceType: userImg.source === 'product' ? 'product' : 'batch',
+                            lotId: batch.id,
+                            grade: batch.grade,
+                            origin: `${batch.landingPort} (${batch.faoArea})`,
+                            temperature: `${formatTemp(batch.coreTempCelsius, useImperial)}`,
+                            verifiedAt: batch.harvestDate,
+                          });
+                        }}
+                        className="relative w-full h-full group/zoom"
+                        title="Click to preview full-resolution photo"
+                      >
+                        <img 
+                          src={userImg.url} 
+                          alt={userImg.alt} 
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 opacity-90"
+                        />
+                        <div className="absolute inset-0 bg-slate-950/20 opacity-0 group-hover/zoom:opacity-100 transition-opacity flex items-center justify-center text-white">
+                          <ZoomIn className="w-5 h-5 drop-shadow" />
+                        </div>
+                      </div>
                     ) : (
                       <div className="w-full h-full bg-slate-900/95 flex flex-col items-center justify-center text-slate-400 group-hover:text-indigo-200 transition-colors p-3 text-center border-b border-slate-800">
                         <Camera className="w-7 h-7 mb-1 text-slate-500 group-hover:text-indigo-400 group-hover:scale-110 transition-all" />
@@ -913,14 +946,34 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
                     <tr key={batch.id} className="hover:bg-slate-50/70 transition-colors">
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
-                          {userImg ? (
-                            <img 
-                              src={userImg} 
-                              alt={batch.speciesName}
-                              referrerPolicy="no-referrer"
-                              className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0 cursor-pointer"
-                              onClick={() => setInspectingBatch(batch)}
-                            />
+                          {userImg.url ? (
+                            <button
+                              type="button"
+                              onClick={() => setLightboxDetails({
+                                imageUrl: userImg.url!,
+                                title: batch.speciesName,
+                                subtitle: `${batch.scientificName} · Lot ${batch.id}`,
+                                sourceLabel: userImg.source === 'product' ? 'Product Catalog Photo' : 'Catch Intake Photo',
+                                sourceType: userImg.source === 'product' ? 'product' : 'batch',
+                                lotId: batch.id,
+                                grade: batch.grade,
+                                origin: `${batch.landingPort} (${batch.faoArea})`,
+                                temperature: `${formatTemp(batch.coreTempCelsius, useImperial)}`,
+                                verifiedAt: batch.harvestDate,
+                              })}
+                              className="relative group/thumb shrink-0 rounded-xl overflow-hidden border border-slate-200 cursor-zoom-in"
+                              title="Click to preview full-resolution photo"
+                            >
+                              <img 
+                                src={userImg.url} 
+                                alt={userImg.alt} 
+                                referrerPolicy="no-referrer"
+                                className="w-10 h-10 object-cover bg-slate-100 group-hover/thumb:scale-105 transition-transform"
+                              />
+                              <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
+                                <ZoomIn className="w-3.5 h-3.5" />
+                              </div>
+                            </button>
                           ) : (
                             <div 
                               className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-indigo-50 border border-slate-200 flex items-center justify-center shrink-0 cursor-pointer text-slate-400 hover:text-indigo-600 transition-colors"
@@ -1088,6 +1141,12 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
         />
       )}
 
+      {/* Enlarged High-Resolution Image Preview Lightbox */}
+      <ImageLightboxModal
+        isOpen={Boolean(lightboxDetails)}
+        onClose={() => setLightboxDetails(null)}
+        details={lightboxDetails}
+      />
     </div>
   );
 };
