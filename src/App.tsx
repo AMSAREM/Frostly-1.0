@@ -845,6 +845,23 @@ export default function App() {
     });
   };
 
+  const handlePurgeWorkspaceData = () => {
+    setBatches([]);
+    setOrders([]);
+    setCustomers([]);
+    setSuppliers([]);
+    setProducts([]);
+    setRetailSales([]);
+    setPurchaseOrders([]);
+    setFinancialEntries([]);
+    addNotification({
+      title: 'Workspace Data Cleared',
+      message: 'All operational records, seafood batches, orders, and statements have been wiped. User accounts and login credentials remain active.',
+      type: 'system',
+      urgency: 'low'
+    });
+  };
+
   // Notifications handler
   const markNotificationRead = (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
@@ -2173,6 +2190,7 @@ export default function App() {
             onOpenOnboardingWizard={() => setIsOnboardingModalOpen(true)}
             onRestoreAllData={handleRestoreAllData}
             onResetToDefaults={handleResetToDefaults}
+            onPurgeWorkspaceData={handlePurgeWorkspaceData}
           />
         )}
 

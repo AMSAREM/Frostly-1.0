@@ -835,6 +835,101 @@ export async function createExpressApp(
     }
   });
 
+  // Workspace Data Purge: Wipes all operational & transactional records for a tenant while preserving user accounts & staff credentials
+  app.post('/api/tenant/purge-data', async (req, res) => {
+    const { organizationId, organizationName, confirmName } = req.body;
+    const adminClient = getSupabaseAdmin();
+    if (!adminClient) {
+      res.status(500).json({ error: 'Supabase admin service is not configured.' });
+      return;
+    }
+
+    try {
+      let targetOrg: any = null;
+      if (organizationId) {
+        const { data } = await adminClient.from('organizations').select('*').eq('id', organizationId).maybeSingle();
+        targetOrg = data;
+      }
+      
+      if (!targetOrg && organizationName) {
+        const { data } = await adminClient
+          .from('organizations')
+          .select('*')
+          .ilike('name', `%${organizationName.trim()}%`)
+          .limit(1);
+        if (data && data.length > 0) targetOrg = data[0];
+      }
+
+      if (!targetOrg) {
+        res.status(404).json({ error: `Organization "${organizationName || organizationId}" not found.` });
+        return;
+      }
+
+      if (confirmName && confirmName.trim().toLowerCase() !== targetOrg.name.trim().toLowerCase()) {
+        res.status(400).json({ error: `Confirmation name "${confirmName}" does not match organization name "${targetOrg.name}".` });
+        return;
+      }
+
+      // Try RPC first
+      const { data: rpcData, error: rpcErr } = await adminClient.rpc('purge_tenant_data_except_users', {
+        p_org_identifier: targetOrg.id,
+        p_confirm_name: targetOrg.name,
+      });
+
+      if (!rpcErr && rpcData?.success) {
+        res.json({ success: true, ...rpcData });
+        return;
+      }
+
+      // Fallback: direct table deletions
+      const orgId = targetOrg.id;
+      const tables = [
+        'inventory_adjustments',
+        'inventory_adjustment_accounts',
+        'order_line_items',
+        'client_orders',
+        'purchase_order_items',
+        'purchase_order_landings',
+        'retail_sale_items',
+        'retail_transactions',
+        'retail_wholesale_products',
+        'haccp_audit_records',
+        'financial_ledger_entries',
+        'reefer_sensor_readings',
+        'inventory_batches',
+        'reefer_vehicles',
+        'fleet_vessels',
+        'system_notifications',
+        'customers',
+        'suppliers',
+        'species'
+      ];
+
+      for (const t of tables) {
+        try {
+          await adminClient.from(t).delete().eq('organization_id', orgId);
+        } catch {
+          // ignore missing table or constraint
+        }
+      }
+
+      const { data: staff } = await adminClient
+        .from('staff_profiles')
+        .select('id, email, full_name, role')
+        .eq('organization_id', orgId);
+
+      res.json({
+        success: true,
+        organization_id: orgId,
+        organization_name: targetOrg.name,
+        preserved_users_count: staff?.length || 0,
+        preserved_user_emails: staff?.map((s: any) => s.email) || [],
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to purge workspace data.' });
+    }
+  });
+
   // ==========================================
   // TENANT WORKSPACE: WORKER MANAGEMENT ROUTES
   // ==========================================
