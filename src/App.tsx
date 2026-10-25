@@ -1527,6 +1527,7 @@ export default function App() {
             notes: `Retail Inventory Lot for ${product.name} (${product.cutType}). SKU: ${product.sku}. Pack: ${product.retailPackSize || 'Standard'}. Channel: ${channelLabel}`,
             linkedProductId: product.id,
             productSku: product.sku,
+            imageUrl: product.imageUrl || existingLot.imageUrl,
             isRetailCutLot: true
           };
         }
@@ -1586,6 +1587,7 @@ export default function App() {
           notes: `Retail Inventory Lot for ${product.name} (${product.cutType}). SKU: ${product.sku}. Pack: ${product.retailPackSize || 'Standard'}. Channel: ${channelLabel}`,
           linkedProductId: product.id,
           productSku: product.sku,
+          imageUrl: product.imageUrl,
           isRetailCutLot: true
         };
       }

@@ -275,6 +275,9 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
                                 src={resolvedImg.url}
                                 alt={item.speciesName}
                                 referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = '/logofrostly1.png';
+                                }}
                                 className="w-10 h-10 object-cover bg-slate-100 group-hover:scale-105 transition-transform"
                               />
                             </button>

@@ -640,6 +640,9 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
                             src={resolvedImg.url}
                             alt={item.speciesName}
                             referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = '/logofrostly1.png';
+                            }}
                             className="w-9 h-9 object-cover bg-slate-100 group-hover/thumb:scale-105 transition-transform"
                           />
                           <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">

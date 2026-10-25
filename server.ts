@@ -1,9 +1,52 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
+
+const UPLOADS_DIR = path.join(process.cwd(), 'dist', 'uploads');
+try {
+  if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  }
+} catch {
+  // ignore
+}
+
+// In-memory buffer cache for ultra-low latency image serving (0ms cache hits)
+const imageMemoryCache = new Map<string, { buffer: Buffer; mimeType: string }>();
+
+export function cacheBase64Image(dataUri?: string | null): string | null {
+  if (!dataUri || typeof dataUri !== 'string') return null;
+  const trimmed = dataUri.trim();
+  if (!trimmed.startsWith('data:image/')) return null;
+  const match = trimmed.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+  if (!match) return null;
+  const mimeType = match[1];
+  const base64Data = match[2];
+  try {
+    const buffer = Buffer.from(base64Data, 'base64');
+    const hash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 20);
+    const ext = mimeType === 'image/webp' ? 'webp' : mimeType === 'image/png' ? 'png' : mimeType === 'image/svg+xml' ? 'svg' : 'jpg';
+    const filename = `img_${hash}.${ext}`;
+
+    imageMemoryCache.set(filename, { buffer, mimeType });
+    try {
+      const filePath = path.join(UPLOADS_DIR, filename);
+      if (!fs.existsSync(filePath)) {
+        fs.writeFileSync(filePath, buffer);
+      }
+    } catch {
+      // Memory cache active
+    }
+
+    return `/api/uploads/${filename}`;
+  } catch {
+    return null;
+  }
+}
 import { createClient } from '@supabase/supabase-js';
 import {
   AMANSOCEAN_OFFICIAL_CATALOG,
@@ -68,11 +111,59 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
 
   const adminClientGetter = () => options.adminClient || getSupabaseAdmin();
 
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   // Health check
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
+  });
+
+  // Fast static image serving with permanent HTTP disk caching & ETag support
+  app.get('/api/uploads/:filename', (req, res) => {
+    const filename = path.basename(req.params.filename || '');
+    if (!filename || !/^img_[a-zA-Z0-9_-]+\.[a-zA-Z0-9]+$/.test(filename)) {
+      res.status(404).send('Not Found');
+      return;
+    }
+
+    // 1. Check memory cache first (0ms latency)
+    const cached = imageMemoryCache.get(filename);
+    if (cached) {
+      if (req.headers['if-none-match'] === `"${filename}"`) {
+        res.status(304).end();
+        return;
+      }
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.setHeader('Content-Type', cached.mimeType);
+      res.setHeader('ETag', `"${filename}"`);
+      res.send(cached.buffer);
+      return;
+    }
+
+    // 2. Check disk cache
+    try {
+      const filePath = path.join(UPLOADS_DIR, filename);
+      if (fs.existsSync(filePath)) {
+        if (req.headers['if-none-match'] === `"${filename}"`) {
+          res.status(304).end();
+          return;
+        }
+        const ext = path.extname(filename).toLowerCase();
+        const mimeType = ext === '.webp' ? 'image/webp' : ext === '.png' ? 'image/png' : ext === '.svg' ? 'image/svg+xml' : 'image/jpeg';
+        const buffer = fs.readFileSync(filePath);
+        imageMemoryCache.set(filename, { buffer, mimeType });
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('ETag', `"${filename}"`);
+        res.send(buffer);
+        return;
+      }
+    } catch {
+      // fallback
+    }
+
+    res.status(404).send('Image Not Found');
   });
 
   // Google SMTP Configuration and Status Endpoint
@@ -3067,7 +3158,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       retailPricePerUnit: retailPrice,
       wholesaleMinQty: Math.max(1, Number(row.wholesale_min_qty || 5)),
       retailPackSize: String(row.retail_pack_size || sf.weight || '1kg'),
-      imageUrl: String(row.image_url || sf.image),
+      imageUrl: String((row.image_url?.startsWith('data:image/') ? cacheBase64Image(row.image_url) : null) || row.image_url || sf.image),
       origin: String(originMeta.cleanOrigin || sf.origin),
       isAvailableForRetail: row.is_available_for_retail !== false,
       isAvailableForWholesale: row.is_available_for_wholesale !== false,
@@ -3266,6 +3357,9 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       if (body.grade !== undefined) updates.grade = String(body.grade);
       if (body.unit !== undefined) updates.unit = String(body.unit);
       if (body.retailPackSize !== undefined) updates.retail_pack_size = String(body.retailPackSize);
+      if (body.imageUrl !== undefined || body.image_url !== undefined) {
+        updates.image_url = String(body.imageUrl || body.image_url || '').trim();
+      }
       if (body.origin !== undefined || body.linkedBatchId !== undefined || body.storageZone !== undefined) {
         const { data: existingProd } = await adminClient
           .from('retail_wholesale_products')
@@ -3360,6 +3454,47 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
     } catch (err: any) {
       console.error('[DELETE Amansocean Admin Product Error]:', err);
       res.status(500).json({ error: err?.message || 'Failed to deactivate product.' });
+    }
+  });
+
+  app.post('/api/erp/upload-image', requireStaffSession, async (req, res) => {
+    try {
+      const { image, fileName } = req.body || {};
+      if (!image || typeof image !== 'string') {
+        res.status(400).json({ error: 'Image data or URL is required.' });
+        return;
+      }
+
+      const trimmed = image.trim();
+      if (trimmed.startsWith('data:image/')) {
+        const cachedUrl = cacheBase64Image(trimmed);
+        if (cachedUrl) {
+          res.json({
+            success: true,
+            imageUrl: cachedUrl,
+            fileName: fileName || 'optimized-image.webp'
+          });
+          return;
+        }
+      }
+
+      const isValid = 
+        trimmed.startsWith('https://') ||
+        trimmed.startsWith('http://') ||
+        trimmed.startsWith('/');
+
+      if (!isValid) {
+        res.status(400).json({ error: 'Invalid image format. Expected data URI or HTTPS link.' });
+        return;
+      }
+
+      res.json({
+        success: true,
+        imageUrl: trimmed,
+        fileName: fileName || 'product-image.jpg'
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Failed to process image upload.' });
     }
   });
 
@@ -4106,7 +4241,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
           parseOriginLotMeta(row.origin).storageZone ||
           'Commercial Cold Storage (-22°C)'
       ),
-      imageUrl: sfMapped.image,
+      imageUrl: String((row.image_url?.startsWith('data:image/') ? cacheBase64Image(row.image_url) : null) || row.image_url || sfMapped.image),
       isAvailableForRetail: row.is_available_for_retail !== false,
       isAvailableForWholesale: row.is_available_for_wholesale !== false,
     };
@@ -5831,6 +5966,10 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       if (tableName === 'retail_wholesale_products') {
         delete cleanPayload.linked_batch_id;
         delete cleanPayload.storage_zone;
+        if (cleanPayload.imageUrl && !cleanPayload.image_url) {
+          cleanPayload.image_url = String(cleanPayload.imageUrl).trim();
+        }
+        delete cleanPayload.imageUrl;
         if (cleanPayload.cut_type) {
           cleanPayload.cut_type = normalizeRetailCutType(cleanPayload.cut_type);
         }
@@ -5962,6 +6101,10 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       }
 
       if (tableName === 'inventory_batches') {
+        if (cleanPayload.imageUrl && !cleanPayload.image_url) {
+          cleanPayload.image_url = String(cleanPayload.imageUrl).trim();
+        }
+        delete cleanPayload.imageUrl;
         const avail = Math.max(0, Number(cleanPayload.available_weight_kg) || 0);
         const alloc = Math.max(0, Number(cleanPayload.allocated_weight_kg) || 0);
         const rawInit = Number(cleanPayload.initial_weight_kg) || 0;

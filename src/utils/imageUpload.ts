@@ -1,10 +1,17 @@
 /**
  * Image processing & upload helper for user-supplied images.
- * Ensures images are optimized, compressed, and ready for Supabase storage or URI persistence.
+ * Ensures images are heavily optimized, scaled for fast rendering,
+ * and uploaded to static server cache with permanent HTTP caching.
  */
+import { getSession } from '../data/auth';
 
-export async function processImageFile(file: File, maxWidth = 1200, maxHeight = 1200, quality = 0.82): Promise<string> {
-  return new Promise((resolve, reject) => {
+export async function processImageFile(
+  file: File,
+  maxWidth = 640,
+  maxHeight = 640,
+  quality = 0.78
+): Promise<string> {
+  const localDataUrl = await new Promise<string>((resolve, reject) => {
     if (!file.type.startsWith('image/')) {
       return reject(new Error('Please select a valid image file.'));
     }
@@ -40,10 +47,19 @@ export async function processImageFile(file: File, maxWidth = 1200, maxHeight = 
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Convert to webp if supported, otherwise jpeg
+        // Try modern, lightweight WebP first (40-60% smaller than JPEG)
         try {
-          const dataUrl = canvas.toDataURL('image/jpeg', quality);
-          resolve(dataUrl);
+          const webpData = canvas.toDataURL('image/webp', quality);
+          if (webpData.startsWith('data:image/webp')) {
+            return resolve(webpData);
+          }
+        } catch {
+          // fallback
+        }
+
+        try {
+          const jpegData = canvas.toDataURL('image/jpeg', quality);
+          resolve(jpegData);
         } catch {
           resolve(e.target?.result as string);
         }
@@ -52,4 +68,36 @@ export async function processImageFile(file: File, maxWidth = 1200, maxHeight = 
     };
     reader.readAsDataURL(file);
   });
+
+  // Attempt server upload for permanent HTTP static caching & 0ms disk cache hits
+  try {
+    if (typeof window !== 'undefined' && typeof fetch === 'function' && navigator.onLine) {
+      const session = await getSession();
+      const token = session?.access_token;
+      if (token && !token.startsWith('local-token-')) {
+        const res = await fetch('/api/erp/upload-image', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            image: localDataUrl,
+            fileName: file.name || 'product-image.webp',
+          }),
+        });
+
+        if (res.ok) {
+          const payload = await res.json();
+          if (payload.imageUrl && typeof payload.imageUrl === 'string') {
+            return payload.imageUrl;
+          }
+        }
+      }
+    }
+  } catch {
+    // Gracefully fallback to lightweight optimized data URL
+  }
+
+  return localDataUrl;
 }

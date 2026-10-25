@@ -17,8 +17,8 @@ import {
   RotateCcw,
   ThermometerSnowflake,
   X,
-} from 'lucide-react';
 import { signOut as authSignOut } from '../data/auth';
+import { optimizeImageUrl } from '../utils/productImageResolver';
 import {
   PosRegisterSessionState,
   PosDualCatalogProduct,
@@ -85,10 +85,14 @@ const ProductThumbnail: React.FC<{
     );
   }
 
+  const optimized = optimizeImageUrl(src, 360);
+
   return (
     <img
-      src={src}
+      src={optimized}
       alt={alt}
+      loading="lazy"
+      decoding="async"
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
       className={`object-cover ${className}`}

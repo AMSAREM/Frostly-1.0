@@ -765,8 +765,13 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                         <img 
                           src={resolvedImg.url} 
                           alt={resolvedImg.alt} 
+                          loading="lazy"
+                          decoding="async"
                           className="w-16 h-16 rounded-2xl object-cover border border-slate-200 shrink-0 bg-slate-100 group-hover/thumb:scale-105 transition-transform"
                           referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = '/logofrostly1.png';
+                          }}
                         />
                         <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
                           <ZoomIn className="w-4 h-4 drop-shadow" />
@@ -949,8 +954,13 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                         <img
                           src={resolvedImg.url}
                           alt={item.product.name}
+                          loading="lazy"
+                          decoding="async"
                           className="w-10 h-10 object-cover bg-slate-100 group-hover/thumb:scale-105 transition-transform"
                           referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = '/logofrostly1.png';
+                          }}
                         />
                         <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
                           <ZoomIn className="w-3.5 h-3.5" />
@@ -1954,7 +1964,17 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                                         className="w-7 h-7 rounded-lg overflow-hidden border border-slate-200 shrink-0 cursor-zoom-in"
                                         title="Click to view photo"
                                       >
-                                        <img src={resolvedImg.url} alt={i.speciesName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                        <img 
+                                          src={resolvedImg.url} 
+                                          alt={i.speciesName} 
+                                          loading="lazy"
+                                          decoding="async"
+                                          className="w-full h-full object-cover" 
+                                          referrerPolicy="no-referrer" 
+                                          onError={(e) => {
+                                            (e.target as HTMLImageElement).src = '/logofrostly1.png';
+                                          }}
+                                        />
                                       </button>
                                     ) : null}
                                     <span className="font-medium text-slate-800">
@@ -2194,8 +2214,13 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                               <img
                                 src={resolvedImg.url}
                                 alt={prod.name}
+                                loading="lazy"
+                                decoding="async"
                                 className="w-11 h-11 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100 group-hover/thumb:scale-105 transition-transform"
                                 referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = '/logofrostly1.png';
+                                }}
                               />
                               <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
                                 <ZoomIn className="w-3.5 h-3.5" />
@@ -2386,8 +2411,13 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                                   <img
                                     src={resolvedImg.url}
                                     alt={prod.name}
+                                    loading="lazy"
+                                    decoding="async"
                                     className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100 group-hover/thumb:scale-105 transition-transform"
                                     referrerPolicy="no-referrer"
+                                    onError={(e) => {
+                                      (e.target as HTMLImageElement).src = '/logofrostly1.png';
+                                    }}
                                   />
                                   <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
                                     <ZoomIn className="w-3.5 h-3.5" />

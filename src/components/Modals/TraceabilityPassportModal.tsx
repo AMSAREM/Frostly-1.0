@@ -171,6 +171,9 @@ export const TraceabilityPassportModal: React.FC<TraceabilityPassportModalProps>
                     src={resolvedImage.url}
                     alt={resolvedImage.alt}
                     referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = '/logofrostly1.png';
+                    }}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />
                   <div className="absolute inset-0 bg-slate-950/20 group-hover:bg-transparent transition-colors flex items-center justify-center sm:hidden">

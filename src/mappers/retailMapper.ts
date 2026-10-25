@@ -189,7 +189,7 @@ export const productMapper = {
       wholesale_min_qty: Math.max(1, Number(domain.wholesaleMinQty) || 1),
       retail_pack_size: domain.retailPackSize || null,
       sku: domain.sku,
-      image_url: domain.imageUrl,
+      image_url: domain.imageUrl?.trim() || '',
       origin: encodedOrigin,
       is_available_for_retail: domain.isAvailableForRetail,
       is_available_for_wholesale: domain.isAvailableForWholesale,

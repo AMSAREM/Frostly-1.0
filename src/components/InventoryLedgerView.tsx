@@ -699,7 +699,12 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
                         <img 
                           src={userImg.url} 
                           alt={userImg.alt} 
+                          loading="lazy"
+                          decoding="async"
                           referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = '/logofrostly1.png';
+                          }}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 opacity-90"
                         />
                         <div className="absolute inset-0 bg-slate-950/20 opacity-0 group-hover/zoom:opacity-100 transition-opacity flex items-center justify-center text-white">
@@ -967,7 +972,12 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
                               <img 
                                 src={userImg.url} 
                                 alt={userImg.alt} 
+                                loading="lazy"
+                                decoding="async"
                                 referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = '/logofrostly1.png';
+                                }}
                                 className="w-10 h-10 object-cover bg-slate-100 group-hover/thumb:scale-105 transition-transform"
                               />
                               <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">

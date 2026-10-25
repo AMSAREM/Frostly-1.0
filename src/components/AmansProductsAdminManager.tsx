@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   AlertCircle,
   ExternalLink,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../utils/supabase';
 import {
@@ -21,6 +22,7 @@ import {
   AMANSOCEAN_OFFICIAL_CATALOG,
 } from '../data/amansoceanProducts';
 import { RetailWholesaleProduct, SeafoodCutType, SpeciesCategory, QualityGrade } from '../types';
+import { resolveProductImage } from '../utils/productImageResolver';
 
 export interface AdminCatalogProduct extends RetailWholesaleProduct {
   storefrontCategory?: string;
@@ -262,6 +264,7 @@ export const AmansProductsAdminManager: React.FC<AmansProductsAdminManagerProps>
           stockKg,
           isAvailableForRetail: draft.isAvailableForRetail,
           isAvailableForWholesale: draft.isAvailableForWholesale,
+          imageUrl: product.imageUrl,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -629,14 +632,37 @@ export const AmansProductsAdminManager: React.FC<AmansProductsAdminManagerProps>
                     draft.isAvailableForRetail !== product.isAvailableForRetail ||
                     draft.isAvailableForWholesale !== product.isAvailableForWholesale;
 
-                  return (
-                    <tr key={product.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-2.5 px-4">
-                        <div className="font-semibold text-slate-900">{product.name}</div>
-                        <div className="text-[11px] text-slate-500 font-mono tabular-nums">
-                          {product.sku}
-                        </div>
-                      </td>
+                    const resolvedImg = resolveProductImage(product);
+
+                    return (
+                      <tr key={product.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-2.5 px-4">
+                          <div className="flex items-center gap-3">
+                            {resolvedImg.url ? (
+                              <img
+                                src={resolvedImg.url}
+                                alt={resolvedImg.alt}
+                                loading="lazy"
+                                decoding="async"
+                                referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = '/logofrostly1.png';
+                                }}
+                                className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100"
+                              />
+                            ) : (
+                              <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 shrink-0 flex items-center justify-center text-slate-400">
+                                <ImageIcon className="w-5 h-5 opacity-40" />
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <div className="font-semibold text-slate-900">{product.name}</div>
+                              <div className="text-[11px] text-slate-500 font-mono tabular-nums">
+                                {product.sku}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
 
                       <td className="py-2.5 px-3 text-slate-600">
                         <div>{product.storefrontCategory || product.category}</div>

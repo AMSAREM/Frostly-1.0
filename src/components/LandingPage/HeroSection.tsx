@@ -103,8 +103,9 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onShopNow }) => {
                 
                 {/* Product Photo: Rich plate of prawns / seafood platter */}
                 <img
-                  src="https://images.unsplash.com/photo-1565680018434-b513d5e5fd47?auto=format&fit=crop&w=1000&q=85"
+                  src="https://images.unsplash.com/photo-1565680018434-b513d5e5fd47?auto=format&fit=crop&w=800&q=75&fm=webp"
                   alt="Amansocean Premium Jumbo Wild Tiger Prawns and Seafood Platter"
+                  decoding="async"
                   referrerPolicy="no-referrer"
                   className="w-full h-72 sm:h-96 lg:h-[440px] object-cover object-center"
                 />

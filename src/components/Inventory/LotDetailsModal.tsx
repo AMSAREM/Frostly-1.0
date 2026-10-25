@@ -84,6 +84,9 @@ export const LotDetailsModal: React.FC<LotDetailsModalProps> = ({
               src={userImage} 
               alt={batch.speciesName}
               referrerPolicy="no-referrer"
+              onError={(e) => {
+                (e.target as HTMLImageElement).src = '/logofrostly1.png';
+              }}
               className="absolute inset-0 w-full h-full object-cover opacity-35 mix-blend-luminosity filter saturate-150"
             />
           ) : (
