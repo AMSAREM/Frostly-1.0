@@ -28,7 +28,9 @@ import { GoogleSmtpModal } from './GoogleSmtpModal';
 import { sendDirectGoogleSmtpConfirmation } from '../services/googleSmtpService';
 import { FrostlyLogo } from './FrostlyLogo';
 import { EmailValidationFeedback } from './EmailValidationFeedback';
+import { PasswordValidationFeedback } from './PasswordValidationFeedback';
 import { validateEmail } from '../utils/emailValidation';
+import { validatePassword } from '../utils/passwordValidation';
 import {
   isPosSecurityReauthActive,
   clearPosSecurityReauth,
@@ -206,8 +208,13 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
   // Handler for setting / updating password securely for authenticated or recovery sessions
   const handleSetPasswordAndLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPasswordVal || newPasswordVal.length < 6) {
-      setErrorMessage('Password must be at least 6 characters.');
+    if (!newPasswordVal) {
+      setErrorMessage('Please enter a new password.');
+      return;
+    }
+    const passCheck = validatePassword(newPasswordVal);
+    if (!passCheck.isValid) {
+      setErrorMessage(passCheck.errorMessage || 'Password does not meet enterprise security criteria.');
       return;
     }
     if (newPasswordVal !== confirmPasswordVal) {
@@ -362,6 +369,11 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
       setErrorMessage('Please enter an admin password.');
       return;
     }
+    const passCheck = validatePassword(password);
+    if (!passCheck.isValid) {
+      setErrorMessage(passCheck.errorMessage || 'Password does not satisfy enterprise security requirements.');
+      return;
+    }
 
     setIsLoading(true);
     setErrorMessage(null);
@@ -456,6 +468,11 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
     }
     if (!password) {
       setErrorMessage('Please enter a password.');
+      return;
+    }
+    const passCheck = validatePassword(password);
+    if (!passCheck.isValid) {
+      setErrorMessage(passCheck.errorMessage || 'Password does not satisfy enterprise security requirements.');
       return;
     }
 
@@ -862,7 +879,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                   </p>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      New Password (min 6 characters)
+                      New Password (min 8 characters, complex)
                     </label>
                     <input
                       id="auth-gate-new-password-input"
@@ -872,6 +889,13 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                       onChange={(e) => setNewPasswordVal(e.target.value)}
                       disabled={isLoading}
                       className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-600"
+                    />
+                    <PasswordValidationFeedback
+                      password={newPasswordVal}
+                      onSuggestPassword={(p) => {
+                        setNewPasswordVal(p);
+                        setConfirmPasswordVal(p);
+                      }}
                     />
                   </div>
                   <div>
@@ -1225,6 +1249,10 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                     )}
                   </button>
                 </div>
+                <PasswordValidationFeedback
+                  password={password}
+                  onSuggestPassword={(p) => setPassword(p)}
+                />
               </div>
 
               {/* Starter Plan Guarantee */}
@@ -1384,6 +1412,10 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                     )}
                   </button>
                 </div>
+                <PasswordValidationFeedback
+                  password={password}
+                  onSuggestPassword={(p) => setPassword(p)}
+                />
               </div>
 
               <button

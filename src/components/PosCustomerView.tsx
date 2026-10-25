@@ -17,6 +17,7 @@ import {
   RotateCcw,
   ThermometerSnowflake,
   X,
+} from 'lucide-react';
 import { signOut as authSignOut } from '../data/auth';
 import { optimizeImageUrl } from '../utils/productImageResolver';
 import {

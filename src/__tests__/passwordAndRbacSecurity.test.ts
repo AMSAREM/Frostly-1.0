@@ -157,4 +157,30 @@ describe('Role-Based Access Control (RBAC) & Authorisation Matrix', () => {
       expect(info.badgeText).toBeDefined();
     });
   });
+
+  it('enforces that only admin and creator roles can manage workers and reset worker passwords', () => {
+    expect(canUserPerform('admin', 'manage_workers')).toBe(true);
+    expect(canUserPerform('creator', 'manage_workers')).toBe(true);
+    expect(canUserPerform('ops_staff', 'manage_workers')).toBe(false);
+    expect(canUserPerform('sales_staff', 'manage_workers')).toBe(false);
+    expect(canUserPerform('dispatch_staff', 'manage_workers')).toBe(false);
+    expect(canUserPerform('viewer', 'manage_workers')).toBe(false);
+  });
+
+  it('validates every password for strict criteria across all onboarding flows', () => {
+    const weakPasswords = ['123456', 'password', 'frostly', 'seafood123', 'admin123', 'NoNumber!'];
+    weakPasswords.forEach(pwd => {
+      const check = validatePassword(pwd);
+      expect(check.isValid).toBe(false);
+      expect(check.errorMessage).toBeTruthy();
+    });
+
+    const compliantPasswords = ['TemaHarbour#2026', 'OceanCold$Chain99', 'Atlantic@Freezer1'];
+    compliantPasswords.forEach(pwd => {
+      const check = validatePassword(pwd);
+      expect(check.isValid).toBe(true);
+      expect(check.errorMessage).toBeNull();
+    });
+  });
 });
+
