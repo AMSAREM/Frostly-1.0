@@ -42,6 +42,7 @@ serve(async (req) => {
     let event: any;
 
     try {
+      // SECURITY: cryptographically verify the Stripe signature against the raw body.
       event = await stripe.webhooks.constructEventAsync(
         rawBody,
         signature,

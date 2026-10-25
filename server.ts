@@ -70,49 +70,41 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
 
   const adminClientGetter = () => options.adminClient || getSupabaseAdmin();
 
+  // SECURITY: security headers + conservative body limits. Only the image upload route accepts large bodies.
   app.disable('x-powered-by');
-  app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+  // Behind a hosting proxy (AI Studio / Cloud Run / Vercel) every request otherwise looks like it comes from one IP,
+  // which would put all users in a single rate-limit bucket. Trust exactly one proxy hop.
+  app.set('trust proxy', 1);
+  app.use(
+    helmet({
+      contentSecurityPolicy: false, // Vite/PWA inline assets; tighten separately once CSP is tested
+      crossOriginEmbedderPolicy: false,
+    })
+  );
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     next();
   });
 
-  // Dedicated large-payload parser for ERP high-resolution photos, standard 2MB limit for other routes
-  app.use('/api/erp/upload-image', express.json({ limit: '15mb' }));
+  app.use('/api/erp/upload-image', express.json({ limit: '12mb' }));
   app.use(express.json({ limit: '2mb' }));
+  app.use(express.urlencoded({ limit: '2mb', extended: true }));
 
-  // Security Rate Limiters
-  const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 40,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too many authentication attempts. Please try again after 15 minutes.' },
-  });
+  // SECURITY: rate limiting on abuse-prone public endpoints (skipped under test)
+  const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
+  const makeLimiter = (windowMs: number, max: number) =>
+    rateLimit({ windowMs, max, standardHeaders: true, legacyHeaders: false, skip: () => isTestEnv });
+  app.use(['/api/smtp', '/api/auth', '/api/feedback', '/api/storefront/newsletter'], makeLimiter(15 * 60 * 1000, 30));
+  app.use(['/api/storefront/orders', '/api/storefront/analytics'], makeLimiter(15 * 60 * 1000, 120));
 
-  const smtpLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 30,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too many email requests from this IP. Please try again later.' },
-  });
+  const authLimiter = makeLimiter(15 * 60 * 1000, 40);
+  const smtpLimiter = makeLimiter(15 * 60 * 1000, 30);
+  const feedbackLimiter = makeLimiter(15 * 60 * 1000, 30);
+  const storefrontLimiter = makeLimiter(15 * 60 * 1000, 120);
 
-  const feedbackLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 30,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too many feedback submissions. Please wait a few minutes before submitting again.' },
-  });
-
-  const storefrontLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 120,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Storefront request rate exceeded. Please slow down.' },
-  });
+  // SECURITY: middleware defined later in this file; resolve lazily so route registration order doesn't matter.
+  const creatorOnly = (req: express.Request, res: express.Response, next: express.NextFunction) =>
+    requirePlatformCreator(req, res, next);
 
   // Health check
   app.get('/api/health', (req, res) => {
@@ -159,10 +151,13 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         .eq('user_id', user.id)
         .maybeSingle();
 
-      // Authorized ONLY if in platform_admins, server-set app_metadata, or creator role in staff_profiles
+      const creatorEmail = (process.env.CREATOR_EMAIL || '').trim().toLowerCase();
+      // Authorized ONLY if in platform_admins, server-set app_metadata, verified creatorEmail, or creator role in staff_profiles
       const isAuthorizedCreator =
         callerProfile?.role === 'creator' ||
         Boolean(platformAdminRow) ||
+        Boolean(creatorEmail && user.email_confirmed_at && user.email?.toLowerCase() === creatorEmail) ||
+        // SECURITY: user_metadata is user-editable and must never grant privileges. app_metadata is server-only.
         user.app_metadata?.role === 'platform_creator';
 
       if (!isAuthorizedCreator) {
@@ -338,33 +333,14 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         detectedOrigin = `${req.protocol || 'https'}://${req.headers.host}`;
       }
 
-      // Security check: Never trust arbitrary client websiteUrl; enforce verified origin or public env
-      let targetWebsite = process.env.APP_PUBLIC_URL || detectedOrigin || 'https://frostly.io';
-      if (websiteUrl && typeof websiteUrl === 'string') {
-        try {
-          const parsedClientUrl = new URL(websiteUrl);
-          const parsedServerUrl = new URL(targetWebsite);
-          if (parsedClientUrl.hostname === parsedServerUrl.hostname || parsedClientUrl.hostname === 'localhost' || parsedClientUrl.hostname === '127.0.0.1') {
-            targetWebsite = parsedClientUrl.origin;
-          }
-        } catch {}
-      }
+      // SECURITY: never trust a client-supplied link or website. Links are generated server-side by Supabase Auth.
+      const allowedOrigin = (process.env.APP_PUBLIC_URL || '').trim().replace(/\/$/, '');
+      const targetWebsite = allowedOrigin || detectedOrigin || 'https://frostly.io';
+      let targetLink: string | undefined = undefined;
 
-      // Ensure confirmation links are strictly verified or cryptographically generated via Supabase Auth Admin
-      let targetLink = '';
-      if (confirmationUrl && typeof confirmationUrl === 'string') {
-        try {
-          const parsedConfUrl = new URL(confirmationUrl);
-          const parsedTargetWebsite = new URL(targetWebsite);
-          // Only permit confirmationUrl if origin matches the server's target website
-          if (parsedConfUrl.origin === parsedTargetWebsite.origin && confirmationUrl.includes('token_hash=')) {
-            targetLink = confirmationUrl;
-          }
-        } catch {}
-      }
-
+      // Ensure confirmation links are cryptographically generated via Supabase Auth Admin
       const adminClient = getSupabaseAdmin();
-      if (adminClient && !targetLink) {
+      if (adminClient) {
         try {
           const { data: linkData } = await (adminClient.auth.admin.generateLink as any)({
             type: 'signup',
@@ -749,14 +725,19 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
     }
 
     try {
-      let targetUserId = userId;
-      const cleanEmail = (email || '').trim().toLowerCase();
-
-      if (!targetUserId && cleanEmail) {
-        const { data: userList } = await adminClient.auth.admin.listUsers();
-        const found = (userList?.users as any[])?.find((u: any) => u.email?.toLowerCase() === cleanEmail);
-        if (found) targetUserId = found.id;
+      // SECURITY: identity comes from the verified session token, never from the request body.
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        res.status(401).json({ error: 'Authentication required to complete onboarding.' });
+        return;
       }
+      const { data: callerData, error: callerErr } = await adminClient.auth.getUser(authHeader.slice(7).trim());
+      if (callerErr || !callerData?.user) {
+        res.status(401).json({ error: 'Invalid or expired session token.' });
+        return;
+      }
+      const targetUserId = callerData.user.id;
+      const cleanEmail = (callerData.user.email || '').trim().toLowerCase();
 
       if (!targetUserId) {
         res.status(400).json({ error: 'A valid authenticated user ID or email is required.' });
@@ -3694,8 +3675,8 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
     }
   });
 
-  // GET Feedback: Protected with requireStaffSession; selects only safe operational columns
-  app.get('/api/feedback', requireStaffSession, async (req, res) => {
+  // GET Feedback: Protected with creatorOnly; selects only safe operational columns
+  app.get('/api/feedback', creatorOnly, async (req, res) => {
     const adminClient = adminClientGetter();
     if (!adminClient) {
       const sanitized = inMemoryFeedbackStore.slice(0, 50).map((f) => ({

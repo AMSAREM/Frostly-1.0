@@ -148,7 +148,6 @@ export function isAmansoceanEmail(email?: string | null): boolean {
   return (
     lower.endsWith('@amansocean.com') ||
     lower.endsWith('@amansocean.store') ||
-    lower.includes('amansocean') ||
     lower === 'admin@amansocean.com' ||
     lower === 'kwesi@amansocean.com' ||
     lower === 'anna@amansocean.com'
@@ -330,15 +329,15 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
     const fallbackRole = isCreator ? 'admin' : (user.user_metadata?.role || 'admin');
 
     // Check if this user belongs to Amansocean
-    const isAmans = isAmansoceanEmail(user.email) || 
-      Boolean(user.user_metadata?.organization_name?.toLowerCase().includes('amansocean'));
+    // Only the verified email domain can mark a user as Amansocean staff. user_metadata is user-editable.
+    const isAmans = isAmansoceanEmail(user.email);
 
     // Check if user has an assigned, non-sentinel organization in staff_profiles or metadata
     const assignedOrgId = profileData?.organization_id && 
       profileData.organization_id !== 'org-frostly-hq' && 
       profileData.organization_id !== '00000000-0000-0000-0000-000000000001'
         ? profileData.organization_id
-        : (user.user_metadata?.organization_id || null);
+        : (isSupabaseConfigured ? null : (user.user_metadata?.organization_id || null));
 
     let resolvedOrgId: string;
     let resolvedOrgName: string;
@@ -356,9 +355,10 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       resolvedOrgId = AMANSOCEAN_TENANT_ID;
       resolvedOrgName = AMANSOCEAN_TENANT_NAME;
     } else {
-      isUnprovisioned = !profileData && isSupabaseConfigured;
+      // No assigned workspace: never silently drop an existing user into the Amansocean tenant.
+      isUnprovisioned = isSupabaseConfigured;
       resolvedOrgId = isUnprovisioned ? '' : AMANSOCEAN_TENANT_ID;
-      resolvedOrgName = orgData?.name || user.user_metadata?.organization_name || (isUnprovisioned ? '' : AMANSOCEAN_TENANT_NAME);
+      resolvedOrgName = orgData?.name || (isUnprovisioned ? '' : AMANSOCEAN_TENANT_NAME);
     }
 
     const defaultOrg: TenantOrganization = {
@@ -407,7 +407,12 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
     }
 
     // Auto-link Amansocean staff profile in database if unlinked
-    if (isSupabaseConfigured && user.id && isAmans && (!profileData || profileData.organization_id !== AMANSOCEAN_TENANT_ID)) {
+    const hasRealOrg = Boolean(
+      profileData?.organization_id &&
+        profileData.organization_id !== 'org-frostly-hq' &&
+        profileData.organization_id !== '00000000-0000-0000-0000-000000000001'
+    );
+    if (isSupabaseConfigured && user.id && isAmans && !hasRealOrg) {
       Promise.resolve(
         supabase.from('staff_profiles').upsert({
           id: user.id,
@@ -602,6 +607,10 @@ export async function signIn(
 
     clearFailedAttempts(emailCheck.normalizedEmail);
     cachedSession = data.session;
+    cachedStaffProfile = null;
+    try {
+      localStorage.removeItem('frostly_active_org_id');
+    } catch {}
     const profile = await getStaffProfile(true);
 
     // Record login activity in real-time
@@ -695,6 +704,11 @@ export async function signOut(): Promise<void> {
   cachedSession = null;
   cachedStaffProfile = null;
   setLocalCachedSession(null);
+  // Prevent the next login on this browser from inheriting the previous user's tenant.
+  try {
+    localStorage.removeItem('frostly_active_org_id');
+    localStorage.removeItem('frostly_settings_v2');
+  } catch {}
 
   notifyAuthSubscribers(null);
 
@@ -843,9 +857,15 @@ export async function createOrganizationAndAdmin(
       // Fallback: Use server-side admin bootstrap to ensure onboarding completes reliably
       try {
         const { data: { user } } = await supabase.auth.getUser();
+        const { data: { session: onboardingSession } } = await supabase.auth.getSession();
         const resp = await fetch('/api/tenant/bootstrap-onboarding', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(onboardingSession?.access_token
+              ? { Authorization: `Bearer ${onboardingSession.access_token}` }
+              : {}),
+          },
           body: JSON.stringify({
             userId: user?.id,
             email: user?.email,

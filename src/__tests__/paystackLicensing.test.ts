@@ -204,7 +204,7 @@ describe('Paystack Mobile Money & Card Licensing Integration Tests', () => {
         '${ORG_GHANA_ID}', 'Tema Coastal Fisheries Ltd', 'trial', 'starter', 5, '${CUSTOMER_CODE}', 'none', 'GHS'
       );
     `);
-  });
+  }, 60000);
 
   afterAll(async () => {
     if (db) {

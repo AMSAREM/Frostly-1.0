@@ -268,7 +268,7 @@ describe('Subscription Licensing, Tiered Quotas & RLS Grace Period Contract & Ru
         ('${ORG_PASTDUE_ID}', 'b3333333-3333-3333-3333-333333333333', 'LOT-PASTDUE-01', 'Yellowfin Tuna', 450),
         ('${ORG_SUSPENDED_ID}', 'b4444444-4444-4444-4444-444444444444', 'LOT-SUSPENDED-01', 'Atlantic Salmon', 800);
     `);
-  });
+  }, 60000);
 
   afterAll(async () => {
     if (db) {

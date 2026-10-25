@@ -55,15 +55,13 @@ serve(async (req: Request) => {
       });
     }
 
-    // Fail closed: enforce PAYSTACK_SECRET_KEY presence and verify signature
+    // SECURITY: fail closed. Never process an unverifiable webhook.
     if (!PAYSTACK_SECRET_KEY) {
-      console.error('[Paystack Webhook] PAYSTACK_SECRET_KEY environment variable is missing.');
-      return new Response(JSON.stringify({ error: 'Server webhook secret configuration missing' }), {
+      return new Response(JSON.stringify({ error: 'Webhook secret not configured' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       });
     }
-
     const isValid = await verifyHmacSha512(rawBody, signature, PAYSTACK_SECRET_KEY);
     if (!isValid) {
       return new Response(JSON.stringify({ error: 'Invalid webhook signature' }), {
