@@ -19,12 +19,14 @@ const upgradeFiles = [
   '022_inventory_adjustment_account.sql',
   '023_batch_image_storage.sql',
   '024_customer_ledger_payment_enhancements.sql',
-  '025_supplier_ledger_payment_enhancements.sql'
+  '025_supplier_ledger_payment_enhancements.sql',
+  '026_amansocean_storefront.sql',
+  '027_amansocean_official_pricelist.sql'
 ];
 
 let upgradeContent = `-- ============================================================================
 -- FROSTLY SEAFOOD COLD-CHAIN ERP
--- MULTI-TENANT & PLATFORM UPGRADE BUNDLE (Migrations 011 to 025)
+-- MULTI-TENANT & PLATFORM UPGRADE BUNDLE (Migrations 011 to 027)
 -- Run this in Supabase SQL Editor: https://supabase.com/dashboard/project/xvlocfkkcnjopfzwobmg/sql
 -- ============================================================================
 
@@ -44,7 +46,7 @@ for (const file of upgradeFiles) {
 fs.writeFileSync(path.join(process.cwd(), 'supabase', 'RUN_MULTI_TENANT_UPGRADE.sql'), upgradeContent, 'utf-8');
 console.log('✓ Created supabase/RUN_MULTI_TENANT_UPGRADE.sql');
 
-// 2. Full System Bundle (001 -> 025)
+// 2. Full System Bundle (001 -> 027)
 const allFiles = [
   '001_extensions_and_types.sql',
   '002_tables.sql',
@@ -69,7 +71,9 @@ const allFiles = [
   '022_inventory_adjustment_account.sql',
   '023_batch_image_storage.sql',
   '024_customer_ledger_payment_enhancements.sql',
-  '025_supplier_ledger_payment_enhancements.sql'
+  '025_supplier_ledger_payment_enhancements.sql',
+  '026_amansocean_storefront.sql',
+  '027_amansocean_official_pricelist.sql'
 ];
 
 let fullContent = `-- ============================================================================

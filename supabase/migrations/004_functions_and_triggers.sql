@@ -119,6 +119,11 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
+    -- Tenant isolation: prevent cross-organization reassignment of staff profiles
+    IF (OLD.organization_id IS NOT NULL AND NEW.organization_id IS DISTINCT FROM OLD.organization_id) THEN
+        RAISE EXCEPTION 'Tenant security violation: Cannot reassign staff profile across organizations';
+    END IF;
+
     IF (OLD.role IS DISTINCT FROM NEW.role) THEN
         INSERT INTO public.staff_role_audit_logs (
             organization_id,

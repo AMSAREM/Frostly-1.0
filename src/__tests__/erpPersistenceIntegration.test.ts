@@ -364,7 +364,7 @@ describe('Unified Supabase ERP, POS Register, Platform & Activity Persistence', 
   let baseUrl1 = '';
 
   beforeAll(async () => {
-    const app = await createExpressApp({ withVite: false, adminClient: mockDb.client });
+    const app = await createExpressApp({ withVite: false, adminClient: mockDb.client, bypassPosAuth: true });
     server1 = http.createServer(app);
     await new Promise<void>((resolve) => {
       server1.listen(0, '127.0.0.1', () => {

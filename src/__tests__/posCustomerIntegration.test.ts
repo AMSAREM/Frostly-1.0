@@ -331,7 +331,7 @@ describe('POS Customer View & Dual-Channel Counter Kiosk Integration', () => {
   let b2bOrderNumber = '';
 
   beforeAll(async () => {
-    const app = await createExpressApp({ withVite: false, adminClient: mockDb.adminClient });
+    const app = await createExpressApp({ withVite: false, adminClient: mockDb.adminClient, bypassPosAuth: true });
     await new Promise<void>((resolve) => {
       server = app.listen(0, '127.0.0.1', () => {
         const addr = server.address() as any;

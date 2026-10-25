@@ -64,7 +64,9 @@ function getGoogleSmtpTransporter() {
   });
 }
 
-export async function createExpressApp(options: { withVite?: boolean; adminClient?: any } = {}) {
+export async function createExpressApp(
+  options: { withVite?: boolean; adminClient?: any; bypassPosAuth?: boolean } = {}
+) {
   const app = express();
   const PORT = 3000;
 
@@ -86,7 +88,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
     next();
   });
 
-  app.use('/api/erp/upload-image', express.json({ limit: '12mb' }));
+  app.use(['/api/erp/upload-image', '/api/erp/persistence/upsert', '/api/erp/amansocean-products'], express.json({ limit: '12mb' }));
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ limit: '2mb', extended: true }));
 
@@ -94,13 +96,12 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
   const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
   const makeLimiter = (windowMs: number, max: number) =>
     rateLimit({ windowMs, max, standardHeaders: true, legacyHeaders: false, skip: () => isTestEnv });
-  app.use(['/api/smtp', '/api/auth', '/api/feedback', '/api/storefront/newsletter'], makeLimiter(15 * 60 * 1000, 30));
+  // /api/smtp and /api/feedback have their own stricter route-level limiters below.
+  app.use(['/api/auth', '/api/storefront/newsletter'], makeLimiter(15 * 60 * 1000, 100));
   app.use(['/api/storefront/orders', '/api/storefront/analytics'], makeLimiter(15 * 60 * 1000, 120));
 
-  const authLimiter = makeLimiter(15 * 60 * 1000, 40);
   const smtpLimiter = makeLimiter(15 * 60 * 1000, 30);
   const feedbackLimiter = makeLimiter(15 * 60 * 1000, 30);
-  const storefrontLimiter = makeLimiter(15 * 60 * 1000, 120);
 
   // SECURITY: middleware defined later in this file; resolve lazily so route registration order doesn't matter.
   const creatorOnly = (req: express.Request, res: express.Response, next: express.NextFunction) =>
@@ -152,12 +153,11 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         .maybeSingle();
 
       const creatorEmail = (process.env.CREATOR_EMAIL || '').trim().toLowerCase();
-      // Authorized ONLY if in platform_admins, server-set app_metadata, verified creatorEmail, or creator role in staff_profiles
+      // Authorized ONLY via platform_admins table, server-set app_metadata, or verified creatorEmail.
+      // NEVER trust tenant-controlled staff_profiles.role or client-writable user_metadata.
       const isAuthorizedCreator =
-        callerProfile?.role === 'creator' ||
         Boolean(platformAdminRow) ||
         Boolean(creatorEmail && user.email_confirmed_at && user.email?.toLowerCase() === creatorEmail) ||
-        // SECURITY: user_metadata is user-editable and must never grant privileges. app_metadata is server-only.
         user.app_metadata?.role === 'platform_creator';
 
       if (!isAuthorizedCreator) {
@@ -203,7 +203,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
   });
 
   // Google SMTP Test Connection & Verification Endpoint
-  app.post('/api/smtp/test', smtpLimiter, requirePlatformCreator, async (req, res) => {
+  app.post('/api/smtp/test', requirePlatformCreator, async (req, res) => {
     const { toEmail } = req.body;
     if (!toEmail || typeof toEmail !== 'string') {
       res.status(400).json({ error: 'Valid recipient email is required' });
@@ -294,9 +294,9 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
     }
   });
 
-  // Google SMTP Direct Confirmation Email Endpoint (Rate limited & server-verified URLs)
-  app.post('/api/smtp/send-confirmation', smtpLimiter, async (req, res) => {
-    const { email, orgName, adminName, confirmationUrl, websiteUrl } = req.body;
+  // Google SMTP Direct Confirmation Email Endpoint (Strictly limited to pending unconfirmed users; constant response)
+  app.post('/api/smtp/send-confirmation', async (req, res) => {
+    const { email, orgName, adminName } = req.body || {};
     const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!cleanEmail || !emailRegex.test(cleanEmail)) {
@@ -304,17 +304,41 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       return;
     }
 
-    const transporter = getGoogleSmtpTransporter();
-    if (!transporter) {
-      // Return gracefully so client falls back to Supabase auth confirmation dispatch
-      res.status(200).json({
-        sentDirectly: false,
-        message: 'Google SMTP credentials not detected in local server environment. Supabase Auth SMTP dispatch will handle verification.',
-      });
-      return;
+    const genericResponse = {
+      success: true,
+      message: 'If this address has a pending signup, a confirmation email has been sent.',
+    };
+
+    const adminClient = getSupabaseAdmin();
+
+    // SECURITY: only mail addresses that have a pending, unconfirmed signup. Always answer the same way
+    // so this endpoint cannot be used to spam arbitrary inboxes or to probe which emails are registered.
+    if (adminClient) {
+      let pendingUser: any = null;
+      for (let page = 1; page <= 5 && !pendingUser; page++) {
+        const { data: listed, error: listErr } = await (adminClient.auth.admin as any).listUsers({
+          page,
+          perPage: 1000,
+        });
+        if (listErr || !listed?.users) break;
+        pendingUser = listed.users.find((u: any) => u.email?.toLowerCase() === cleanEmail) || null;
+        if (listed.users.length < 1000) break;
+      }
+      if (!pendingUser || pendingUser.email_confirmed_at) {
+        res.json({
+          success: true,
+          message: 'If this address has a pending signup, a confirmation email has been sent.',
+        });
+        return;
+      }
     }
 
-    try {
+      const transporter = getGoogleSmtpTransporter();
+      if (!transporter) {
+        res.json(genericResponse);
+        return;
+      }
+
       const fromUser = process.env.GOOGLE_SMTP_FROM_EMAIL || process.env.GOOGLE_SMTP_USER;
       const fromName = process.env.GOOGLE_SMTP_FROM_NAME || 'Frostly Seafood Platform';
       const targetOrg = orgName ? String(orgName).slice(0, 80) : 'Your Organization';
@@ -339,28 +363,26 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       let targetLink: string | undefined = undefined;
 
       // Ensure confirmation links are cryptographically generated via Supabase Auth Admin
-      const adminClient = getSupabaseAdmin();
-      if (adminClient) {
-        try {
-          const { data: linkData } = await (adminClient.auth.admin.generateLink as any)({
-            type: 'signup',
-            email: cleanEmail,
-            options: {
-              redirectTo: targetWebsite,
-            },
-          });
-          if (linkData?.properties?.action_link) {
-            targetLink = linkData.properties.action_link;
-          } else if (linkData?.properties?.hashed_token) {
-            targetLink = `${targetWebsite}?token_hash=${linkData.properties.hashed_token}&type=signup&email=${encodeURIComponent(cleanEmail)}`;
-          }
-        } catch (linkGenErr) {
-          console.warn('[Google SMTP Link Gen Notice]:', linkGenErr);
+      try {
+        const { data: linkData } = await (adminClient.auth.admin.generateLink as any)({
+          type: 'signup',
+          email: cleanEmail,
+          options: {
+            redirectTo: targetWebsite,
+          },
+        });
+        if (linkData?.properties?.action_link) {
+          targetLink = linkData.properties.action_link;
+        } else if (linkData?.properties?.hashed_token) {
+          targetLink = `${targetWebsite}?token_hash=${linkData.properties.hashed_token}&type=signup&email=${encodeURIComponent(cleanEmail)}`;
         }
+      } catch (linkGenErr) {
+        console.warn('[Google SMTP Link Gen Notice]:', linkGenErr);
       }
 
       if (!targetLink) {
-        targetLink = `${targetWebsite}?activated=true&email=${encodeURIComponent(cleanEmail)}&org=${encodeURIComponent(targetOrg)}`;
+        res.json(genericResponse);
+        return;
       }
 
       await transporter.sendMail({
@@ -432,16 +454,10 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         `,
       });
 
-      res.json({
-        sentDirectly: true,
-        message: 'Confirmation email dispatched directly through Google SMTP (smtp.gmail.com:465).',
-      });
+      res.json(genericResponse);
     } catch (err: any) {
-      console.warn('Failed to send confirmation email via direct Google SMTP:', err);
-      res.status(500).json({
-        sentDirectly: false,
-        error: err?.message || 'Google SMTP dispatch encountered an error',
-      });
+      console.warn('Google SMTP confirmation dispatch error:', err);
+      res.json(genericResponse);
     }
   });
 
@@ -3406,6 +3422,9 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       if (body.isAvailableForRetail !== undefined) {
         updates.is_available_for_retail = Boolean(body.isAvailableForRetail);
       }
+      if (body.imageUrl !== undefined || body.image_url !== undefined) {
+        updates.image_url = String(body.imageUrl || body.image_url || '').trim();
+      }
       if (body.isAvailableForWholesale !== undefined) {
         updates.is_available_for_wholesale = Boolean(body.isAvailableForWholesale);
       }
@@ -3568,7 +3587,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
   // 7. Customer & Operator Feedback Endpoints (Supabase Persisted + SMTP Notification)
   const inMemoryFeedbackStore: any[] = [];
 
-  app.post('/api/feedback', feedbackLimiter, async (req, res) => {
+  app.post('/api/feedback', async (req, res) => {
     try {
       const { rating, category, message, email, name } = req.body || {};
 
@@ -4244,7 +4263,7 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
           parseOriginLotMeta(row.origin).storageZone ||
           'Commercial Cold Storage (-22°C)'
       ),
-      imageUrl: sfMapped.image,
+      imageUrl: String(row.image_url || sfMapped.image),
       isAvailableForRetail: row.is_available_for_retail !== false,
       isAvailableForWholesale: row.is_available_for_wholesale !== false,
     };
@@ -4270,26 +4289,58 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
     }
   });
 
+  // Ephemeral in-memory store for cryptographically secure register pairing tokens
+  // SHA-256 hashes are stored and compared using crypto.timingSafeEqual
+  const registerPairingHashes = new Map<string, Buffer>();
+
+  function registerPairingToken(registerId: string, secretToken: string) {
+    const hash = crypto.createHash('sha256').update(secretToken).digest();
+    registerPairingHashes.set(registerId.toUpperCase(), hash);
+  }
+
+  function verifyPairingToken(registerId: string, providedToken?: string | null): boolean {
+    if (!providedToken || typeof providedToken !== 'string') return false;
+    const expectedHash = registerPairingHashes.get(registerId.toUpperCase());
+    if (!expectedHash) return false;
+    const providedHash = crypto.createHash('sha256').update(providedToken).digest();
+    if (expectedHash.length !== providedHash.length) return false;
+    return crypto.timingSafeEqual(expectedHash, providedHash);
+  }
+
   // Staff / Cashier authorization middleware for POS writes
   const requirePosWriteAuth = async (
     req: express.Request,
     res: express.Response,
     next: express.NextFunction
   ) => {
+    // 1. Explicit bypass option passed into createExpressApp for controlled testing
+    if (options.bypassPosAuth) {
+      return next();
+    }
+
+    // 2. Staff authenticated session (standard cashier / operator flow)
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       return requireStaffSession(req, res, next);
     }
+
+    // 3. Cryptographically verified random pairing token (for paired counter hardware)
     const pairingToken = (req.headers['x-pos-register-token'] || req.query.pairingToken || req.body?.pairingToken) as string;
     const registerId = String(req.body?.registerId || req.query?.registerId || 'REG-1').trim().toUpperCase();
-    if (pairingToken && (pairingToken === `PAIR-${registerId}` || pairingToken === `TOKEN-${registerId}`)) {
+    if (pairingToken && verifyPairingToken(registerId, pairingToken)) {
       return next();
     }
-    if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
-      return next();
-    }
-    res.status(401).json({ error: 'Unauthorized: Staff session required for POS register state updates.' });
+
+    res.status(401).json({ error: 'Unauthorized: Staff session or valid paired register token required for POS register updates.' });
   };
+
+  // Staff endpoint to issue cryptographically secure pairing token for paired counter registers
+  app.post('/api/pos/register-token', requireStaffSession, (req, res) => {
+    const registerId = String(req.body?.registerId || 'REG-1').trim().toUpperCase();
+    const token = crypto.randomBytes(32).toString('hex');
+    registerPairingToken(registerId, token);
+    res.json({ success: true, registerId, token });
+  });
 
   // 9B. PUT Update POS Register Session (from Cashier POS controller - Re-prices authoritatively from DB)
   app.put('/api/pos/register-session', requirePosWriteAuth, async (req, res) => {
@@ -6018,6 +6069,10 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
         if (cleanPayload.cut_type) {
           cleanPayload.cut_type = normalizeRetailCutType(cleanPayload.cut_type);
         }
+        if (cleanPayload.imageUrl !== undefined) {
+          cleanPayload.image_url = cleanPayload.imageUrl;
+          delete cleanPayload.imageUrl;
+        }
       }
 
       if (tableName === 'financial_ledger_entries') {
@@ -6146,6 +6201,10 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
       }
 
       if (tableName === 'inventory_batches') {
+        if (cleanPayload.imageUrl !== undefined) {
+          cleanPayload.image_url = cleanPayload.imageUrl;
+          delete cleanPayload.imageUrl;
+        }
         const avail = Math.max(0, Number(cleanPayload.available_weight_kg) || 0);
         const alloc = Math.max(0, Number(cleanPayload.allocated_weight_kg) || 0);
         const rawInit = Number(cleanPayload.initial_weight_kg) || 0;

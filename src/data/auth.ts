@@ -323,10 +323,9 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
     }
 
     const isCreator = 
-      (DEFAULT_CREATOR_EMAIL && user.email?.toLowerCase() === DEFAULT_CREATOR_EMAIL.toLowerCase()) || 
-      user.user_metadata?.role === 'platform_creator' || 
+      Boolean(DEFAULT_CREATOR_EMAIL && user.email?.toLowerCase() === DEFAULT_CREATOR_EMAIL.toLowerCase()) || 
       user.app_metadata?.role === 'platform_creator';
-    const fallbackRole = isCreator ? 'admin' : (user.user_metadata?.role || 'admin');
+    const fallbackRole = isCreator ? 'admin' : 'viewer';
 
     // Check if this user belongs to Amansocean
     // Only the verified email domain can mark a user as Amansocean staff. user_metadata is user-editable.
