@@ -1,6 +1,0 @@
-{
-  "summary":  "Implementation plan to fix Amansocean login credentials routing to demo/fallback workspaces, establish direct resolution to the Amansocean Seafoods and Coldstore tenant (ID: 35a94c6e-e230-4b7c-8404-a4f0ae06b798), and preserve multi-tenant routing for registered tenant accounts in both live database and preview/offline modes.",
-  "updatedAt":  "2026-10-24T20:50:56.259472601Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

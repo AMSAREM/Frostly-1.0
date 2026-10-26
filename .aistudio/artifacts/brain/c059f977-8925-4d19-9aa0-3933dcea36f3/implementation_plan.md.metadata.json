@@ -1,6 +1,0 @@
-{
-  "summary":  "Comprehensive implementation plan to ensure product and batch images are displayed everywhere across POS, wholesale orders, batch inspection, traceability passports, and storefront, while applying critical security audit fixes (helmet, rate limiting, webhook signature verification, unauthenticated route hardening, dev-only test credentials).",
-  "updatedAt":  "2026-10-25T20:18:49.401401363Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

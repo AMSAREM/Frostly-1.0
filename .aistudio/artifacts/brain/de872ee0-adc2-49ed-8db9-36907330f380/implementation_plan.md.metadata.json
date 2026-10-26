@@ -1,6 +1,0 @@
-{
-  "summary":  "Implementation plan to ensure all uploaded product and batch pictures appear seamlessly across the entire platform (Retail POS grid, cart, orders, invoices, traceability passports, and inventory ledger) with an interactive high-resolution image preview lightbox and robust fallback chains.",
-  "updatedAt":  "2026-10-24T23:17:01.071177853Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}
