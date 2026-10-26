@@ -331,7 +331,7 @@ describe('POS Customer View & Dual-Channel Counter Kiosk Integration', () => {
   let b2bOrderNumber = '';
 
   beforeAll(async () => {
-    const app = await createExpressApp({ withVite: false, adminClient: mockDb.adminClient, bypassPosAuth: true });
+    const app = await createExpressApp({ withVite: false, adminClient: mockDb.adminClient });
     await new Promise<void>((resolve) => {
       server = app.listen(0, '127.0.0.1', () => {
         const addr = server.address() as any;
@@ -408,7 +408,7 @@ describe('POS Customer View & Dual-Channel Counter Kiosk Integration', () => {
     // Cashier locks basket edits during tender -> customer kiosk edits must return 403
     const lockRes = await fetch(`${baseUrl}/api/pos/register-session`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer cashier-token' },
       body: JSON.stringify({
         registerId: 'REG-1',
         pricingMode: 'wholesale',
@@ -435,7 +435,7 @@ describe('POS Customer View & Dual-Channel Counter Kiosk Integration', () => {
     // Unlock basket edits again
     await fetch(`${baseUrl}/api/pos/register-session`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer cashier-token' },
       body: JSON.stringify({
         registerId: 'REG-1',
         pricingMode: 'wholesale',

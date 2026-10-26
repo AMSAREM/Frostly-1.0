@@ -65,7 +65,7 @@ function getGoogleSmtpTransporter() {
 }
 
 export async function createExpressApp(
-  options: { withVite?: boolean; adminClient?: any; bypassPosAuth?: boolean } = {}
+  options: { withVite?: boolean; adminClient?: any } = {}
 ) {
   const app = express();
   const PORT = 3000;
@@ -295,43 +295,49 @@ export async function createExpressApp(
   });
 
   // Google SMTP Direct Confirmation Email Endpoint (Strictly limited to pending unconfirmed users; constant response)
-  app.post('/api/smtp/send-confirmation', async (req, res) => {
-    const { email, orgName, adminName } = req.body || {};
-    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!cleanEmail || !emailRegex.test(cleanEmail)) {
-      res.status(400).json({ error: 'Valid recipient email is required' });
-      return;
-    }
-
+  app.post('/api/smtp/send-confirmation', smtpLimiter, async (req, res) => {
     const genericResponse = {
       success: true,
       message: 'If this address has a pending signup, a confirmation email has been sent.',
     };
 
-    const adminClient = getSupabaseAdmin();
-
-    // SECURITY: only mail addresses that have a pending, unconfirmed signup. Always answer the same way
-    // so this endpoint cannot be used to spam arbitrary inboxes or to probe which emails are registered.
-    if (adminClient) {
-      let pendingUser: any = null;
-      for (let page = 1; page <= 5 && !pendingUser; page++) {
-        const { data: listed, error: listErr } = await (adminClient.auth.admin as any).listUsers({
-          page,
-          perPage: 1000,
-        });
-        if (listErr || !listed?.users) break;
-        pendingUser = listed.users.find((u: any) => u.email?.toLowerCase() === cleanEmail) || null;
-        if (listed.users.length < 1000) break;
-      }
-      if (!pendingUser || pendingUser.email_confirmed_at) {
-        res.json({
-          success: true,
-          message: 'If this address has a pending signup, a confirmation email has been sent.',
-        });
+    try {
+      const { email, orgName, adminName } = req.body || {};
+      const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!cleanEmail || !emailRegex.test(cleanEmail)) {
+        res.status(400).json({ error: 'Valid recipient email is required' });
         return;
       }
-    }
+
+      const adminClient = getSupabaseAdmin();
+      if (!adminClient) {
+        res.json(genericResponse);
+        return;
+      }
+
+      // SECURITY: look up the auth user by email with the Supabase admin client.
+      // Send only if the user exists and email_confirmed_at is null.
+      // Otherwise return the same generic success response without sending.
+      let pendingUser: any = null;
+      try {
+        for (let page = 1; page <= 5 && !pendingUser; page++) {
+          const { data: listed, error: listErr } = await (adminClient.auth.admin as any).listUsers({
+            page,
+            perPage: 1000,
+          });
+          if (listErr || !listed?.users) break;
+          pendingUser = listed.users.find((u: any) => u.email?.toLowerCase() === cleanEmail) || null;
+          if (listed.users.length < 1000) break;
+        }
+      } catch (userLookupErr) {
+        console.warn('[Confirmation Lookup Warning]:', userLookupErr);
+      }
+
+      if (!pendingUser || pendingUser.email_confirmed_at) {
+        res.json(genericResponse);
+        return;
+      }
 
       const transporter = getGoogleSmtpTransporter();
       if (!transporter) {
@@ -3462,9 +3468,9 @@ export async function createExpressApp(
     }
   });
 
-  app.patch('/api/erp/amansocean-products/:productId', requireStaffSession, async (req, res) => {
+  const handleUpdateProduct = async (req: express.Request, res: express.Response) => {
     const adminClient = adminClientGetter()!;
-    const productId = String(req.params.productId || '').trim();
+    const productId = String(req.params.productId || req.body?.id || req.body?.productId || '').trim();
     if (!productId) {
       res.status(400).json({ error: 'Product ID is required.' });
       return;
@@ -3480,10 +3486,14 @@ export async function createExpressApp(
       if (body.name !== undefined) updates.name = String(body.name).trim();
       if (body.sku !== undefined) updates.sku = String(body.sku).trim();
       if (body.category !== undefined) updates.category = String(body.category);
-      if (body.cutType !== undefined) updates.cut_type = String(body.cutType);
+      if (body.cutType !== undefined || body.cut_type !== undefined) {
+        updates.cut_type = String(body.cutType || body.cut_type);
+      }
       if (body.grade !== undefined) updates.grade = String(body.grade);
       if (body.unit !== undefined) updates.unit = String(body.unit);
-      if (body.retailPackSize !== undefined) updates.retail_pack_size = String(body.retailPackSize);
+      if (body.retailPackSize !== undefined || body.retail_pack_size !== undefined) {
+        updates.retail_pack_size = String(body.retailPackSize || body.retail_pack_size);
+      }
       if (body.origin !== undefined || body.linkedBatchId !== undefined || body.storageZone !== undefined) {
         const { data: existingProd } = await adminClient
           .from('retail_wholesale_products')
@@ -3499,29 +3509,29 @@ export async function createExpressApp(
           body.storageZone !== undefined ? body.storageZone : prevMeta.storageZone;
         updates.origin = encodeOriginLotMeta(nextOrigin, nextLot, nextZone);
       }
-      if (body.retailPricePerUnit !== undefined) {
-        updates.retail_price_per_unit = Math.max(0, Number(body.retailPricePerUnit));
+      if (body.retailPricePerUnit !== undefined || body.retail_price_per_unit !== undefined) {
+        updates.retail_price_per_unit = Math.max(0, Number(body.retailPricePerUnit ?? body.retail_price_per_unit));
       }
-      if (body.wholesalePricePerUnit !== undefined) {
-        updates.wholesale_price_per_unit = Math.max(0, Number(body.wholesalePricePerUnit));
+      if (body.wholesalePricePerUnit !== undefined || body.wholesale_price_per_unit !== undefined) {
+        updates.wholesale_price_per_unit = Math.max(0, Number(body.wholesalePricePerUnit ?? body.wholesale_price_per_unit));
       }
-      if (body.costPricePerUnit !== undefined) {
-        updates.cost_price_per_unit = Math.max(0, Number(body.costPricePerUnit));
+      if (body.costPricePerUnit !== undefined || body.cost_price_per_unit !== undefined) {
+        updates.cost_price_per_unit = Math.max(0, Number(body.costPricePerUnit ?? body.cost_price_per_unit));
       }
-      if (body.wholesaleMinQty !== undefined) {
-        updates.wholesale_min_qty = Math.max(1, Number(body.wholesaleMinQty));
+      if (body.wholesaleMinQty !== undefined || body.wholesale_min_qty !== undefined) {
+        updates.wholesale_min_qty = Math.max(1, Number(body.wholesaleMinQty ?? body.wholesale_min_qty));
       }
-      if (body.stockKg !== undefined) {
-        updates.stock_kg = Math.max(0, Number(body.stockKg));
+      if (body.stockKg !== undefined || body.stock_kg !== undefined) {
+        updates.stock_kg = Math.max(0, Number(body.stockKg ?? body.stock_kg));
       }
-      if (body.isAvailableForRetail !== undefined) {
-        updates.is_available_for_retail = Boolean(body.isAvailableForRetail);
+      if (body.isAvailableForRetail !== undefined || body.is_available_for_retail !== undefined) {
+        updates.is_available_for_retail = Boolean(body.isAvailableForRetail ?? body.is_available_for_retail);
       }
       if (body.imageUrl !== undefined || body.image_url !== undefined) {
         updates.image_url = String(body.imageUrl || body.image_url || '').trim();
       }
-      if (body.isAvailableForWholesale !== undefined) {
-        updates.is_available_for_wholesale = Boolean(body.isAvailableForWholesale);
+      if (body.isAvailableForWholesale !== undefined || body.is_available_for_wholesale !== undefined) {
+        updates.is_available_for_wholesale = Boolean(body.isAvailableForWholesale ?? body.is_available_for_wholesale);
       }
       updates.is_active = true;
 
@@ -3555,10 +3565,14 @@ export async function createExpressApp(
         product: mapAdminCatalogRow(updatedRow),
       });
     } catch (err: any) {
-      console.error('[PATCH Amansocean Admin Product Error]:', err);
+      console.error('[Update Product Error]:', err);
       res.status(500).json({ error: err?.message || 'Failed to update product.' });
     }
-  });
+  };
+
+  app.put('/api/erp/products', requireStaffSession, handleUpdateProduct);
+  app.put('/api/erp/products/:productId', requireStaffSession, handleUpdateProduct);
+  app.patch('/api/erp/amansocean-products/:productId', requireStaffSession, handleUpdateProduct);
 
   app.delete('/api/erp/amansocean-products/:productId', requireStaffSession, async (req, res) => {
     const adminClient = adminClientGetter()!;
@@ -3682,7 +3696,7 @@ export async function createExpressApp(
   // 7. Customer & Operator Feedback Endpoints (Supabase Persisted + SMTP Notification)
   const inMemoryFeedbackStore: any[] = [];
 
-  app.post('/api/feedback', async (req, res) => {
+  app.post('/api/feedback', feedbackLimiter, async (req, res) => {
     try {
       const { rating, category, message, email, name } = req.body || {};
 
@@ -4384,61 +4398,9 @@ export async function createExpressApp(
     }
   });
 
-  // Ephemeral in-memory store for cryptographically secure register pairing tokens
-  // SHA-256 hashes are stored and compared using crypto.timingSafeEqual
-  const registerPairingHashes = new Map<string, Buffer>();
-
-  function registerPairingToken(registerId: string, secretToken: string) {
-    const hash = crypto.createHash('sha256').update(secretToken).digest();
-    registerPairingHashes.set(registerId.toUpperCase(), hash);
-  }
-
-  function verifyPairingToken(registerId: string, providedToken?: string | null): boolean {
-    if (!providedToken || typeof providedToken !== 'string') return false;
-    const expectedHash = registerPairingHashes.get(registerId.toUpperCase());
-    if (!expectedHash) return false;
-    const providedHash = crypto.createHash('sha256').update(providedToken).digest();
-    if (expectedHash.length !== providedHash.length) return false;
-    return crypto.timingSafeEqual(expectedHash, providedHash);
-  }
-
-  // Staff / Cashier authorization middleware for POS writes
-  const requirePosWriteAuth = async (
-    req: express.Request,
-    res: express.Response,
-    next: express.NextFunction
-  ) => {
-    // 1. Explicit bypass option passed into createExpressApp for controlled testing
-    if (options.bypassPosAuth) {
-      return next();
-    }
-
-    // 2. Staff authenticated session (standard cashier / operator flow)
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      return requireStaffSession(req, res, next);
-    }
-
-    // 3. Cryptographically verified random pairing token (for paired counter hardware)
-    const pairingToken = (req.headers['x-pos-register-token'] || req.query.pairingToken || req.body?.pairingToken) as string;
-    const registerId = String(req.body?.registerId || req.query?.registerId || 'REG-1').trim().toUpperCase();
-    if (pairingToken && verifyPairingToken(registerId, pairingToken)) {
-      return next();
-    }
-
-    res.status(401).json({ error: 'Unauthorized: Staff session or valid paired register token required for POS register updates.' });
-  };
-
-  // Staff endpoint to issue cryptographically secure pairing token for paired counter registers
-  app.post('/api/pos/register-token', requireStaffSession, (req, res) => {
-    const registerId = String(req.body?.registerId || 'REG-1').trim().toUpperCase();
-    const token = crypto.randomBytes(32).toString('hex');
-    registerPairingToken(registerId, token);
-    res.json({ success: true, registerId, token });
-  });
-
   // 9B. PUT Update POS Register Session (from Cashier POS controller - Re-prices authoritatively from DB)
-  app.put('/api/pos/register-session', requirePosWriteAuth, async (req, res) => {
+  // Requires a valid authenticated staff Bearer token.
+  app.put('/api/pos/register-session', requireStaffSession, async (req, res) => {
     const body = req.body || {};
     const registerId = String(body.registerId || 'REG-1').trim().toUpperCase();
     const adminClient = adminClientGetter();
@@ -6164,8 +6126,8 @@ export async function createExpressApp(
         if (cleanPayload.cut_type) {
           cleanPayload.cut_type = normalizeRetailCutType(cleanPayload.cut_type);
         }
-        if (cleanPayload.imageUrl !== undefined) {
-          cleanPayload.image_url = cleanPayload.imageUrl;
+        if (cleanPayload.imageUrl !== undefined || cleanPayload.image_url !== undefined) {
+          cleanPayload.image_url = String(cleanPayload.imageUrl ?? cleanPayload.image_url ?? '').trim();
           delete cleanPayload.imageUrl;
         }
       }
@@ -6296,8 +6258,8 @@ export async function createExpressApp(
       }
 
       if (tableName === 'inventory_batches') {
-        if (cleanPayload.imageUrl !== undefined) {
-          cleanPayload.image_url = cleanPayload.imageUrl;
+        if (cleanPayload.imageUrl !== undefined || cleanPayload.image_url !== undefined) {
+          cleanPayload.image_url = String(cleanPayload.imageUrl ?? cleanPayload.image_url ?? '').trim();
           delete cleanPayload.imageUrl;
         }
         const avail = Math.max(0, Number(cleanPayload.available_weight_kg) || 0);

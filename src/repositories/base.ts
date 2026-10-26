@@ -96,14 +96,30 @@ export class BaseRepository<TDomain, TDatabaseRow> {
    */
   public async getOrganizationId(): Promise<string> {
     try {
+      const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('frostly_active_org_id') : null;
+      if (stored && !isInvalidOrgId(stored)) {
+        return stored;
+      }
+    } catch {}
+
+    try {
       const profile = await getStaffProfile();
       if (profile?.organization_id && !isInvalidOrgId(profile.organization_id)) {
         return profile.organization_id;
       }
+      if (profile?.organization?.id && !isInvalidOrgId(profile.organization.id)) {
+        return profile.organization.id;
+      }
     } catch {
       // ignore
     }
-    return getCurrentOrganizationId();
+
+    const current = getCurrentOrganizationId();
+    if (current && !isInvalidOrgId(current)) {
+      return current;
+    }
+
+    return '';
   }
 
   /**
@@ -335,8 +351,8 @@ export class BaseRepository<TDomain, TDatabaseRow> {
    * - Only if server endpoint is unhandled does it execute direct Supabase client write.
    * - In offline mode, queues to syncQueue for eventual replay.
    */
-  public async save(entity: TDomain, isInsert = false): Promise<TDomain> {
-    const orgId = await this.getOrganizationId();
+  public async save(entity: TDomain, isInsert = false, targetOrgId?: string): Promise<TDomain> {
+    const orgId = targetOrgId || (await this.getOrganizationId());
     if (isInvalidOrgId(orgId)) {
       throw new OrganizationNotResolvedError('save', this.tableName);
     }
@@ -408,8 +424,8 @@ export class BaseRepository<TDomain, TDatabaseRow> {
    * - If server endpoint returns an error, throws immediately.
    * - Only if server endpoint is unhandled does it execute direct Supabase client delete.
    */
-  public async delete(id: string): Promise<void> {
-    const orgId = await this.getOrganizationId();
+  public async delete(id: string, targetOrgId?: string): Promise<void> {
+    const orgId = targetOrgId || (await this.getOrganizationId());
     if (isInvalidOrgId(orgId)) {
       throw new OrganizationNotResolvedError('delete', this.tableName);
     }

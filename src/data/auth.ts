@@ -61,6 +61,18 @@ export interface StaffProfile {
   needs_onboarding?: boolean;
 }
 
+export function isValidOrgId(id?: string | null): boolean {
+  if (!id) return false;
+  if (
+    id === 'org-frostly-hq' ||
+    id === '00000000-0000-0000-0000-000000000000' ||
+    id === '00000000-0000-0000-0000-000000000001'
+  ) {
+    return false;
+  }
+  return !/^00000000-0000-0000-0000-00000000000[01]$/.test(id);
+}
+
 /**
  * Subscription Status Helpers
  */
@@ -309,7 +321,7 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
           organization_id: storedOrgId,
           email: user.email || '',
           full_name: user.user_metadata?.full_name || 'Staff User',
-          role: user.user_metadata?.role || 'admin',
+          role: user.user_metadata?.role || (isSupabaseConfigured ? 'viewer' : 'admin'),
           department: user.user_metadata?.department || 'Executive Operations',
           is_active: true,
         };
@@ -322,14 +334,28 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       }
     }
 
+    let isPlatformAdmin = false;
+    if (isSupabaseConfigured && user) {
+      try {
+        const { data: pa } = await supabase
+          .from('platform_admins')
+          .select('user_id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (pa?.user_id) isPlatformAdmin = true;
+      } catch {}
+    }
+
     const isCreator = 
       Boolean(DEFAULT_CREATOR_EMAIL && user.email?.toLowerCase() === DEFAULT_CREATOR_EMAIL.toLowerCase()) || 
-      user.app_metadata?.role === 'platform_creator';
-    const fallbackRole = isCreator ? 'admin' : 'viewer';
+      user.app_metadata?.role === 'platform_creator' ||
+      isPlatformAdmin;
+    const fallbackRole = isCreator ? 'admin' : (isSupabaseConfigured ? 'viewer' : (user.user_metadata?.role || 'admin'));
 
     // Check if this user belongs to Amansocean
     // Only the verified email domain can mark a user as Amansocean staff. user_metadata is user-editable.
     const isAmans = isAmansoceanEmail(user.email);
+    const isProfileInactive = profileData?.is_active === false;
 
     // Check if user has an assigned, non-sentinel organization in staff_profiles or metadata
     const assignedOrgId = profileData?.organization_id && 
@@ -345,6 +371,10 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
     if (isCreator) {
       resolvedOrgId = '00000000-0000-0000-0000-000000000001';
       resolvedOrgName = 'Frostly HQ';
+    } else if (isProfileInactive) {
+      resolvedOrgId = profileData.organization_id || '';
+      resolvedOrgName = orgData?.name || 'Workspace';
+      isUnprovisioned = false;
     } else if (assignedOrgId) {
       // User has their own registered workspace
       resolvedOrgId = assignedOrgId;
@@ -354,10 +384,43 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       resolvedOrgId = AMANSOCEAN_TENANT_ID;
       resolvedOrgName = AMANSOCEAN_TENANT_NAME;
     } else {
-      // No assigned workspace: never silently drop an existing user into the Amansocean tenant.
-      isUnprovisioned = isSupabaseConfigured;
-      resolvedOrgId = isUnprovisioned ? '' : AMANSOCEAN_TENANT_ID;
-      resolvedOrgName = orgData?.name || (isUnprovisioned ? '' : AMANSOCEAN_TENANT_NAME);
+      // No assigned workspace: check if an existing organization exists in the database
+      let autoFoundOrg: any = null;
+      if (isSupabaseConfigured) {
+        try {
+          const storedOrg = typeof localStorage !== 'undefined' ? localStorage.getItem('frostly_active_org_id') : null;
+          if (storedOrg && isValidOrgId(storedOrg)) {
+            const { data: matched } = await supabase
+              .from('organizations')
+              .select('id, name, plan_tier, subscription_status, trial_ends_at, current_period_ends_at, max_staff_seats')
+              .eq('id', storedOrg)
+              .maybeSingle();
+            if (matched) autoFoundOrg = matched;
+          }
+          if (!autoFoundOrg) {
+            const { data: orgList } = await supabase
+              .from('organizations')
+              .select('id, name, plan_tier, subscription_status, trial_ends_at, current_period_ends_at, max_staff_seats')
+              .neq('id', '00000000-0000-0000-0000-000000000001')
+              .order('created_at', { ascending: false })
+              .limit(1);
+            if (orgList && orgList.length > 0) {
+              autoFoundOrg = orgList[0];
+            }
+          }
+        } catch {}
+      }
+
+      if (autoFoundOrg) {
+        resolvedOrgId = autoFoundOrg.id;
+        resolvedOrgName = autoFoundOrg.name;
+        orgData = autoFoundOrg;
+        isUnprovisioned = false;
+      } else {
+        isUnprovisioned = isSupabaseConfigured;
+        resolvedOrgId = isUnprovisioned ? '' : AMANSOCEAN_TENANT_ID;
+        resolvedOrgName = orgData?.name || (isUnprovisioned ? '' : AMANSOCEAN_TENANT_NAME);
+      }
     }
 
     const defaultOrg: TenantOrganization = {
@@ -396,26 +459,24 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       role: (profileData?.role as any) || fallbackRole,
       department: profileData?.department || user.user_metadata?.department || (isAmans ? 'Operations' : 'Executive'),
       is_active: profileData?.is_active ?? true,
-      needs_onboarding: isUnprovisioned,
+      needs_onboarding: isProfileInactive ? false : isUnprovisioned,
     };
 
-    if (cachedStaffProfile.organization_id && cachedStaffProfile.organization_id !== 'org-frostly-hq' && !isUnprovisioned) {
+    if (cachedStaffProfile.organization_id && isValidOrgId(cachedStaffProfile.organization_id) && !isUnprovisioned && !isProfileInactive) {
       try {
         localStorage.setItem('frostly_active_org_id', cachedStaffProfile.organization_id);
       } catch {}
     }
 
-    // Auto-link Amansocean staff profile in database if unlinked
+    // Auto-link staff profile in database if unlinked
     const hasRealOrg = Boolean(
-      profileData?.organization_id &&
-        profileData.organization_id !== 'org-frostly-hq' &&
-        profileData.organization_id !== '00000000-0000-0000-0000-000000000001'
+      profileData?.organization_id && isValidOrgId(profileData.organization_id)
     );
-    if (isSupabaseConfigured && user.id && isAmans && !hasRealOrg) {
+    if (isSupabaseConfigured && user.id && isValidOrgId(resolvedOrgId) && !hasRealOrg && !isProfileInactive) {
       Promise.resolve(
         supabase.from('staff_profiles').upsert({
           id: user.id,
-          organization_id: AMANSOCEAN_TENANT_ID,
+          organization_id: resolvedOrgId,
           email: user.email || '',
           full_name: userFullName,
           role: cachedStaffProfile.role,
@@ -447,12 +508,12 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
  * Get current active organization ID
  */
 export function getCurrentOrganizationId(): string {
-  if (cachedStaffProfile?.organization_id && cachedStaffProfile.organization_id !== 'org-frostly-hq') {
+  if (cachedStaffProfile?.organization_id && isValidOrgId(cachedStaffProfile.organization_id)) {
     return cachedStaffProfile.organization_id;
   }
   try {
-    const stored = localStorage.getItem('frostly_active_org_id');
-    if (stored && stored !== '00000000-0000-0000-0000-000000000001' && stored !== 'org-frostly-hq') {
+    const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('frostly_active_org_id') : null;
+    if (stored && isValidOrgId(stored)) {
       return stored;
     }
   } catch {}

@@ -364,7 +364,7 @@ describe('Unified Supabase ERP, POS Register, Platform & Activity Persistence', 
   let baseUrl1 = '';
 
   beforeAll(async () => {
-    const app = await createExpressApp({ withVite: false, adminClient: mockDb.client, bypassPosAuth: true });
+    const app = await createExpressApp({ withVite: false, adminClient: mockDb.client });
     server1 = http.createServer(app);
     await new Promise<void>((resolve) => {
       server1.listen(0, '127.0.0.1', () => {
@@ -603,7 +603,7 @@ describe('Unified Supabase ERP, POS Register, Platform & Activity Persistence', 
   it('5. manages POS register sessions cleanly in memory without polluting telemetry logs, plus Platform & Activity logs', async () => {
     const putSessionRes = await fetch(`${baseUrl1}/api/pos/register-session`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer valid-staff-token' },
       body: JSON.stringify({
         registerId: 'REG-PERSIST',
         pricingMode: 'wholesale',

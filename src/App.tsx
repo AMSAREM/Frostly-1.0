@@ -83,8 +83,10 @@ import {
   signInAsTestUser, 
   StaffProfile,
   isSubscriptionPastDue,
-  isSubscriptionLockedOut
+  isSubscriptionLockedOut,
+  getCurrentOrganizationId
 } from './data/auth';
+import { isInvalidOrgId } from './repositories/base';
 import { User } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from './utils/supabase';
 
@@ -1486,7 +1488,19 @@ export default function App() {
 
   const handleSaveProduct = async (product: RetailWholesaleProduct) => {
     try {
-      await productRepository.save(product);
+      const targetOrgId = activeOrgId || staffProfile?.organization_id || getCurrentOrganizationId();
+      if (!targetOrgId || isInvalidOrgId(targetOrgId)) {
+        setIsOnboardingModalOpen(true);
+        addNotification({
+          type: 'system',
+          title: 'Workspace Setup Required',
+          message: 'Please complete organization setup or connect a tenant workspace before saving catalog products.',
+          urgency: 'medium',
+        });
+        return;
+      }
+
+      await productRepository.save(product, false, targetOrgId);
       setProducts(prev => {
         const index = prev.findIndex(p => p.id === product.id);
         if (index >= 0) {
@@ -1610,7 +1624,7 @@ export default function App() {
       }
 
       // Persist the inventory lot via batchRepository
-      await batchRepository.save(linkedBatch, isNewBatch);
+      await batchRepository.save(linkedBatch, isNewBatch, targetOrgId);
 
       // Update state for instant UI reflection in Inventory Ledger
       setBatches(prev => {
