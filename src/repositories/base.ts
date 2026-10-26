@@ -143,21 +143,28 @@ export class BaseRepository<TDomain, TDatabaseRow> {
    * 3. Valid authenticated session (required by RLS)
    */
   public async canAccessSupabase(): Promise<boolean> {
+    if (!isSupabaseConfigured) {
+      return false;
+    }
+
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       return false;
     }
 
     try {
       const session = await getSession();
-      if (session !== null) {
-        return true;
+      // If session is a local mock or offline test token, do not attempt remote Supabase operations
+      if (
+        session?.access_token &&
+        (session.access_token.startsWith('local-token-') || session.access_token.startsWith('test-token-'))
+      ) {
+        return false;
       }
+      return true;
     } catch (err) {
       console.warn(`[BaseRepository:${this.tableName}] Session check failed:`, err);
       return false;
     }
-
-    return isSupabaseConfigured;
   }
 
   /**
@@ -551,10 +558,16 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     }
 
     // 2. Direct Supabase write
-    let res = INSERT_ONLY_TABLES.has(this.tableName)
-      ? await supabase.from(this.tableName).insert(cleanPayload)
-      : await supabase.from(this.tableName).upsert(cleanPayload, { onConflict: conflictTarget });
-    let error = res.error;
+    let res: any = null;
+    let error: any = null;
+    try {
+      res = INSERT_ONLY_TABLES.has(this.tableName)
+        ? await supabase.from(this.tableName).insert(cleanPayload)
+        : await supabase.from(this.tableName).upsert(cleanPayload, { onConflict: conflictTarget });
+      error = res?.error || null;
+    } catch (fetchErr: any) {
+      return { error: fetchErr || new Error('Network unavailable'), cleanPayload };
+    }
 
     if (error && INSERT_ONLY_TABLES.has(this.tableName) && error.code === '23505') {
       return { error: null, cleanPayload };
@@ -587,12 +600,16 @@ export class BaseRepository<TDomain, TDatabaseRow> {
 
       if (!recovered) break;
 
-      const retryRes = INSERT_ONLY_TABLES.has(this.tableName)
-        ? await supabase.from(this.tableName).insert(cleanPayload)
-        : await supabase.from(this.tableName).upsert(cleanPayload, { onConflict: conflictTarget });
-      error = retryRes.error;
-      if (error && INSERT_ONLY_TABLES.has(this.tableName) && error.code === '23505') {
-        error = null;
+      try {
+        const retryRes = INSERT_ONLY_TABLES.has(this.tableName)
+          ? await supabase.from(this.tableName).insert(cleanPayload)
+          : await supabase.from(this.tableName).upsert(cleanPayload, { onConflict: conflictTarget });
+        error = retryRes?.error || null;
+        if (error && INSERT_ONLY_TABLES.has(this.tableName) && error.code === '23505') {
+          error = null;
+        }
+      } catch (fetchErr: any) {
+        return { error: fetchErr || new Error('Network unavailable'), cleanPayload };
       }
     }
 
@@ -643,11 +660,27 @@ export class BaseRepository<TDomain, TDatabaseRow> {
             payload.organization_id = queueOrg;
           }
 
-          const upsertResult = await this.executeUpsertWithRecovery(payload, this.onConflict);
-          error = upsertResult.error;
+          // 1. Authoritative Server Persistence Route
+          const serverUpsert = await erpServerUpsert({
+            tableName: this.tableName,
+            payload,
+            onConflict: this.onConflict,
+            organizationId: orgId,
+          });
 
-          if (upsertResult.cleanPayload) {
-            syncQueue.updateItem(item.id, { payload: upsertResult.cleanPayload });
+          if (serverUpsert.handled) {
+            if (serverUpsert.error) {
+              error = { message: serverUpsert.error };
+            } else {
+              error = null;
+            }
+          } else {
+            const upsertResult = await this.executeUpsertWithRecovery(payload, this.onConflict);
+            error = upsertResult.error;
+
+            if (upsertResult.cleanPayload) {
+              syncQueue.updateItem(item.id, { payload: upsertResult.cleanPayload });
+            }
           }
         } else if (item.operation === 'DELETE') {
           let lookupId = item.recordId;
@@ -694,14 +727,44 @@ export class BaseRepository<TDomain, TDatabaseRow> {
           syncQueue.dequeue(item.id);
           processed++;
         } else {
-          console.warn(`[BaseRepository:${this.tableName}] Sync error for ${item.recordId}:`, error.message);
+          const errMsg = error.message || String(error);
+          const isNetworkError =
+            errMsg.includes('Failed to fetch') ||
+            errMsg.includes('NetworkError') ||
+            errMsg.includes('network') ||
+            errMsg.includes('abort');
+
+          if (isNetworkError) {
+            syncQueue.updateItem(item.id, {
+              lastError: 'Network offline, waiting for connection',
+            });
+            failed++;
+            break;
+          }
+
+          console.warn(`[BaseRepository:${this.tableName}] Sync error for ${item.recordId}:`, errMsg);
           failed++;
           syncQueue.updateItem(item.id, {
             retryCount: (item.retryCount || 0) + 1,
-            lastError: error.message,
+            lastError: errMsg,
           });
         }
-      } catch (err) {
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        const isNetworkErr =
+          errMsg.includes('Failed to fetch') ||
+          errMsg.includes('NetworkError') ||
+          errMsg.includes('network') ||
+          errMsg.includes('abort');
+
+        if (isNetworkErr) {
+          syncQueue.updateItem(item.id, {
+            lastError: 'Network offline, waiting for connection',
+          });
+          failed++;
+          break;
+        }
+
         console.error(`[BaseRepository:${this.tableName}] Sync exception:`, err);
         failed++;
       }

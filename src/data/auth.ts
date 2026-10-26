@@ -275,25 +275,8 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
     let profileData: any = null;
     let orgData: any = null;
 
-    // 0. Attempt verified fetch from backend profile route using active session token
-    const activeSession = await getSession();
-    if (activeSession?.access_token && !activeSession.access_token.startsWith('local-token-')) {
-      try {
-        const resp = await fetch('/api/auth/profile', {
-          headers: { Authorization: `Bearer ${activeSession.access_token}` },
-        });
-        if (resp.ok) {
-          const body = await resp.json().catch(() => ({}));
-          if (body?.profile) {
-            profileData = body.profile;
-            orgData = body.profile.organizations;
-          }
-        }
-      } catch {}
-    }
-
-    if (!profileData && isSupabaseConfigured) {
-      // 1. Attempt joined query with organizations
+    if (isSupabaseConfigured) {
+      // 1. Attempt joined query with organizations directly from Supabase
       const { data: joinedData, error: joinedError } = await supabase
         .from('staff_profiles')
         .select('*, organizations(name, plan_tier, subscription_status, trial_ends_at, current_period_ends_at, max_staff_seats)')
@@ -314,6 +297,25 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
         if (!plainError && plainData) {
           profileData = plainData;
         }
+      }
+    }
+
+    // 3. Fallback: verified fetch from backend profile route if Supabase direct query returned nothing or is unconfigured
+    if (!profileData) {
+      const activeSession = await getSession();
+      if (activeSession?.access_token && !activeSession.access_token.startsWith('local-token-')) {
+        try {
+          const resp = await fetch('/api/auth/profile', {
+            headers: { Authorization: `Bearer ${activeSession.access_token}` },
+          });
+          if (resp.ok) {
+            const body = await resp.json().catch(() => ({}));
+            if (body?.profile) {
+              profileData = body.profile;
+              orgData = body.profile.organizations;
+            }
+          }
+        } catch {}
       }
     }
 
@@ -521,12 +523,59 @@ export async function signIn(
   }
 
   const isVitest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
-  if (isVitest) {
+
+  // 1. In production and development when Supabase is configured: direct client-side Supabase Auth
+  // This connects straight to the Supabase Auth API and eliminates 404 errors on static hosts (e.g. GitHub Pages)
+  if (isSupabaseConfigured && !isVitest) {
+    try {
+      const { data: sbData, error: sbError } = await supabase.auth.signInWithPassword({
+        email: emailCheck.normalizedEmail,
+        password,
+      });
+
+      if (sbError || !sbData.session) {
+        recordFailedAttempt(emailCheck.normalizedEmail);
+        return { session: null, error: sbError?.message || 'Invalid login credentials' };
+      }
+
+      clearFailedAttempts(emailCheck.normalizedEmail);
+      cachedSession = sbData.session;
+      setLocalCachedSession(sbData.session);
+      cachedStaffProfile = null;
+      try {
+        localStorage.removeItem('frostly_active_org_id');
+      } catch {}
+
+      await getStaffProfile(true);
+
+      // Record login activity in real-time
+      if (sbData.session?.user && sbData.session.user.email) {
+        import('../services/activityTrackingService')
+          .then(({ recordUserLogin }) => {
+            recordUserLogin(
+              { id: sbData.session.user.id, email: sbData.session.user.email || '' },
+              cachedStaffProfile,
+              cachedStaffProfile?.organization
+            ).catch(() => {});
+          })
+          .catch(() => {});
+      }
+
+      notifyAuthSubscribers(sbData.session);
+      return { session: sbData.session, error: null };
+    } catch (sbErr: any) {
+      recordFailedAttempt(emailCheck.normalizedEmail);
+      return { session: null, error: sbErr?.message || 'Authentication service error' };
+    }
+  }
+
+  // 2. Vitest test runner mock sessions or preview/offline mode when Supabase is not configured
+  if (isVitest || !isSupabaseConfigured) {
     const isAmans = isAmansoceanEmail(emailCheck.normalizedEmail);
     let storedOrg: TenantOrganization | null = null;
     let storedProfile: Partial<StaffProfile> | null = null;
     try {
-      const rawAccounts = localStorage.getItem('frostly_offline_users');
+      const rawAccounts = typeof localStorage !== 'undefined' ? localStorage.getItem('frostly_offline_users') : null;
       if (rawAccounts) {
         const accounts = JSON.parse(rawAccounts);
         const match = accounts[emailCheck.normalizedEmail.toLowerCase()];
@@ -604,39 +653,26 @@ export async function signIn(
     }
   }
 
+  // 3. Fallback: Full-stack Node.js backend authentication endpoint (when running Express server)
   try {
-    // 1. Authenticate via secure backend endpoint
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: emailCheck.normalizedEmail, password }),
     });
 
+    if (res.status === 404) {
+      recordFailedAttempt(emailCheck.normalizedEmail);
+      return {
+        session: null,
+        error:
+          'Authentication backend not found (HTTP 404). If deploying statically through GitHub, please add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your GitHub repository secrets and build environment, or host on a Node-capable server with "npm start".',
+      };
+    }
+
     const body = await res.json().catch(() => ({}));
 
     if (!res.ok || body.error || !body.session) {
-      // If direct Supabase client is configured, also try direct signInWithPassword as a secondary path
-      if (isSupabaseConfigured) {
-        const { data: sbData, error: sbError } = await supabase.auth.signInWithPassword({
-          email: emailCheck.normalizedEmail,
-          password,
-        });
-        if (sbError || !sbData.session) {
-          recordFailedAttempt(emailCheck.normalizedEmail);
-          return { session: null, error: sbError?.message || body.error || 'Invalid login credentials' };
-        }
-        clearFailedAttempts(emailCheck.normalizedEmail);
-        cachedSession = sbData.session;
-        setLocalCachedSession(sbData.session);
-        cachedStaffProfile = null;
-        try {
-          localStorage.removeItem('frostly_active_org_id');
-        } catch {}
-        await getStaffProfile(true);
-        notifyAuthSubscribers(sbData.session);
-        return { session: sbData.session, error: null };
-      }
-
       recordFailedAttempt(emailCheck.normalizedEmail);
       return { session: null, error: body.error || 'Invalid login credentials' };
     }
@@ -678,13 +714,15 @@ export async function signIn(
 
     // Record login activity in real-time
     if (body.session?.user && body.session.user.email) {
-      import('../services/activityTrackingService').then(({ recordUserLogin }) => {
-        recordUserLogin(
-          { id: body.session.user.id, email: body.session.user.email || '' },
-          cachedStaffProfile,
-          cachedStaffProfile?.organization
-        ).catch(() => {});
-      }).catch(() => {});
+      import('../services/activityTrackingService')
+        .then(({ recordUserLogin }) => {
+          recordUserLogin(
+            { id: body.session.user.id, email: body.session.user.email || '' },
+            cachedStaffProfile,
+            cachedStaffProfile?.organization
+          ).catch(() => {});
+        })
+        .catch(() => {});
     }
 
     notifyAuthSubscribers(body.session);
@@ -1178,26 +1216,29 @@ export async function signUpAndCreateOrganization(
       });
 
       if (!regResp.ok) {
+        if (regResp.status !== 404) {
+          const regData = await regResp.json().catch(() => ({}));
+          return {
+            session: null,
+            profile: null,
+            error: regData.error || 'Failed to register organization. Please check details and try again.',
+          };
+        }
+        // If 404 (static deployment), proceed to client-side signUp fallback below
+      } else {
         const regData = await regResp.json().catch(() => ({}));
-        return {
-          session: null,
-          profile: null,
-          error: regData.error || 'Failed to register organization. Please check details and try again.',
-        };
-      }
+        if (regData.success) {
+          // Immediately sign in with the configured credentials to acquire user session
+          const signInRes = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password,
+          });
 
-      const regData = await regResp.json();
-      if (regData.success) {
-        // Immediately sign in with the configured credentials to acquire user session
-        const signInRes = await supabase.auth.signInWithPassword({
-          email: cleanEmail,
-          password,
-        });
-
-        if (signInRes.data.session) {
-          cachedSession = signInRes.data.session;
-          const profile = await getStaffProfile(true);
-          return { session: signInRes.data.session, profile, error: null };
+          if (signInRes.data.session) {
+            cachedSession = signInRes.data.session;
+            const profile = await getStaffProfile(true);
+            return { session: signInRes.data.session, profile, error: null };
+          }
         }
       }
     } catch (backendErr: any) {
