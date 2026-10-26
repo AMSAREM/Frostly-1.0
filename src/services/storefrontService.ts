@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../utils/supabase';
+import { getSession } from '../data/auth';
 import {
   AmansoceanProduct,
   FEATURED_PRODUCTS,
@@ -166,15 +167,13 @@ async function buildOptionalAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  if (isSupabaseConfigured) {
-    try {
-      const { data } = await supabase.auth.getSession();
-      const token = data?.session?.access_token;
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
-    } catch {}
-  }
+  try {
+    const session = await getSession();
+    const token = session?.access_token;
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  } catch {}
   return headers;
 }
 

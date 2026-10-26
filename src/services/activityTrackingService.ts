@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../utils/supabase';
-import { StaffProfile, TenantOrganization } from '../data/auth';
+import { StaffProfile, TenantOrganization, getSession } from '../data/auth';
 
 export interface UserLoginRecord {
   id: string;
@@ -524,8 +524,8 @@ export async function recordUserLogin(
   let persistedViaServer = false;
   if (typeof window !== 'undefined' && typeof fetch === 'function') {
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
+      const session = await getSession();
+      const token = session?.access_token;
       if (token && !token.startsWith('local-token-')) {
         const res = await fetch('/api/activity/logins', {
           method: 'POST',
@@ -613,8 +613,8 @@ export async function recordUserLogout(userId: string, email: string): Promise<v
     let persistedViaServer = false;
     if (typeof window !== 'undefined' && typeof fetch === 'function') {
       try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData?.session?.access_token;
+        const session = await getSession();
+        const token = session?.access_token;
         if (token && !token.startsWith('local-token-')) {
           const res = await fetch('/api/activity/logout', {
             method: 'POST',
@@ -703,11 +703,11 @@ export async function trackFeatureAction(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
       let resolvedUserId: string | null = uuidRegex.test(userId) ? userId : null;
       if (!resolvedUserId) {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const sessionUid = sessionData?.session?.user?.id;
+        const session = await getSession();
+        const sessionUid = session?.user?.id;
         if (sessionUid && uuidRegex.test(sessionUid)) {
           resolvedUserId = sessionUid;
-          userEmail = sessionData.session?.user?.email || userEmail;
+          userEmail = session?.user?.email || userEmail;
         }
       }
 
@@ -736,8 +736,8 @@ export async function fetchUserLoginHistory(): Promise<UserLoginRecord[]> {
   // 0. Try authenticated server endpoint (works across tenant & platform roles)
   if (typeof window !== 'undefined' && typeof fetch === 'function') {
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
+      const session = await getSession();
+      const token = session?.access_token;
       if (token && !token.startsWith('local-token-')) {
         const res = await fetch('/api/activity/logins', {
           headers: { Authorization: `Bearer ${token}` },

@@ -158,6 +158,8 @@ export function isAmansoceanEmail(email?: string | null): boolean {
   if (!email) return false;
   const lower = email.trim().toLowerCase();
   return (
+    lower === 'akokosolutions24@gmail.com' ||
+    lower === 'edmundbgh34@gmail.com' ||
     lower === 'amoakoemmanuel2020@gmail.com' ||
     lower === 'amoakoimml@gmail.com' ||
     lower === 'amoakoemmanuel2026@gmail.com' ||
@@ -1483,14 +1485,14 @@ export interface AddWorkerParams {
   sendEmail?: boolean;
 }
 
-async function getAuthHeaders(includeJson: boolean = false): Promise<Record<string, string>> {
+export async function getAuthHeaders(includeJson: boolean = false): Promise<Record<string, string>> {
   const headers: Record<string, string> = {};
   if (includeJson) {
     headers['Content-Type'] = 'application/json';
   }
   try {
-    const { data } = await supabase.auth.getSession();
-    const token = data?.session?.access_token;
+    const session = await getSession();
+    const token = session?.access_token;
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }

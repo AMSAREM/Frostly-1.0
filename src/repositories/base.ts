@@ -143,21 +143,21 @@ export class BaseRepository<TDomain, TDatabaseRow> {
    * 3. Valid authenticated session (required by RLS)
    */
   public async canAccessSupabase(): Promise<boolean> {
-    if (!isSupabaseConfigured) {
-      return false;
-    }
-
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       return false;
     }
 
     try {
       const session = await getSession();
-      return session !== null;
+      if (session !== null) {
+        return true;
+      }
     } catch (err) {
       console.warn(`[BaseRepository:${this.tableName}] Session check failed:`, err);
       return false;
     }
+
+    return isSupabaseConfigured;
   }
 
   /**

@@ -84,7 +84,8 @@ import {
   StaffProfile,
   isSubscriptionPastDue,
   isSubscriptionLockedOut,
-  getCurrentOrganizationId
+  getCurrentOrganizationId,
+  getSession
 } from './data/auth';
 import { isInvalidOrgId } from './repositories/base';
 import { User } from '@supabase/supabase-js';
@@ -496,19 +497,17 @@ export default function App() {
 
     (async () => {
       try {
-        if (isSupabaseConfigured) {
-          const { data: sessData } = await supabase.auth.getSession();
-          const token = sessData?.session?.access_token;
-          if (token) {
-            const apiRes = await fetch('/api/erp/amansocean-products', {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (apiRes.ok) {
-              const payload = await apiRes.json();
-              if (isMounted && Array.isArray(payload.products) && payload.products.length > 0) {
-                setProducts(payload.products);
-                return;
-              }
+        const session = await getSession();
+        const token = session?.access_token;
+        if (token) {
+          const apiRes = await fetch('/api/erp/amansocean-products', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (apiRes.ok) {
+            const payload = await apiRes.json();
+            if (isMounted && Array.isArray(payload.products) && payload.products.length > 0) {
+              setProducts(payload.products);
+              return;
             }
           }
         }
@@ -1411,11 +1410,9 @@ export default function App() {
   const handleSyncOfficialPriceList = async () => {
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (isSupabaseConfigured) {
-        const { data: sessData } = await supabase.auth.getSession();
-        const token = sessData?.session?.access_token;
-        if (token) headers.Authorization = `Bearer ${token}`;
-      }
+      const session = await getSession();
+      const token = session?.access_token;
+      if (token) headers.Authorization = `Bearer ${token}`;
       const res = await fetch('/api/erp/amansocean-products/sync', {
         method: 'POST',
         headers,

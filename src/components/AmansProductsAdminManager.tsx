@@ -23,6 +23,7 @@ import {
 } from '../data/amansoceanProducts';
 import { RetailWholesaleProduct, SeafoodCutType, SpeciesCategory, QualityGrade } from '../types';
 import { resolveProductImage } from '../utils/productImageResolver';
+import { getAuthHeaders } from '../data/auth';
 
 export interface AdminCatalogProduct extends RetailWholesaleProduct {
   storefrontCategory?: string;
@@ -33,19 +34,7 @@ interface AmansProductsAdminManagerProps {
 }
 
 async function getStaffAuthHeaders(): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (isSupabaseConfigured) {
-    try {
-      const { data } = await supabase.auth.getSession();
-      const token = data?.session?.access_token;
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
-    } catch {}
-  }
-  return headers;
+  return await getAuthHeaders(true);
 }
 
 export const AmansProductsAdminManager: React.FC<AmansProductsAdminManagerProps> = ({

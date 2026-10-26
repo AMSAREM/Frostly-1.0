@@ -1,4 +1,5 @@
 import { supabase } from '../utils/supabase';
+import { getSession } from '../data/auth';
 
 export interface PlatformOrganization {
   id: string;
@@ -177,8 +178,8 @@ async function platformServerFetch(
     return { ok: false, status: 0, body: null };
   }
   try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData?.session?.access_token;
+    const session = await getSession();
+    const token = session?.access_token;
     if (!token || token.startsWith('local-token-')) {
       return { ok: false, status: 0, body: null };
     }
@@ -603,8 +604,8 @@ export async function purgeTenantWorkspaceData(
 }> {
   // 1. Try server endpoint first with authenticated bearer token
   try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData?.session?.access_token;
+    const session = await getSession();
+    const token = session?.access_token;
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) {

@@ -4,6 +4,7 @@ import {
   AMANSOCEAN_OFFICIAL_CATALOG,
 } from '../data/amansoceanProducts';
 import { saveRecentTrackedOrder, StorefrontFulfillmentStatus } from './storefrontService';
+import { getAuthHeaders } from '../data/auth';
 
 export interface PosRegisterLine {
   productId: string;
@@ -205,19 +206,7 @@ export function getPosTabSourceId(): string {
 }
 
 async function buildAuthHeaders(): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (isSupabaseConfigured) {
-    try {
-      const { data } = await supabase.auth.getSession();
-      const token = data?.session?.access_token;
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
-    } catch {}
-  }
-  return headers;
+  return await getAuthHeaders(true);
 }
 
 export function broadcastPosSessionLocally(session: PosRegisterSessionState): void {

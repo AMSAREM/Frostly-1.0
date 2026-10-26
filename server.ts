@@ -497,6 +497,8 @@ export async function createExpressApp(
 
       const user = data.user;
       const isAmans =
+        cleanEmail === 'akokosolutions24@gmail.com' ||
+        cleanEmail === 'edmundbgh34@gmail.com' ||
         cleanEmail === 'amoakoemmanuel2020@gmail.com' ||
         cleanEmail === 'amoakoimml@gmail.com' ||
         cleanEmail === 'amoakoemmanuel2026@gmail.com' ||
@@ -565,6 +567,8 @@ export async function createExpressApp(
       const user = userData.user;
       const cleanEmail = (user.email || '').toLowerCase();
       const isAmans =
+        cleanEmail === 'akokosolutions24@gmail.com' ||
+        cleanEmail === 'edmundbgh34@gmail.com' ||
         cleanEmail === 'amoakoemmanuel2020@gmail.com' ||
         cleanEmail === 'amoakoimml@gmail.com' ||
         cleanEmail === 'amoakoemmanuel2026@gmail.com' ||
