@@ -805,7 +805,6 @@ export async function createExpressApp(
             role: 'admin',
             department: adminDepartment || 'Executive Operations',
             is_active: true,
-            needs_onboarding: false,
             updated_at: new Date().toISOString(),
           });
       } else {
@@ -824,7 +823,6 @@ export async function createExpressApp(
             full_name: adminFullName || undefined,
             department: adminDepartment || undefined,
             is_active: true,
-            needs_onboarding: false,
             updated_at: new Date().toISOString(),
           })
           .eq('id', targetUserId);

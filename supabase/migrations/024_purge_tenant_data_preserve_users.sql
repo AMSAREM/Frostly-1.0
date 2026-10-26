@@ -35,20 +35,12 @@ BEGIN
     -- 1. Identify Calling User
     v_current_user_id := auth.uid();
 
-    -- 2. Resolve Organization (by exact UUID or case-insensitive name match)
+    -- 2. Resolve Organization (by exact UUID or exact name match)
     IF p_org_identifier ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
         SELECT * INTO v_org FROM public.organizations WHERE id = p_org_identifier::UUID;
     ELSE
-        -- Match name with fuzzy/case-insensitive patterns
         SELECT * INTO v_org FROM public.organizations 
         WHERE LOWER(TRIM(name)) = LOWER(TRIM(p_org_identifier))
-           OR LOWER(TRIM(name)) LIKE '%' || LOWER(TRIM(p_org_identifier)) || '%'
-           OR LOWER(TRIM(name)) = REPLACE(LOWER(TRIM(p_org_identifier)), '''', '')
-        ORDER BY 
-            CASE 
-                WHEN LOWER(TRIM(name)) = LOWER(TRIM(p_org_identifier)) THEN 1
-                ELSE 2 
-            END
         LIMIT 1;
     END IF;
 
@@ -56,27 +48,33 @@ BEGIN
         RAISE EXCEPTION 'Organization "%" could not be found. Please verify the organization name or ID.', p_org_identifier;
     END IF;
 
+    -- Safety Check: Protect root/HQ organizations
+    IF (
+        v_org.id IN (
+            '00000000-0000-0000-0000-000000000000'::uuid,
+            '00000000-0000-0000-0000-000000000001'::uuid
+        )
+        OR LOWER(TRIM(v_org.name)) ILIKE '%frostly hq%'
+    ) THEN
+        RAISE EXCEPTION 'Cannot purge root/HQ organization data';
+    END IF;
+
     -- 3. Authorization Check:
-    -- If called from Supabase SQL Editor directly (v_current_user_id IS NULL), allow execution as superuser.
-    -- If called via PostgREST / RPC by authenticated user, verify Platform Admin or Tenant Admin.
+    -- Only platform administrators can purge organization data.
     IF v_current_user_id IS NOT NULL THEN
         v_is_platform_owner := public.is_platform_admin();
 
-        SELECT EXISTS (
-            SELECT 1 FROM public.staff_profiles 
-            WHERE id = v_current_user_id 
-              AND organization_id = v_org.id 
-              AND role = 'admin' 
-              AND is_active = TRUE
-        ) INTO v_is_tenant_admin;
-
-        IF NOT (v_is_platform_owner OR v_is_tenant_admin) THEN
-            RAISE EXCEPTION 'Access denied: Only platform administrators or the tenant administrator can purge organization data.';
+        IF NOT v_is_platform_owner THEN
+            RAISE EXCEPTION 'Access denied: Only platform administrators can purge organization data.';
         END IF;
     END IF;
 
-    -- 4. Safety Check: Verify confirmation name if provided
-    IF p_confirm_name IS NOT NULL AND LOWER(TRIM(p_confirm_name)) <> LOWER(TRIM(v_org.name)) THEN
+    -- 4. Safety Check: Verify confirmation name is mandatory and matches exactly
+    IF p_confirm_name IS NULL OR TRIM(p_confirm_name) = '' THEN
+        RAISE EXCEPTION 'Confirmation name is required to purge organization data';
+    END IF;
+
+    IF LOWER(TRIM(p_confirm_name)) <> LOWER(TRIM(v_org.name)) THEN
         RAISE EXCEPTION 'Confirmation name does not match organization name "%"', v_org.name;
     END IF;
 
