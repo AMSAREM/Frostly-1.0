@@ -67,7 +67,12 @@ export class ProductRepository extends BaseRepository<RetailWholesaleProduct, Da
     }
 
     const items = await this.getAll(fallback);
-    return items.filter((item) => !LEGACY_DEMO_SET.has(item.id));
+    const valid = items.filter((item) => !LEGACY_DEMO_SET.has(item.id));
+    if (valid.length === 0 && fallback && fallback.length > 0) {
+      this.setLocalCache(fallback, orgId);
+      return fallback;
+    }
+    return valid;
   }
 }
 

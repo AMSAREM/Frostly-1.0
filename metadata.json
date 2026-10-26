@@ -1,6 +1,6 @@
 {
-  "name": "Amansocean - Frozen Seafood & Food Delivery",
-  "description": "Amansocean delivers premium flash-frozen seafood, ready meals, and frozen favorites fresh from the ocean to your doorstep with guaranteed cold-chain freshness.",
+  "name": "Frostly - Seafood Logistics & Business Platform",
+  "description": "Commercial seafood cold-chain ERP, automated catch-weight traceability, dual POS/wholesale fulfillment, and operations for Amansocean Seafoods.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

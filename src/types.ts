@@ -504,7 +504,7 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  companyName: 'Pacific Cold-Chain & Seafood Holdings Ltd.',
+  companyName: 'Amansocean Seafoods and Coldstore',
   facilityCode: 'FAC-PAC-808-CRY',
   fdaRegistrationNumber: 'FDA-REG-#1948201',
   euApprovalNumber: 'EU-ESP-9281-CE',

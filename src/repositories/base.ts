@@ -181,6 +181,12 @@ export class BaseRepository<TDomain, TDatabaseRow> {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) {
+          if (parsed.length > 0) {
+            return parsed;
+          }
+          if (fallback && fallback.length > 0) {
+            return fallback;
+          }
           return parsed;
         }
       }

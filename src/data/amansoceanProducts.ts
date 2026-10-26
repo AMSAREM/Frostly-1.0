@@ -1,3 +1,5 @@
+import type { RetailWholesaleProduct } from '../types';
+
 export const CURRENCY = 'GH₵';
 
 export const AMANSOCEAN_PRICE_LIST_PDF_URL = '/assets/aistudio/_Amansocean_pricelist_69e95296.pdf';
@@ -1004,3 +1006,25 @@ export const COOL_TREATS_PRODUCTS: AmansoceanProduct[] = AMANSOCEAN_OFFICIAL_CAT
 
 export const ALL_AMANSOCEAN_STOREFRONT_PRODUCTS: AmansoceanProduct[] =
   AMANSOCEAN_OFFICIAL_CATALOG.map(mapSeedToStorefrontProduct);
+
+export const AMANSOCEAN_OFFICIAL_DOMAIN_PRODUCTS: RetailWholesaleProduct[] =
+  AMANSOCEAN_OFFICIAL_CATALOG.map((item) => ({
+    id: item.id,
+    speciesId: item.species_id,
+    name: item.name,
+    cutType: item.cut_type,
+    category: item.db_category,
+    grade: item.grade,
+    stockKg: item.stock_kg,
+    unit: item.unit,
+    costPricePerUnit: item.cost_price_per_unit,
+    wholesalePricePerUnit: item.wholesale_price_per_unit,
+    retailPricePerUnit: item.retail_price_per_unit,
+    wholesaleMinQty: item.wholesale_min_qty,
+    retailPackSize: item.retail_pack_size,
+    sku: item.sku,
+    imageUrl: item.image_url,
+    origin: item.origin,
+    isAvailableForRetail: true,
+    isAvailableForWholesale: true,
+  }));

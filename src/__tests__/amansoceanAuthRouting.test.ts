@@ -37,12 +37,35 @@ import {
 
 describe('Amansocean Workspace Authentication & Tenant Routing', () => {
   it('correctly identifies Amansocean emails', () => {
+    expect(isAmansoceanEmail('info@amansocean.com')).toBe(true);
     expect(isAmansoceanEmail('admin@amansocean.com')).toBe(true);
     expect(isAmansoceanEmail('kwesi@amansocean.com')).toBe(true);
     expect(isAmansoceanEmail('anna@amansocean.com')).toBe(true);
     expect(isAmansoceanEmail('sales@amansocean.store')).toBe(true);
+    expect(isAmansoceanEmail('amoakoimml@gmail.com')).toBe(false); // Creator, not tenant
     expect(isAmansoceanEmail('user@thirdparty.com')).toBe(false);
     expect(isAmansoceanEmail(null)).toBe(false);
+  });
+
+  it('authenticates info@amansocean.com with live password amansocean2726@!! into Amansocean Seafoods tenant', async () => {
+    const { session, error } = await signIn('info@amansocean.com', 'amansocean2726@!!');
+    expect(error).toBeNull();
+    expect(session).not.toBeNull();
+
+    const profile = await getStaffProfile();
+    expect(profile?.organization_id).toBe(AMANSOCEAN_TENANT_ID);
+    expect(profile?.organization_name).toBe(AMANSOCEAN_TENANT_NAME);
+  });
+
+  it('authenticates amoakoimml@gmail.com as Platform Creator at Frostly HQ', async () => {
+    const { session, error } = await signIn('amoakoimml@gmail.com', 'frostly2026');
+    expect(error).toBeNull();
+    expect(session).not.toBeNull();
+
+    const profile = await getStaffProfile();
+    expect(profile?.organization_id).toBe('00000000-0000-0000-0000-000000000001');
+    expect(profile?.organization_name).toBe('Frostly HQ');
+    expect(profile?.full_name).toBe('Emmanuel Amoako');
   });
 
   it('routes Amansocean login credentials directly to Amansocean Seafoods workspace in offline/preview mode', async () => {

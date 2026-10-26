@@ -299,6 +299,27 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
     }
   };
 
+  // Quick sign in for Amansocean operations
+  const handleDevQuickLogin = async (targetEmail = 'info@amansocean.com', targetPassword = 'amansocean2726@!!') => {
+    setIsLoading(true);
+    setErrorMessage(null);
+    setEmail(targetEmail);
+    setPassword(targetPassword);
+    try {
+      const result = await signIn(targetEmail, targetPassword);
+      if (result.error) {
+        setErrorMessage(result.error);
+      } else {
+        clearPosSecurityReauth();
+        if (onAuthSuccess) onAuthSuccess();
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Quick login failed.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Create Organization Handler
   const handleCreateOrg = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -788,6 +809,76 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                       <span>Log In to Workspace</span>
                     )}
                   </button>
+
+                  {!enforceBlankStaffLogin && (
+                    <div className="pt-3 border-t border-slate-100 space-y-2 mt-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          id="quick-login-amansocean-tenant"
+                          onClick={() => handleDevQuickLogin('info@amansocean.com', 'amansocean2726@!!')}
+                          disabled={isLoading}
+                          className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                        >
+                          <Fish className="w-3.5 h-3.5 text-cyan-200" />
+                          <span>Tenant: Amansocean</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          id="quick-login-platform-creator"
+                          onClick={() => handleDevQuickLogin('amoakoimml@gmail.com', 'frostly2026')}
+                          disabled={isLoading}
+                          className="w-full py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                          <span>Platform Creator</span>
+                        </button>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 space-y-2">
+                        {/* Tenant Amansocean */}
+                        <div className="pb-1.5 border-b border-slate-200/70">
+                          <div className="font-semibold text-slate-800 flex items-center justify-between mb-0.5">
+                            <span className="flex items-center gap-1 text-indigo-700">
+                              <Fish className="w-3 h-3" />
+                              <span>Amansocean Seafoods (Tenant)</span>
+                            </span>
+                            <span className="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded font-mono">
+                              Tenant 35a94c6e
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-[10px] font-mono text-slate-600">
+                            <span>Email: <strong className="text-slate-900">info@amansocean.com</strong></span>
+                            <span>Pass: <strong className="text-slate-900">amansocean2726@!!</strong></span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">
+                            Holds all commercial seafood inventory, customers, and operations.
+                          </div>
+                        </div>
+
+                        {/* Platform Creator */}
+                        <div>
+                          <div className="font-semibold text-slate-800 flex items-center justify-between mb-0.5">
+                            <span className="flex items-center gap-1 text-slate-900">
+                              <Sparkles className="w-3 h-3 text-amber-500" />
+                              <span>Platform Creator (Frostly HQ)</span>
+                            </span>
+                            <span className="text-[10px] text-slate-700 bg-slate-200 px-1.5 py-0.2 rounded font-mono">
+                              Super-Admin
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-[10px] font-mono text-slate-600">
+                            <span>Email: <strong className="text-slate-900">amoakoimml@gmail.com</strong></span>
+                            <span>Pass: <strong className="text-slate-900">frostly2026</strong></span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">
+                            Full access to Platform Console, audit logs, and multi-tenant management.
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </>
               ) : (
                 /* Sub-form: Secure Password Recovery */

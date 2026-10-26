@@ -1,0 +1,2075 @@
+diff --git a/server.ts b/server.ts
+index 80831d5..6bb36fd 100644
+--- a/server.ts
++++ b/server.ts
+@@ -467,148 +467,6 @@ export async function createExpressApp(
+     }
+   });
+ 
+-  // SECURE USER SIGN IN ENDPOINT
+-  // Strictly authenticates against Supabase Auth via password validation.
+-  // Never permits mock or offline credential bypasses.
+-  app.post('/api/auth/login', async (req, res) => {
+-    const { email, password } = req.body || {};
+-    if (!email || typeof email !== 'string' || !password || typeof password !== 'string') {
+-      res.status(400).json({ error: 'Valid email and password are required.' });
+-      return;
+-    }
+-
+-    const cleanEmail = email.trim().toLowerCase();
+-    const adminClient = getSupabaseAdmin();
+-    if (!adminClient) {
+-      res.status(500).json({ error: 'Supabase authentication service is not configured on the server.' });
+-      return;
+-    }
+-
+-    try {
+-      const { data, error } = await adminClient.auth.signInWithPassword({
+-        email: cleanEmail,
+-        password,
+-      });
+-
+-      if (error || !data.session || !data.user) {
+-        res.status(401).json({ error: error?.message || 'Invalid login credentials.' });
+-        return;
+-      }
+-
+-      const user = data.user;
+-      const isAmans =
+-        cleanEmail === 'akokosolutions24@gmail.com' ||
+-        cleanEmail === 'edmundbgh34@gmail.com' ||
+-        cleanEmail === 'amoakoemmanuel2020@gmail.com' ||
+-        cleanEmail === 'amoakoimml@gmail.com' ||
+-        cleanEmail === 'amoakoemmanuel2026@gmail.com' ||
+-        cleanEmail.endsWith('@amansocean.com') ||
+-        cleanEmail.endsWith('@amansocean.store');
+-
+-      // Fetch or auto-provision staff profile
+-      let { data: profile } = await adminClient
+-        .from('staff_profiles')
+-        .select('*, organizations(*)')
+-        .eq('id', user.id)
+-        .maybeSingle();
+-
+-      if (!profile || (isAmans && profile.organization_id !== '35a94c6e-e230-4b7c-8404-a4f0ae06b798')) {
+-        const targetOrgId = isAmans ? '35a94c6e-e230-4b7c-8404-a4f0ae06b798' : (profile?.organization_id || null);
+-        if (targetOrgId) {
+-          await adminClient.from('staff_profiles').upsert({
+-            id: user.id,
+-            email: user.email || cleanEmail,
+-            full_name: profile?.full_name || user.user_metadata?.full_name || (cleanEmail === 'amoakoemmanuel2020@gmail.com' ? 'Emmanuel Amoako' : 'Staff Member'),
+-            role: isAmans ? 'admin' : (profile?.role || 'admin'),
+-            department: profile?.department || (isAmans ? 'Executive Operations' : 'General Operations'),
+-            organization_id: targetOrgId,
+-            is_active: true,
+-          }, { onConflict: 'id' });
+-
+-          const { data: refreshedProfile } = await adminClient
+-            .from('staff_profiles')
+-            .select('*, organizations(*)')
+-            .eq('id', user.id)
+-            .maybeSingle();
+-          profile = refreshedProfile;
+-        }
+-      }
+-
+-      res.json({
+-        session: data.session,
+-        profile,
+-        error: null,
+-      });
+-    } catch (err: any) {
+-      res.status(500).json({ error: err?.message || 'Authentication service error.' });
+-    }
+-  });
+-
+-  // VERIFIED USER PROFILE ENDPOINT
+-  app.get('/api/auth/profile', async (req, res) => {
+-    const authHeader = req.headers.authorization;
+-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+-      res.status(401).json({ error: 'Missing Authorization header.' });
+-      return;
+-    }
+-    const token = authHeader.slice(7).trim();
+-    const adminClient = getSupabaseAdmin();
+-    if (!adminClient) {
+-      res.status(500).json({ error: 'Supabase admin service unavailable.' });
+-      return;
+-    }
+-
+-    try {
+-      const { data: userData, error: userErr } = await adminClient.auth.getUser(token);
+-      if (userErr || !userData?.user) {
+-        res.status(401).json({ error: 'Invalid or expired session token.' });
+-        return;
+-      }
+-      const user = userData.user;
+-      const cleanEmail = (user.email || '').toLowerCase();
+-      const isAmans =
+-        cleanEmail === 'akokosolutions24@gmail.com' ||
+-        cleanEmail === 'edmundbgh34@gmail.com' ||
+-        cleanEmail === 'amoakoemmanuel2020@gmail.com' ||
+-        cleanEmail === 'amoakoimml@gmail.com' ||
+-        cleanEmail === 'amoakoemmanuel2026@gmail.com' ||
+-        cleanEmail.endsWith('@amansocean.com') ||
+-        cleanEmail.endsWith('@amansocean.store');
+-
+-      let { data: profile } = await adminClient
+-        .from('staff_profiles')
+-        .select('*, organizations(*)')
+-        .eq('id', user.id)
+-        .maybeSingle();
+-
+-      if (!profile && isAmans) {
+-        await adminClient.from('staff_profiles').upsert({
+-          id: user.id,
+-          email: user.email,
+-          full_name: user.user_metadata?.full_name || (cleanEmail === 'amoakoemmanuel2020@gmail.com' ? 'Emmanuel Amoako' : 'Staff Member'),
+-          role: 'admin',
+-          department: 'Executive Operations',
+-          organization_id: '35a94c6e-e230-4b7c-8404-a4f0ae06b798',
+-          is_active: true,
+-        }, { onConflict: 'id' });
+-
+-        const { data: refreshedProfile } = await adminClient
+-          .from('staff_profiles')
+-          .select('*, organizations(*)')
+-          .eq('id', user.id)
+-          .maybeSingle();
+-        profile = refreshedProfile;
+-      }
+-
+-      res.json({
+-        user,
+-        profile,
+-      });
+-    } catch (err: any) {
+-      res.status(500).json({ error: err?.message || 'Failed to fetch user profile.' });
+-    }
+-  });
+-
+   // Direct Backend Tenant & User Provisioning Endpoint (bypasses failing Supabase internal SMTP)
+   app.post('/api/auth/register-tenant', async (req, res) => {
+     const {
+diff --git a/src/App.tsx b/src/App.tsx
+index ecbcf10..03392a6 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -26,20 +26,7 @@ import { TrialCountdownBanner } from './components/TrialCountdownBanner';
+ import { LegalFooter } from './components/LegalFooter';
+ import { LegalModal } from './components/LegalModal';
+ 
+-import { 
+-  INITIAL_BATCHES, 
+-  INITIAL_ORDERS, 
+-  INITIAL_CUSTOMERS,
+-  INITIAL_SUPPLIERS,
+-  INITIAL_PRODUCTS,
+-  INITIAL_RETAIL_TRANSACTIONS,
+-  INITIAL_PURCHASE_ORDERS,
+-  INITIAL_FINANCIAL_ENTRIES,
+-  INITIAL_NOTIFICATIONS,
+-  INITIAL_ADJUSTMENT_ACCOUNTS,
+-  INITIAL_STOCK_ADJUSTMENTS,
+-  SPECIES_CATALOG
+-} from './data/mockData';
++import { INITIAL_ADJUSTMENT_ACCOUNTS, INITIAL_STOCK_ADJUSTMENTS, SPECIES_CATALOG } from './data/mockData';
+ import { AMANSOCEAN_OFFICIAL_CATALOG } from './data/amansoceanProducts';
+ 
+ import { 
+diff --git a/src/__tests__/amansoceanAuthRouting.test.ts b/src/__tests__/amansoceanAuthRouting.test.ts
+deleted file mode 100644
+index e3be5da..0000000
+--- a/src/__tests__/amansoceanAuthRouting.test.ts
++++ /dev/null
+@@ -1,103 +0,0 @@
+-import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
+-
+-// In-memory localStorage mock for node test runner
+-const mockStorage: Record<string, string> = {};
+-const localStorageMock = {
+-  getItem: (key: string) => mockStorage[key] ?? null,
+-  setItem: (key: string, value: string) => {
+-    mockStorage[key] = String(value);
+-  },
+-  removeItem: (key: string) => {
+-    delete mockStorage[key];
+-  },
+-  clear: () => {
+-    for (const key in mockStorage) {
+-      delete mockStorage[key];
+-    }
+-  },
+-};
+-
+-beforeAll(() => {
+-  vi.stubGlobal('localStorage', localStorageMock);
+-});
+-
+-beforeEach(() => {
+-  localStorageMock.clear();
+-});
+-
+-import {
+-  signIn,
+-  getStaffProfile,
+-  signUpAndCreateOrganization,
+-  isAmansoceanEmail,
+-  AMANSOCEAN_TENANT_ID,
+-  AMANSOCEAN_TENANT_NAME,
+-  DEFAULT_TEST_USER_EMAIL,
+-} from '../data/auth';
+-
+-describe('Amansocean Workspace Authentication & Tenant Routing', () => {
+-  it('correctly identifies Amansocean emails', () => {
+-    expect(isAmansoceanEmail('admin@amansocean.com')).toBe(true);
+-    expect(isAmansoceanEmail('kwesi@amansocean.com')).toBe(true);
+-    expect(isAmansoceanEmail('anna@amansocean.com')).toBe(true);
+-    expect(isAmansoceanEmail('sales@amansocean.store')).toBe(true);
+-    expect(isAmansoceanEmail('user@thirdparty.com')).toBe(false);
+-    expect(isAmansoceanEmail(null)).toBe(false);
+-  });
+-
+-  it('routes Amansocean login credentials directly to Amansocean Seafoods workspace in offline/preview mode', async () => {
+-    const { session, error } = await signIn('kwesi@amansocean.com', 'seafood2026');
+-    expect(error).toBeNull();
+-    expect(session).not.toBeNull();
+-
+-    const profile = await getStaffProfile();
+-    expect(profile).not.toBeNull();
+-    expect(profile?.organization_id).toBe(AMANSOCEAN_TENANT_ID);
+-    expect(profile?.organization_name).toBe(AMANSOCEAN_TENANT_NAME);
+-    expect(profile?.organization?.id).toBe(AMANSOCEAN_TENANT_ID);
+-    expect(profile?.full_name).toContain('Kwesi');
+-  });
+-
+-  it('defaults preview and offline sessions to Amansocean Seafoods workspace without fallback to Frostly demo', async () => {
+-    const { session, error } = await signIn('operator@amansocean.com', 'password123');
+-    expect(error).toBeNull();
+-    expect(session).not.toBeNull();
+-
+-    const profile = await getStaffProfile();
+-    expect(profile?.organization_id).toBe(AMANSOCEAN_TENANT_ID);
+-    expect(profile?.organization_name).toBe(AMANSOCEAN_TENANT_NAME);
+-    expect(profile?.organization_id).not.toBe('org-frostly-hq');
+-    expect(profile?.full_name).not.toBe('Captain Alex Mercer');
+-  });
+-
+-  it('allows registered third-party tenant credentials to log in to their respective isolated workspaces', async () => {
+-    // 1. Third-party registers their organization
+-    const customOrgName = 'Atlantic Catch Co';
+-    const regResult = await signUpAndCreateOrganization(
+-      'sarah@atlanticcatch.com',
+-      'SecurePass#2026!',
+-      customOrgName,
+-      'Sarah Connor',
+-      'Operations'
+-    );
+-
+-    expect(regResult.error).toBeNull();
+-    expect(regResult.profile?.organization_name).toBe(customOrgName);
+-    const assignedOrgId = regResult.profile?.organization_id;
+-    expect(assignedOrgId).toBeDefined();
+-
+-    // 2. Sign in with the registered credentials
+-    const { session, error } = await signIn('sarah@atlanticcatch.com', 'SecurePass#2026!');
+-    expect(error).toBeNull();
+-    expect(session).not.toBeNull();
+-
+-    const profile = await getStaffProfile(true);
+-    expect(profile?.organization_id).toBe(assignedOrgId);
+-    expect(profile?.organization_name).toBe(customOrgName);
+-    expect(profile?.full_name).toBe('Sarah Connor');
+-  });
+-
+-  it('provides Amansocean admin email as default test user credential', () => {
+-    expect(DEFAULT_TEST_USER_EMAIL).toContain('amansocean');
+-  });
+-});
+diff --git a/src/__tests__/authNoDemo.test.ts b/src/__tests__/authNoDemo.test.ts
+new file mode 100644
+index 0000000..a0f0b22
+--- /dev/null
++++ b/src/__tests__/authNoDemo.test.ts
+@@ -0,0 +1,86 @@
++import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
++
++// In the test environment no Supabase credentials exist, i.e. the "unconfigured backend" case
++// that previously fell back to a demo/offline login for ANY email and password.
++
++const store: Record<string, string> = {};
++const localStorageMock = {
++  getItem: (k: string) => (k in store ? store[k] : null),
++  setItem: (k: string, v: string) => {
++    store[k] = String(v);
++  },
++  removeItem: (k: string) => {
++    delete store[k];
++  },
++  clear: () => {
++    Object.keys(store).forEach((k) => delete store[k]);
++  },
++};
++
++beforeAll(() => {
++  vi.stubGlobal('localStorage', localStorageMock);
++});
++
++beforeEach(() => {
++  localStorageMock.clear();
++  vi.resetModules();
++});
++
++describe('authentication has no demo, offline or test bypass', () => {
++  it('rejects ANY email and password when the backend is not configured', async () => {
++    const { signIn, getSession } = await import('../data/auth');
++    const attempts: Array<[string, string]> = [
++      ['kwesi@amansocean.com', 'seafood2026'],
++      ['admin@amansocean.com', 'password123'],
++      ['anyone@example.com', 'whatever'],
++    ];
++    for (const [email, password] of attempts) {
++      const { session, error } = await signIn(email, password);
++      expect(session).toBeNull();
++      expect(error).toMatch(/not configured/i);
++    }
++    expect(await getSession()).toBeNull();
++  });
++
++  it('never creates fake sessions, accounts or organizations when unconfigured', async () => {
++    const { signUpAndCreateOrganization, createOrganizationAndAdmin, changeCurrentUserPassword } = await import(
++      '../data/auth'
++    );
++
++    const reg = await signUpAndCreateOrganization('sarah@atlanticcatch.com', 'SecurePass#2026!', 'Atlantic Catch Co', 'Sarah Connor', 'Operations');
++    expect(reg.session).toBeNull();
++    expect(reg.profile).toBeNull();
++    expect(reg.error).toBeTruthy();
++
++    const org = await createOrganizationAndAdmin('Fake Org');
++    expect(org.success).toBe(false);
++
++    const pw = await changeCurrentUserPassword('SecurePass#2026!');
++    expect(pw.success).toBe(false);
++
++    expect(localStorageMock.getItem('frostly_offline_users')).toBeNull();
++    expect(localStorageMock.getItem('frostly_local_session')).toBeNull();
++  });
++
++  it('ignores and purges a planted fake local session', async () => {
++    localStorageMock.setItem(
++      'frostly_local_session',
++      JSON.stringify({
++        access_token: 'local-token-123',
++        refresh_token: 'x',
++        expires_at: Math.floor(Date.now() / 1000) + 3600,
++        user: { id: 'attacker', email: 'ceo@amansocean.com' },
++      })
++    );
++    const { getSession, getLocalCachedSession } = await import('../data/auth');
++    expect(await getSession()).toBeNull();
++    expect(getLocalCachedSession()).toBeNull();
++    expect(localStorageMock.getItem('frostly_local_session')).toBeNull();
++  });
++
++  it('keeps the decommissioned quick sign-in helpers disabled', async () => {
++    const { signInAsTestUser, signInAsCreator } = await import('../data/auth');
++    expect((await signInAsTestUser()).session).toBeNull();
++    expect((await signInAsCreator()).session).toBeNull();
++  });
++});
+diff --git a/src/__tests__/authTenancy.test.ts b/src/__tests__/authTenancy.test.ts
+new file mode 100644
+index 0000000..242c116
+--- /dev/null
++++ b/src/__tests__/authTenancy.test.ts
+@@ -0,0 +1,165 @@
++import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
++
++const AMANS = '35a94c6e-e230-4b7c-8404-a4f0ae06b798';
++const OTHER = '11111111-1111-4111-8111-111111111111';
++const HQ = '00000000-0000-0000-0000-000000000001';
++
++const h = vi.hoisted(() => ({
++  session: null as any,
++  profiles: {} as Record<string, any>,
++  orgs: {} as Record<string, any>,
++  admins: new Set<string>(),
++}));
++
++vi.mock('../utils/supabase', () => {
++  const makeBuilder = (table: string) => {
++    const filters: Record<string, any> = {};
++    const builder: any = {
++      select: () => builder,
++      eq: (col: string, val: any) => {
++        filters[col] = val;
++        return builder;
++      },
++      maybeSingle: async () => {
++        if (table === 'staff_profiles') {
++          const row = h.profiles[filters.id];
++          return { data: row ? { ...row, organizations: h.orgs[row.organization_id] ?? null } : null, error: null };
++        }
++        if (table === 'platform_admins') {
++          return { data: h.admins.has(filters.user_id) ? { user_id: filters.user_id } : null, error: null };
++        }
++        if (table === 'organizations') {
++          return { data: h.orgs[filters.id] ?? null, error: null };
++        }
++        return { data: null, error: null };
++      },
++    };
++    return builder;
++  };
++  return {
++    isSupabaseConfigured: true,
++    supabase: {
++      auth: {
++        getSession: async () => ({ data: { session: h.session }, error: null }),
++        signInWithPassword: async () => ({ data: { session: h.session }, error: h.session ? null : { message: 'Invalid login credentials' } }),
++        onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
++        signOut: async () => ({ error: null }),
++      },
++      from: (table: string) => makeBuilder(table),
++    },
++  };
++});
++
++const store: Record<string, string> = {};
++const localStorageMock = {
++  getItem: (k: string) => (k in store ? store[k] : null),
++  setItem: (k: string, v: string) => {
++    store[k] = String(v);
++  },
++  removeItem: (k: string) => {
++    delete store[k];
++  },
++  clear: () => Object.keys(store).forEach((k) => delete store[k]),
++};
++
++function signedInAs(id: string, email: string, appRole?: string) {
++  h.session = {
++    access_token: 'jwt',
++    refresh_token: 'r',
++    expires_at: Math.floor(Date.now() / 1000) + 3600,
++    user: { id, email, app_metadata: appRole ? { role: appRole } : {}, user_metadata: {} },
++  };
++}
++
++const orgRow = (name: string) => ({
++  name,
++  plan_tier: 'enterprise',
++  subscription_status: 'active',
++  trial_ends_at: '2027-01-01T00:00:00Z',
++  max_staff_seats: 50,
++});
++
++beforeAll(() => {
++  vi.stubGlobal('localStorage', localStorageMock);
++});
++
++beforeEach(() => {
++  localStorageMock.clear();
++  vi.resetModules();
++  h.session = null;
++  h.profiles = {};
++  h.orgs = { [AMANS]: orgRow('Amansocean'), [OTHER]: orgRow('Other Tenant') };
++  h.admins = new Set();
++});
++
++describe('tenancy comes only from the database', () => {
++  it('keeps Amansocean staff (e.g. a sales_staff gmail user) in Amansocean with the stored role', async () => {
++    signedInAs('u-edmund', 'edmund@gmail.com');
++    h.profiles['u-edmund'] = { id: 'u-edmund', organization_id: AMANS, email: 'edmund@gmail.com', full_name: 'Edmund', role: 'sales_staff', is_active: true };
++    const { getStaffProfile } = await import('../data/auth');
++    const p = await getStaffProfile(true);
++    expect(p?.organization_id).toBe(AMANS);
++    expect(p?.role).toBe('sales_staff'); // never upgraded to admin
++    expect(p?.needs_onboarding).toBe(false);
++  });
++
++  it('does NOT force an @amansocean.com email into Amansocean when the profile says another tenant', async () => {
++    signedInAs('u-x', 'someone@amansocean.com');
++    h.profiles['u-x'] = { id: 'u-x', organization_id: OTHER, email: 'someone@amansocean.com', full_name: 'X', role: 'ops_staff', is_active: true };
++    const { getStaffProfile } = await import('../data/auth');
++    const p = await getStaffProfile(true);
++    expect(p?.organization_id).toBe(OTHER);
++    expect(p?.organization_name).toBe('Other Tenant');
++  });
++
++  it('sends users with no profile to onboarding with the least-privileged role, never to Amansocean', async () => {
++    signedInAs('u-new', 'amoakoemmanuel2020@gmail.com');
++    const { getStaffProfile } = await import('../data/auth');
++    const p = await getStaffProfile(true);
++    expect(p?.needs_onboarding).toBe(true);
++    expect(p?.organization_id).toBe('');
++    expect(p?.role).toBe('viewer');
++  });
++
++  it('treats a platform placeholder organization as unassigned for normal users', async () => {
++    signedInAs('u-hq', 'parked@example.com');
++    h.profiles['u-hq'] = { id: 'u-hq', organization_id: HQ, email: 'parked@example.com', full_name: 'P', role: 'admin', is_active: true };
++    const { getStaffProfile } = await import('../data/auth');
++    const p = await getStaffProfile(true);
++    expect(p?.needs_onboarding).toBe(true);
++    expect(p?.organization_id).not.toBe(AMANS);
++  });
++
++  it('reports deactivated accounts as inactive, not as needing onboarding', async () => {
++    signedInAs('u-off', 'off@example.com');
++    h.profiles['u-off'] = { id: 'u-off', organization_id: OTHER, email: 'off@example.com', full_name: 'Off', role: 'ops_staff', is_active: false };
++    const { getStaffProfile } = await import('../data/auth');
++    const p = await getStaffProfile(true);
++    expect(p?.is_active).toBe(false);
++    expect(p?.needs_onboarding).toBe(false);
++  });
++
++  it('recognises platform operators only through platform_admins or server-set app_metadata', async () => {
++    signedInAs('u-pa', 'ops@example.com');
++    h.admins.add('u-pa');
++    let mod = await import('../data/auth');
++    expect((await mod.getStaffProfile(true))?.organization_id).toBe(HQ);
++
++    vi.resetModules();
++    signedInAs('u-meta', 'meta@example.com', 'platform_creator');
++    mod = await import('../data/auth');
++    expect((await mod.getStaffProfile(true))?.organization_id).toBe(HQ);
++
++    // user-editable metadata must never grant creator access
++    vi.resetModules();
++    h.session = {
++      access_token: 'jwt',
++      expires_at: Math.floor(Date.now() / 1000) + 3600,
++      user: { id: 'u-fake', email: 'fake@example.com', app_metadata: {}, user_metadata: { role: 'platform_creator' } },
++    };
++    mod = await import('../data/auth');
++    const p = await mod.getStaffProfile(true);
++    expect(p?.organization_id).not.toBe(HQ);
++    expect(p?.needs_onboarding).toBe(true);
++  });
++});
+diff --git a/src/components/AuthGate.tsx b/src/components/AuthGate.tsx
+index 4e6508d..3b57eed 100644
+--- a/src/components/AuthGate.tsx
++++ b/src/components/AuthGate.tsx
+@@ -5,10 +5,10 @@ import {
+   getSession, 
+   getStaffProfile, 
+   signOut as authSignOut, 
+-  signInAsTestUser,
+   onAuthStateChange,
+   StaffProfile 
+ } from '../data/auth';
++import { isSupabaseConfigured } from '../utils/supabase';
+ import { AuthGateScreen } from './AuthGateScreen';
+ import { TenantOnboardingScreen } from './TenantOnboardingScreen';
+ import { LandingPage } from './LandingPage';
+@@ -169,6 +169,21 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
+     };
+   }, []);
+ 
++  // State 0: Fail closed. Without a configured backend there is no login, no demo workspace and no local data.
++  if (!isSupabaseConfigured) {
++    return (
++      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
++        <div className="max-w-md w-full bg-slate-800 border border-slate-700 rounded-2xl p-8 text-center shadow-2xl">
++          <h2 className="text-xl font-bold text-white mb-2">Service not configured</h2>
++          <p className="text-slate-300 text-sm leading-relaxed">
++            This deployment is not connected to its authentication backend, so sign-in is disabled.
++            Please contact your administrator.
++          </p>
++        </div>
++      </div>
++    );
++  }
++
+   // State 1: Brief centered session-check loader (no form flash)
+   if (isCheckingSession) {
+     return (
+@@ -274,6 +289,35 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
+     );
+   }
+ 
++  // State 2.75: Signed in, but the workspace profile could not be loaded (network/RLS error).
++  // Never render the app shell with an empty profile and never mistake this for "needs onboarding".
++  if (!staffProfile) {
++    return (
++      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
++        <div className="max-w-md w-full bg-slate-800 border border-slate-700 rounded-2xl p-8 text-center shadow-2xl">
++          <h2 className="text-xl font-bold text-white mb-2">Could not load your workspace</h2>
++          <p className="text-slate-300 text-sm mb-6 leading-relaxed">
++            We could not reach your workspace data. Check your connection and try again.
++          </p>
++          <div className="flex gap-3">
++            <button
++              onClick={() => { refreshProfile(); }}
++              className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-xl transition"
++            >
++              Retry
++            </button>
++            <button
++              onClick={handleSignOut}
++              className="flex-1 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-xl transition"
++            >
++              Sign Out
++            </button>
++          </div>
++        </div>
++      </div>
++    );
++  }
++
+   // State 3: User authenticated but needs workspace initialization / onboarding
+   if (staffProfile?.needs_onboarding) {
+     return (
+diff --git a/src/components/AuthGateScreen.tsx b/src/components/AuthGateScreen.tsx
+index e45c9f0..dac1f7f 100644
+--- a/src/components/AuthGateScreen.tsx
++++ b/src/components/AuthGateScreen.tsx
+@@ -44,10 +44,6 @@ import {
+   resendConfirmationEmail,
+   setPasswordAndActivate,
+   instantActivateAccount,
+-  DEFAULT_TEST_USER_EMAIL,
+-  DEFAULT_TEST_USER_PASSWORD,
+-  DEFAULT_CREATOR_EMAIL,
+-  DEFAULT_CREATOR_PASSWORD
+ } from '../data/auth';
+ 
+ export type AuthScreenMode = 'login' | 'create_org' | 'accept_invite' | 'pending_confirmation';
+diff --git a/src/components/AuthModal.tsx b/src/components/AuthModal.tsx
+index d2b4797..5c38f4d 100644
+--- a/src/components/AuthModal.tsx
++++ b/src/components/AuthModal.tsx
+@@ -32,8 +32,6 @@ import {
+   createInvite,
+   signUpAndCreateOrganization,
+   signUpAndAcceptInvite,
+-  DEFAULT_TEST_USER_EMAIL,
+-  DEFAULT_TEST_USER_PASSWORD,
+   StaffProfile
+ } from '../data/auth';
+ import { sendDirectGoogleSmtpConfirmation } from '../services/googleSmtpService';
+diff --git a/src/components/SettingsView.tsx b/src/components/SettingsView.tsx
+index 683ad5b..cb9fd06 100644
+--- a/src/components/SettingsView.tsx
++++ b/src/components/SettingsView.tsx
+@@ -151,7 +151,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
+   }, [showPlatformConsole, activeCategory]);
+   const [formData, setFormData] = useState<AppSettings>({ ...settings });
+   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
+-  const [resetModalOpen, setResetModalOpen] = useState<boolean>(false);
+   const [importError, setImportError] = useState<string | null>(null);
+   const [importSuccess, setImportSuccess] = useState<boolean>(false);
+   const [syncState, setSyncState] = useState<SyncState>(() => syncManager.getState());
+@@ -273,7 +272,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
+     { id: 'units', label: 'Units & Display', icon: Sliders, desc: 'Weight, temperatures & date formats' },
+     { id: 'fulfillment', label: 'POS & Fulfillment', icon: ShoppingBag, desc: 'Terms, ice surcharges & QR presets' },
+     { id: 'alerts', label: 'Alerts & Auditing', icon: Bell, desc: 'Stock thresholds & sensor alarms' },
+-    { id: 'data', label: 'Data & Offline Backup', icon: Database, desc: 'JSON exports, restores & demo reset' },
++    { id: 'data', label: 'Data & Offline Backup', icon: Database, desc: 'JSON exports and restores' },
+   ];
+ 
+   return (
+@@ -1045,26 +1044,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
+                   </div>
+                 </div>
+ 
+-                {/* Danger Zone: Reset to Factory Defaults */}
+-                <div className="p-5 rounded-2xl bg-rose-50/50 border border-rose-100 flex items-center justify-between gap-4">
+-                  <div className="space-y-0.5">
+-                    <div className="text-xs font-bold text-rose-900 flex items-center gap-1.5">
+-                      <RotateCcw className="w-4 h-4 text-rose-600" />
+-                      <span>Reset Application Demo Records</span>
+-                    </div>
+-                    <div className="text-[11px] text-rose-700">
+-                      Reverts all batches, orders, POS sales, and financials back to initial sample state.
+-                    </div>
+-                  </div>
+-                  <button
+-                    type="button"
+-                    id="btn-reset-demo-data"
+-                    onClick={() => setResetModalOpen(true)}
+-                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-xs shrink-0 cursor-pointer"
+-                  >
+-                    Reset Data
+-                  </button>
+-                </div>
+               </div>
+             )}
+ 
+@@ -1215,41 +1194,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
+         </div>
+       </div>
+ 
+-      {/* Reset Confirmation Modal */}
+-      {resetModalOpen && (
+-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+-          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4">
+-            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+-              <AlertTriangle className="w-6 h-6" />
+-            </div>
+-            <div className="text-center space-y-1">
+-              <h3 className="text-base font-bold text-slate-900 font-heading">Reset Application to Initial State?</h3>
+-              <p className="text-xs text-slate-500">
+-                This will restore all default seafood batches, vessel landings, customer profiles, and initial financial statements. Any custom added lots will be reset.
+-              </p>
+-            </div>
+-            <div className="flex items-center gap-3 pt-2">
+-              <button
+-                onClick={() => setResetModalOpen(false)}
+-                className="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer"
+-              >
+-                Cancel
+-              </button>
+-              <button
+-                onClick={() => {
+-                  onResetToDefaults();
+-                  setResetModalOpen(false);
+-                  setSaveSuccess(true);
+-                  setTimeout(() => setSaveSuccess(false), 3000);
+-                }}
+-                className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-md shadow-rose-200 cursor-pointer"
+-              >
+-                Confirm Reset
+-              </button>
+-            </div>
+-          </div>
+-        </div>
+-      )}
+     </div>
+   );
+ };
+diff --git a/src/components/TenantOnboardingScreen.tsx b/src/components/TenantOnboardingScreen.tsx
+index f7259fa..d1301be 100644
+--- a/src/components/TenantOnboardingScreen.tsx
++++ b/src/components/TenantOnboardingScreen.tsx
+@@ -26,7 +26,6 @@ import { User } from '@supabase/supabase-js';
+ import { FrostlyLogo } from './FrostlyLogo';
+ import { createOrganizationAndAdmin } from '../data/auth';
+ import { FacilityOperationType } from '../types';
+-import { INITIAL_BATCHES } from '../data/mockData';
+ import { batchRepository } from '../repositories/batchRepository';
+ import { customerRepository } from '../repositories/customerRepository';
+ import { orderRepository } from '../repositories/orderRepository';
+@@ -164,7 +163,6 @@ export const TenantOnboardingScreen: React.FC<TenantOnboardingScreenProps> = ({
+   // Step 3: Starter Seafood Catalog & Commercial Settings
+   const [currency, setCurrency] = useState<'GHS' | 'USD' | 'EUR' | 'GBP'>(initialCurrency);
+   const [primaryPort, setPrimaryPort] = useState(GHANA_PORTS[0]);
+-  const [seedStarterInventory, setSeedStarterInventory] = useState(false);
+   const [complianceCertReady, setComplianceCertReady] = useState(true);
+ 
+   // Step 4: Provisioning & Launch Pipeline
+@@ -265,25 +263,17 @@ export const TenantOnboardingScreen: React.FC<TenantOnboardingScreenProps> = ({
+           retailTransactionRepository.clearTenantCache(targetOrgId);
+           notificationRepository.clearTenantCache(targetOrgId);
+ 
+-          if (seedStarterInventory) {
+-            // Seed isolated starter lots exclusively if user opted in
+-            const starterLots = INITIAL_BATCHES.map(b => ({
+-              ...b,
+-              id: `LOT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+-            }));
+-            batchRepository.setLocalCache(starterLots, targetOrgId);
+-          } else {
+-            // Workspace must be completely clean with zero data
+-            batchRepository.setLocalCache([], targetOrgId);
+-            customerRepository.setLocalCache([], targetOrgId);
+-            orderRepository.setLocalCache([], targetOrgId);
+-            supplierRepository.setLocalCache([], targetOrgId);
+-            financialRepository.setLocalCache([], targetOrgId);
+-            purchaseOrderRepository.setLocalCache([], targetOrgId);
+-            productRepository.setLocalCache([], targetOrgId);
+-            retailTransactionRepository.setLocalCache([], targetOrgId);
+-            notificationRepository.setLocalCache([], targetOrgId);
+-          }
++          // Workspaces always start completely clean: no sample or demo data is ever seeded.
++          // Workspace must be completely clean with zero data
++          batchRepository.setLocalCache([], targetOrgId);
++          customerRepository.setLocalCache([], targetOrgId);
++          orderRepository.setLocalCache([], targetOrgId);
++          supplierRepository.setLocalCache([], targetOrgId);
++          financialRepository.setLocalCache([], targetOrgId);
++          purchaseOrderRepository.setLocalCache([], targetOrgId);
++          productRepository.setLocalCache([], targetOrgId);
++          retailTransactionRepository.setLocalCache([], targetOrgId);
++          notificationRepository.setLocalCache([], targetOrgId);
+         }
+ 
+         const savedSettingsStr = localStorage.getItem('frostly_settings_v2');
+@@ -753,28 +743,6 @@ export const TenantOnboardingScreen: React.FC<TenantOnboardingScreenProps> = ({
+               </div>
+             </div>
+ 
+-            {/* Seed Starter Inventory Option */}
+-            <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+-              <label className="flex items-start gap-3 cursor-pointer">
+-                <input
+-                  type="checkbox"
+-                  id="onboarding-seed-inventory-check"
+-                  checked={seedStarterInventory}
+-                  onChange={(e) => setSeedStarterInventory(e.target.checked)}
+-                  className="mt-0.5 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500"
+-                />
+-                <div>
+-                  <div className="text-xs font-bold text-white flex items-center gap-2">
+-                    <Boxes className="w-4 h-4 text-indigo-400" />
+-                    <span>Pre-seed Starter Seafood Inventory &amp; Batch Lots</span>
+-                  </div>
+-                  <p className="text-[11px] text-slate-400 leading-relaxed mt-1">
+-                    Populate your new workspace with realistic sample seafood batches ({selectedFacility.primarySpecies.join(', ')}) with barcodes, catch zones, and temperature logs so you can explore immediately.
+-                  </p>
+-                </div>
+-              </label>
+-            </div>
+-
+             {/* Regulatory Compliance Presets */}
+             <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+               <label className="flex items-start gap-3 cursor-pointer">
+diff --git a/src/data/auth.ts b/src/data/auth.ts
+index c607521..535f840 100644
+--- a/src/data/auth.ts
++++ b/src/data/auth.ts
+@@ -124,26 +124,19 @@ export function notifyAuthSubscribers(sess: Session | null): void {
+   });
+ }
+ 
++// Legacy demo/offline storage is purged: real sessions are owned and refreshed by supabase-js only.
++const LEGACY_DEMO_KEYS = ['frostly_local_session', 'frostly_offline_users'];
++try {
++  if (typeof localStorage !== 'undefined') LEGACY_DEMO_KEYS.forEach((k) => localStorage.removeItem(k));
++} catch {}
++
++/** @deprecated Local (fake) sessions no longer exist. Always returns null. */
+ export function getLocalCachedSession(): Session | null {
+-  try {
+-    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LOCAL_SESSION_KEY) : null;
+-    return raw ? JSON.parse(raw) : null;
+-  } catch {
+-    return null;
+-  }
++  return null;
+ }
+ 
+-export function setLocalCachedSession(sess: Session | null): void {
+-  try {
+-    if (typeof localStorage !== 'undefined') {
+-      if (sess) {
+-        localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
+-      } else {
+-        localStorage.removeItem(LOCAL_SESSION_KEY);
+-      }
+-    }
+-  } catch {}
+-}
++/** @deprecated Local (fake) sessions no longer exist. Kept as a no-op for import compatibility. */
++export function setLocalCachedSession(_sess: Session | null): void {}
+ 
+ const isDev = typeof import.meta !== 'undefined' ? Boolean(import.meta.env?.DEV) : process.env.NODE_ENV !== 'production';
+ 
+@@ -151,90 +144,29 @@ const isDev = typeof import.meta !== 'undefined' ? Boolean(import.meta.env?.DEV)
+ export const AMANSOCEAN_TENANT_ID = '35a94c6e-e230-4b7c-8404-a4f0ae06b798';
+ export const AMANSOCEAN_TENANT_NAME = 'Amansocean Seafoods and Coldstore';
+ 
+-/**
+- * Determine if an email address belongs to Amansocean staff or management
+- */
+-export function isAmansoceanEmail(email?: string | null): boolean {
+-  if (!email) return false;
+-  const lower = email.trim().toLowerCase();
+-  return (
+-    lower === 'akokosolutions24@gmail.com' ||
+-    lower === 'edmundbgh34@gmail.com' ||
+-    lower === 'amoakoemmanuel2020@gmail.com' ||
+-    lower === 'amoakoimml@gmail.com' ||
+-    lower === 'amoakoemmanuel2026@gmail.com' ||
+-    lower === 'info@amansocean.com' ||
+-    lower.endsWith('@amansocean.com') ||
+-    lower.endsWith('@amansocean.store') ||
+-    lower === 'admin@amansocean.com' ||
+-    lower === 'kwesi@amansocean.com' ||
+-    lower === 'anna@amansocean.com'
+-  );
+-}
+-
+-// Environment credentials
+-export const DEFAULT_TEST_USER_EMAIL =
+-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_EMAIL) || 'admin@amansocean.com';
+-
+-export const DEFAULT_TEST_USER_PASSWORD =
+-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) || '';
+-
+-export const DEFAULT_TEST_USER = {
+-  email: DEFAULT_TEST_USER_EMAIL,
+-  password: DEFAULT_TEST_USER_PASSWORD,
+-};
+-
+-// Platform Creator credentials (strictly from env vars, no hardcoded fallbacks)
+-export const DEFAULT_CREATOR_EMAIL =
+-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_EMAIL) || '';
+-
+-export const DEFAULT_CREATOR_PASSWORD =
+-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_PASSWORD) || '';
+-
+-export const DEFAULT_CREATOR_USER = {
+-  email: DEFAULT_CREATOR_EMAIL,
+-  password: DEFAULT_CREATOR_PASSWORD,
+-  role: 'platform_creator' as const,
+-};
+-
+ /**
+  * Get the current Supabase auth session, caching it locally
+  */
+ export async function getSession(): Promise<Session | null> {
+-  if (cachedSession) {
+-    if (cachedSession.access_token && cachedSession.access_token.startsWith('local-token-')) {
+-      cachedSession = null;
+-      setLocalCachedSession(null);
+-      return null;
+-    }
+-    return cachedSession;
+-  }
+-
+-  const local = getLocalCachedSession();
+-  if (local) {
+-    if (local.access_token && local.access_token.startsWith('local-token-')) {
+-      setLocalCachedSession(null);
+-    } else {
+-      cachedSession = local;
+-      return cachedSession;
+-    }
+-  }
+-
+   if (!isSupabaseConfigured) {
+     return null;
+   }
+ 
++  // Reuse the in-memory session only while its access token is comfortably valid.
++  if (cachedSession?.expires_at && cachedSession.expires_at * 1000 - Date.now() > 60_000) {
++    return cachedSession;
++  }
++
+   try {
+-    if (!isInitialized) {
+-      const { data, error } = await supabase.auth.getSession();
+-      if (error) {
+-        console.warn('[Auth] Error getting session:', error.message);
+-        cachedSession = null;
+-      } else {
+-        cachedSession = data.session;
+-      }
+-      isInitialized = true;
++    // supabase-js owns persistence and silently refreshes expired access tokens here.
++    const { data, error } = await supabase.auth.getSession();
++    if (error) {
++      console.warn('[Auth] Error getting session:', error.message);
++      cachedSession = null;
++    } else {
++      cachedSession = data.session;
+     }
++    isInitialized = true;
+     return cachedSession;
+   } catch (err) {
+     console.warn('[Auth] Exception checking session:', err);
+@@ -270,139 +202,86 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
+     cachedStaffProfile = null;
+     return null;
+   }
++  if (!isSupabaseConfigured) {
++    return null;
++  }
++
++  const ORG_COLUMNS =
++    'name, plan_tier, subscription_status, trial_ends_at, current_period_ends_at, max_staff_seats';
+ 
+   try {
+-    let profileData: any = null;
++    // 1. The database is the ONLY source of truth for tenancy: staff_profiles.organization_id.
++    let profileRow: any = null;
+     let orgData: any = null;
+ 
+-    if (isSupabaseConfigured) {
+-      // 1. Attempt joined query with organizations directly from Supabase
+-      const { data: joinedData, error: joinedError } = await supabase
++    const { data: joined, error: joinedError } = await supabase
++      .from('staff_profiles')
++      .select(`*, organizations(${ORG_COLUMNS})`)
++      .eq('id', user.id)
++      .maybeSingle();
++
++    if (!joinedError) {
++      profileRow = joined;
++      orgData = (joined as any)?.organizations ?? null;
++    } else {
++      const { data: plain, error: plainError } = await supabase
+         .from('staff_profiles')
+-        .select('*, organizations(name, plan_tier, subscription_status, trial_ends_at, current_period_ends_at, max_staff_seats)')
++        .select('*')
+         .eq('id', user.id)
+         .maybeSingle();
+-
+-      if (!joinedError && joinedData) {
+-        profileData = joinedData;
+-        orgData = (joinedData as any)?.organizations;
+-      } else {
+-        // 2. Fallback to direct staff_profiles query if join or relation is unavailable
+-        const { data: plainData, error: plainError } = await supabase
+-          .from('staff_profiles')
+-          .select('*')
+-          .eq('id', user.id)
+-          .maybeSingle();
+-
+-        if (!plainError && plainData) {
+-          profileData = plainData;
+-        }
++      if (plainError) {
++        // Transient failure: never mistake it for "no workspace" (that would send the user to onboarding).
++        console.warn('[Auth] Could not load staff profile:', plainError.message);
++        return cachedStaffProfile;
+       }
+-    }
+-
+-    // 3. Fallback: verified fetch from backend profile route if Supabase direct query returned nothing or is unconfigured
+-    if (!profileData) {
+-      const activeSession = await getSession();
+-      if (activeSession?.access_token && !activeSession.access_token.startsWith('local-token-')) {
+-        try {
+-          const resp = await fetch('/api/auth/profile', {
+-            headers: { Authorization: `Bearer ${activeSession.access_token}` },
+-          });
+-          if (resp.ok) {
+-            const body = await resp.json().catch(() => ({}));
+-            if (body?.profile) {
+-              profileData = body.profile;
+-              orgData = body.profile.organizations;
+-            }
+-          }
+-        } catch {}
++      profileRow = plain;
++      if (plain?.organization_id) {
++        const { data: org } = await supabase
++          .from('organizations')
++          .select(ORG_COLUMNS)
++          .eq('id', plain.organization_id)
++          .maybeSingle();
++        orgData = org ?? null;
+       }
+     }
+ 
+-    if (!profileData && (typeof process !== 'undefined' && process.env?.VITEST)) {
+-      try {
+-        const rawAccounts = localStorage.getItem('frostly_offline_users');
+-        if (rawAccounts && user.email) {
+-          const accounts = JSON.parse(rawAccounts);
+-          const match = accounts[user.email.toLowerCase()];
+-          if (match) {
+-            profileData = {
+-              id: user.id,
+-              organization_id: match.orgId,
+-              email: user.email,
+-              full_name: match.fullName,
+-              role: match.role || 'admin',
+-              department: match.department || 'Executive Operations',
+-              is_active: true,
+-            };
+-            orgData = {
+-              name: match.orgName,
+-              plan_tier: match.plan_tier || 'enterprise',
+-              subscription_status: 'active',
+-              max_staff_seats: 25,
+-            };
+-          }
+-        }
+-      } catch {}
+-    }
+-
++    // 2. Platform operators are identified by the platform_admins table (self-readable) or server-set app_metadata.
+     let isPlatformAdmin = false;
+-    if (isSupabaseConfigured && user) {
+-      try {
+-        const { data: pa } = await supabase
+-          .from('platform_admins')
+-          .select('user_id')
+-          .eq('user_id', user.id)
+-          .maybeSingle();
+-        if (pa?.user_id) isPlatformAdmin = true;
+-      } catch {}
+-    }
++    try {
++      const { data: pa } = await supabase
++        .from('platform_admins')
++        .select('user_id')
++        .eq('user_id', user.id)
++        .maybeSingle();
++      isPlatformAdmin = Boolean(pa?.user_id);
++    } catch {}
++    const isCreator = isPlatformAdmin || user.app_metadata?.role === 'platform_creator';
+ 
+-    const isCreator = 
+-      Boolean(DEFAULT_CREATOR_EMAIL && user.email?.toLowerCase() === DEFAULT_CREATOR_EMAIL.toLowerCase()) || 
+-      user.app_metadata?.role === 'platform_creator' ||
+-      isPlatformAdmin;
+-    const fallbackRole = isCreator ? 'admin' : (isSupabaseConfigured ? 'viewer' : (user.user_metadata?.role || 'admin'));
+-
+-    // Check if this user belongs to Amansocean
+-    const isAmans = isAmansoceanEmail(user.email);
+-    const isProfileInactive = profileData?.is_active === false;
+-
+-    // Check if user has an assigned, non-sentinel organization in staff_profiles or metadata
+-    const assignedOrgId = profileData?.organization_id && 
+-      profileData.organization_id !== 'org-frostly-hq' && 
+-      profileData.organization_id !== '00000000-0000-0000-0000-000000000001'
+-        ? profileData.organization_id
+-        : null;
+-
+-    let resolvedOrgId: string;
+-    let resolvedOrgName: string;
++    const profileOrgId: string | null = profileRow?.organization_id ?? null;
++    const hasRealOrg = isValidOrgId(profileOrgId);
++    const isProfileInactive = profileRow?.is_active === false;
++
++    let resolvedOrgId = '';
++    let resolvedOrgName = '';
+     let isUnprovisioned = false;
+ 
+     if (isCreator) {
+       resolvedOrgId = '00000000-0000-0000-0000-000000000001';
+       resolvedOrgName = 'Frostly HQ';
+-    } else if (isProfileInactive) {
+-      resolvedOrgId = profileData.organization_id || '';
+-      resolvedOrgName = orgData?.name || 'Workspace';
+-      isUnprovisioned = false;
+-    } else if (isAmans) {
+-      // Direct resolution to Amansocean Seafoods workspace
+-      resolvedOrgId = AMANSOCEAN_TENANT_ID;
+-      resolvedOrgName = AMANSOCEAN_TENANT_NAME;
+-      isUnprovisioned = false;
+-    } else if (assignedOrgId) {
+-      // User has their own registered workspace
+-      resolvedOrgId = assignedOrgId;
+-      resolvedOrgName = orgData?.name || user.user_metadata?.organization_name || 'Enterprise Workspace';
++    } else if (hasRealOrg) {
++      resolvedOrgId = profileOrgId as string;
++      resolvedOrgName = orgData?.name || '';
++      if (!orgData) {
++        // A real workspace whose organization row cannot be read: do not guess plan or status.
++        console.warn('[Auth] Organization record unavailable for workspace', resolvedOrgId);
++        return cachedStaffProfile;
++      }
+     } else {
+-      // User has no assigned workspace -> route to onboarding
+-      isUnprovisioned = true;
+-      resolvedOrgId = '';
+-      resolvedOrgName = '';
++      // No assigned workspace (or only a platform placeholder): the user completes onboarding or is assigned by an admin.
++      isUnprovisioned = !isProfileInactive;
+     }
+ 
+-    const defaultOrg: TenantOrganization = {
++    const organization: TenantOrganization = {
+       id: resolvedOrgId,
+       name: resolvedOrgName,
+       plan_tier: orgData?.plan_tier || 'enterprise',
+@@ -412,74 +291,41 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
+       max_staff_seats: orgData?.max_staff_seats || 25,
+     };
+ 
+-    let userFullName = profileData?.full_name || user.user_metadata?.full_name;
+-    if (!userFullName) {
+-      const emailPrefix = user.email?.split('@')[0] || '';
+-      if (emailPrefix.toLowerCase().includes('kwesi')) userFullName = 'Kwesi Mensah';
+-      else if (emailPrefix.toLowerCase().includes('anna')) userFullName = 'Anna Mensah';
+-      else if (emailPrefix.toLowerCase().includes('admin')) userFullName = 'Amansocean Operations Lead';
+-      else if (emailPrefix) {
+-        userFullName = emailPrefix
+-          .split(/[._-]/)
+-          .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+-          .join(' ');
+-      } else {
+-        userFullName = 'Staff User';
+-      }
+-    }
++    const emailPrefix = (user.email || '').split('@')[0];
++    const fullName =
++      profileRow?.full_name ||
++      user.user_metadata?.full_name ||
++      (emailPrefix
++        ? emailPrefix
++            .split(/[._-]/)
++            .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
++            .join(' ')
++        : 'Staff User');
+ 
+     cachedStaffProfile = {
+-      id: profileData?.id || user.id,
++      id: profileRow?.id || user.id,
+       organization_id: resolvedOrgId,
+       organization_name: resolvedOrgName,
+-      organization: defaultOrg,
+-      email: profileData?.email || user.email || '',
+-      full_name: userFullName,
+-      role: (profileData?.role as any) || fallbackRole,
+-      department: profileData?.department || user.user_metadata?.department || (isAmans ? 'Operations' : 'Executive'),
+-      is_active: profileData?.is_active ?? true,
+-      needs_onboarding: isProfileInactive ? false : isUnprovisioned,
++      organization,
++      email: profileRow?.email || user.email || '',
++      full_name: fullName,
++      // The role comes from the database only. Users without a profile get the least-privileged role.
++      role: (profileRow?.role as any) || (isCreator ? 'admin' : 'viewer'),
++      department: profileRow?.department || 'Operations',
++      is_active: profileRow?.is_active ?? true,
++      needs_onboarding: isUnprovisioned,
+     };
+ 
+-    if (cachedStaffProfile.organization_id && isValidOrgId(cachedStaffProfile.organization_id) && !isUnprovisioned && !isProfileInactive) {
++    if (isValidOrgId(resolvedOrgId) && !isProfileInactive) {
+       try {
+-        localStorage.setItem('frostly_active_org_id', cachedStaffProfile.organization_id);
++        localStorage.setItem('frostly_active_org_id', resolvedOrgId);
+       } catch {}
+     }
+ 
+-    // Auto-link staff profile in database if unlinked
+-    const hasRealOrg = Boolean(
+-      profileData?.organization_id && isValidOrgId(profileData.organization_id)
+-    );
+-    if (isSupabaseConfigured && user.id && isValidOrgId(resolvedOrgId) && !hasRealOrg && !isProfileInactive) {
+-      Promise.resolve(
+-        supabase.from('staff_profiles').upsert({
+-          id: user.id,
+-          organization_id: resolvedOrgId,
+-          email: user.email || '',
+-          full_name: userFullName,
+-          role: cachedStaffProfile.role,
+-          department: cachedStaffProfile.department,
+-          is_active: true,
+-        })
+-      ).catch((err: any) => console.warn('[Auth] staff_profiles auto-link notice:', err?.message));
+-    }
+-
+-    // Record login activity telemetry (non-blocking)
+-    if (user && user.email) {
+-      import('../services/activityTrackingService').then(({ recordUserLogin }) => {
+-        recordUserLogin(
+-          { id: user.id, email: user.email || '' },
+-          cachedStaffProfile,
+-          cachedStaffProfile?.organization
+-        ).catch(() => {});
+-      }).catch(() => {});
+-    }
+-
+     return cachedStaffProfile;
+   } catch (e) {
+     console.warn('[Auth] Exception fetching staff profile:', e);
+-    return null;
++    return cachedStaffProfile;
+   }
+ }
+ 
+@@ -501,9 +347,8 @@ export function getCurrentOrganizationId(): string {
+ 
+ /**
+ /**
+- * Sign in with email and password.
+- * Strictly validates credentials against Supabase Auth.
+- * Rejects invalid credentials with authentic errors. Never permits mock or offline bypasses.
++ * Sign in with email and password. Strictly validated by Supabase Auth.
++ * There is no demo, offline or test bypass: if the backend is not configured, sign-in fails.
+  */
+ export async function signIn(
+   email: string,
+@@ -522,211 +367,48 @@ export async function signIn(
+     };
+   }
+ 
+-  const isVitest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
+-
+-  // 1. In production and development when Supabase is configured: direct client-side Supabase Auth
+-  // This connects straight to the Supabase Auth API and eliminates 404 errors on static hosts (e.g. GitHub Pages)
+-  if (isSupabaseConfigured && !isVitest) {
+-    try {
+-      const { data: sbData, error: sbError } = await supabase.auth.signInWithPassword({
+-        email: emailCheck.normalizedEmail,
+-        password,
+-      });
+-
+-      if (sbError || !sbData.session) {
+-        recordFailedAttempt(emailCheck.normalizedEmail);
+-        return { session: null, error: sbError?.message || 'Invalid login credentials' };
+-      }
+-
+-      clearFailedAttempts(emailCheck.normalizedEmail);
+-      cachedSession = sbData.session;
+-      setLocalCachedSession(sbData.session);
+-      cachedStaffProfile = null;
+-      try {
+-        localStorage.removeItem('frostly_active_org_id');
+-      } catch {}
+-
+-      await getStaffProfile(true);
+-
+-      // Record login activity in real-time
+-      if (sbData.session?.user && sbData.session.user.email) {
+-        import('../services/activityTrackingService')
+-          .then(({ recordUserLogin }) => {
+-            recordUserLogin(
+-              { id: sbData.session.user.id, email: sbData.session.user.email || '' },
+-              cachedStaffProfile,
+-              cachedStaffProfile?.organization
+-            ).catch(() => {});
+-          })
+-          .catch(() => {});
+-      }
+-
+-      notifyAuthSubscribers(sbData.session);
+-      return { session: sbData.session, error: null };
+-    } catch (sbErr: any) {
+-      recordFailedAttempt(emailCheck.normalizedEmail);
+-      return { session: null, error: sbErr?.message || 'Authentication service error' };
+-    }
+-  }
+-
+-  // 2. Vitest test runner mock sessions or preview/offline mode when Supabase is not configured
+-  if (isVitest || !isSupabaseConfigured) {
+-    const isAmans = isAmansoceanEmail(emailCheck.normalizedEmail);
+-    let storedOrg: TenantOrganization | null = null;
+-    let storedProfile: Partial<StaffProfile> | null = null;
+-    try {
+-      const rawAccounts = typeof localStorage !== 'undefined' ? localStorage.getItem('frostly_offline_users') : null;
+-      if (rawAccounts) {
+-        const accounts = JSON.parse(rawAccounts);
+-        const match = accounts[emailCheck.normalizedEmail.toLowerCase()];
+-        if (match) {
+-          storedOrg = {
+-            id: match.orgId,
+-            name: match.orgName,
+-            plan_tier: match.plan_tier || 'enterprise',
+-            subscription_status: 'active',
+-            trial_ends_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+-            max_staff_seats: match.max_staff_seats || 25,
+-          };
+-          storedProfile = {
+-            full_name: match.fullName,
+-            role: match.role || 'admin',
+-            department: match.department || 'Executive Operations',
+-          };
+-        }
+-      }
+-    } catch {}
+-
+-    if (isAmans || storedOrg) {
+-      const testUser: User = {
+-        id: storedProfile?.id || (isAmans ? 'usr-amans-test' : 'usr-test-' + emailCheck.normalizedEmail),
+-        app_metadata: { provider: 'email', role: 'admin' },
+-        user_metadata: {
+-          full_name: storedProfile?.full_name || (emailCheck.normalizedEmail.includes('kwesi') ? 'Kwesi Mensah' : 'Amansocean Staff'),
+-          role: 'admin',
+-          department: 'Operations',
+-          organization_name: storedOrg?.name || AMANSOCEAN_TENANT_NAME,
+-        },
+-        aud: 'authenticated',
+-        created_at: new Date().toISOString(),
+-        email: emailCheck.normalizedEmail,
+-      } as any;
+-
+-      const testSession: Session = {
+-        access_token: 'test-token-' + Date.now(),
+-        refresh_token: 'test-refresh-' + Date.now(),
+-        expires_in: 86400,
+-        token_type: 'bearer',
+-        user: testUser,
+-      };
+-
+-      cachedSession = testSession;
+-      setLocalCachedSession(testSession);
+-      const org = storedOrg || {
+-        id: AMANSOCEAN_TENANT_ID,
+-        name: AMANSOCEAN_TENANT_NAME,
+-        plan_tier: 'enterprise',
+-        subscription_status: 'active',
+-        trial_ends_at: new Date(Date.now() + 365 * 86400000).toISOString(),
+-        max_staff_seats: 9999,
+-      };
+-
+-      cachedStaffProfile = {
+-        id: testUser.id,
+-        organization_id: org.id,
+-        organization_name: org.name,
+-        organization: org,
+-        email: testUser.email || emailCheck.normalizedEmail,
+-        full_name: testUser.user_metadata.full_name,
+-        role: 'admin',
+-        department: testUser.user_metadata.department,
+-        is_active: true,
+-        needs_onboarding: false,
+-      };
+-
+-      try {
+-        localStorage.setItem('frostly_active_org_id', org.id);
+-      } catch {}
+-
+-      notifyAuthSubscribers(testSession);
+-      return { session: testSession, error: null };
+-    }
++  if (!isSupabaseConfigured) {
++    return {
++      session: null,
++      error: 'Authentication service is not configured. Please contact your administrator.',
++    };
+   }
+ 
+-  // 3. Fallback: Full-stack Node.js backend authentication endpoint (when running Express server)
+   try {
+-    const res = await fetch('/api/auth/login', {
+-      method: 'POST',
+-      headers: { 'Content-Type': 'application/json' },
+-      body: JSON.stringify({ email: emailCheck.normalizedEmail, password }),
++    const { data, error } = await supabase.auth.signInWithPassword({
++      email: emailCheck.normalizedEmail,
++      password,
+     });
+ 
+-    if (res.status === 404) {
+-      recordFailedAttempt(emailCheck.normalizedEmail);
+-      return {
+-        session: null,
+-        error:
+-          'Authentication backend not found (HTTP 404). If deploying statically through GitHub, please add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your GitHub repository secrets and build environment, or host on a Node-capable server with "npm start".',
+-      };
+-    }
+-
+-    const body = await res.json().catch(() => ({}));
+-
+-    if (!res.ok || body.error || !body.session) {
++    if (error || !data.session) {
+       recordFailedAttempt(emailCheck.normalizedEmail);
+-      return { session: null, error: body.error || 'Invalid login credentials' };
++      return { session: null, error: error?.message || 'Invalid login credentials' };
+     }
+ 
+     clearFailedAttempts(emailCheck.normalizedEmail);
+-    cachedSession = body.session;
+-    setLocalCachedSession(body.session);
+-
+-    if (body.profile) {
+-      const org = body.profile.organizations || {
+-        id: body.profile.organization_id,
+-        name: isAmansoceanEmail(body.profile.email) ? AMANSOCEAN_TENANT_NAME : 'Workspace',
+-        plan_tier: 'enterprise',
+-        subscription_status: 'active',
+-        trial_ends_at: new Date(Date.now() + 365 * 86400000).toISOString(),
+-        max_staff_seats: 9999,
+-      };
+-
+-      cachedStaffProfile = {
+-        id: body.profile.id,
+-        organization_id: body.profile.organization_id,
+-        organization_name: org.name,
+-        organization: org,
+-        email: body.profile.email,
+-        full_name: body.profile.full_name,
+-        role: body.profile.role,
+-        department: body.profile.department,
+-        is_active: body.profile.is_active,
+-        needs_onboarding: false,
+-      };
++    cachedSession = data.session;
++    cachedStaffProfile = null;
++    try {
++      localStorage.removeItem('frostly_active_org_id');
++    } catch {}
+ 
+-      try {
+-        localStorage.setItem('frostly_active_org_id', cachedStaffProfile.organization_id);
+-      } catch {}
+-    } else {
+-      cachedStaffProfile = null;
+-      await getStaffProfile(true);
+-    }
++    const profile = await getStaffProfile(true);
+ 
+-    // Record login activity in real-time
+-    if (body.session?.user && body.session.user.email) {
++    // Record login activity exactly once per real sign-in (non-blocking).
++    if (data.session.user.email) {
+       import('../services/activityTrackingService')
+         .then(({ recordUserLogin }) => {
+           recordUserLogin(
+-            { id: body.session.user.id, email: body.session.user.email || '' },
+-            cachedStaffProfile,
+-            cachedStaffProfile?.organization
++            { id: data.session.user.id, email: data.session.user.email || '' },
++            profile,
++            profile?.organization
+           ).catch(() => {});
+         })
+         .catch(() => {});
+     }
+ 
+-    notifyAuthSubscribers(body.session);
+-    return { session: body.session, error: null };
++    notifyAuthSubscribers(data.session);
++    return { session: data.session, error: null };
+   } catch (err: any) {
+     recordFailedAttempt(emailCheck.normalizedEmail);
+     return { session: null, error: err?.message || 'Authentication service error' };
+@@ -840,37 +522,7 @@ export async function createOrganizationAndAdmin(
+   options?: CreateOrgCustomOptions
+ ): Promise<{ success: boolean; data?: any; error?: string }> {
+   if (!isSupabaseConfigured) {
+-    // Offline / Local Simulation Mode:
+-    const mockOrgId = 'org-local-' + Math.random().toString(36).substring(2, 9);
+-    const mockOrg: TenantOrganization = {
+-      id: mockOrgId,
+-      name: orgName,
+-      plan_tier: 'starter',
+-      subscription_status: 'trial',
+-      trial_ends_at: new Date(Date.now() + 14 * 86400000).toISOString(),
+-      max_staff_seats: 5,
+-    };
+-    try {
+-      localStorage.setItem('frostly_active_org_id', mockOrgId);
+-      const existingSettingsStr = localStorage.getItem('frostly_settings_v2');
+-      const existingSettings = existingSettingsStr ? JSON.parse(existingSettingsStr) : {};
+-      localStorage.setItem('frostly_settings_v2', JSON.stringify({
+-        ...existingSettings,
+-        companyName: orgName,
+-        facilityCode: options?.facilityCode || `FAC-${orgName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase()}-01`,
+-        currency: options?.currency || existingSettings.currency || 'GHS',
+-        primaryPort: options?.primaryPort || existingSettings.primaryPort || 'Port of Tema & Pier 38 Fishing Harbour',
+-      }));
+-    } catch {}
+-
+-    if (cachedStaffProfile) {
+-      cachedStaffProfile.organization_id = mockOrgId;
+-      cachedStaffProfile.organization_name = orgName;
+-      cachedStaffProfile.organization = mockOrg;
+-      cachedStaffProfile.role = 'admin';
+-      cachedStaffProfile.needs_onboarding = false;
+-    }
+-    return { success: true, data: { organization_id: mockOrgId, organization_name: orgName } };
++    return { success: false, error: 'Authentication service is not configured.' };
+   }
+ 
+   try {
+@@ -1138,60 +790,7 @@ export async function signUpAndCreateOrganization(
+   }
+ 
+   if (!isSupabaseConfigured) {
+-    const orgRes = await createOrganizationAndAdmin(orgName, adminFullName, adminDepartment, options);
+-    if (!orgRes.success) {
+-      return { session: null, profile: null, error: orgRes.error || 'Failed to create organization' };
+-    }
+-    const mockProfile: StaffProfile = {
+-      id: 'usr-local-' + Math.random().toString(36).substring(2, 9),
+-      organization_id: orgRes.data?.organization_id || 'org-local-1',
+-      organization_name: orgName,
+-      email: cleanEmail,
+-      full_name: adminFullName || cleanEmail.split('@')[0],
+-      role: 'admin',
+-      department: adminDepartment,
+-      is_active: true,
+-      needs_onboarding: false,
+-    };
+-    const mockUser: User = {
+-      id: mockProfile.id,
+-      app_metadata: { provider: 'email' },
+-      user_metadata: {
+-        full_name: mockProfile.full_name,
+-        role: 'admin',
+-        organization_name: orgName,
+-      },
+-      aud: 'authenticated',
+-      created_at: new Date().toISOString(),
+-      email: cleanEmail,
+-    } as any;
+-    const mockSession: Session = {
+-      access_token: 'local-token-' + Date.now(),
+-      refresh_token: 'local-refresh-' + Date.now(),
+-      expires_in: 86400,
+-      token_type: 'bearer',
+-      user: mockUser,
+-    };
+-    cachedSession = mockSession;
+-    cachedStaffProfile = mockProfile;
+-    setLocalCachedSession(mockSession);
+-
+-    try {
+-      const raw = localStorage.getItem('frostly_offline_users');
+-      const accounts = raw ? JSON.parse(raw) : {};
+-      accounts[cleanEmail.toLowerCase()] = {
+-        orgId: orgRes.data?.organization_id || 'org-local-1',
+-        orgName,
+-        fullName: adminFullName || cleanEmail.split('@')[0],
+-        role: 'admin',
+-        department: adminDepartment,
+-      };
+-      localStorage.setItem('frostly_offline_users', JSON.stringify(accounts));
+-      localStorage.setItem('frostly_active_org_id', mockProfile.organization_id);
+-    } catch {}
+-
+-    notifyAuthSubscribers(mockSession);
+-    return { session: mockSession, profile: mockProfile, error: null };
++    return { session: null, profile: null, error: 'Authentication service is not configured.' };
+   }
+ 
+   try {
+@@ -1873,7 +1472,7 @@ export async function changeCurrentUserPassword(
+   }
+ 
+   if (!isSupabaseConfigured) {
+-    return { success: true };
++    return { success: false, error: 'Authentication service is not configured.' };
+   }
+ 
+   try {
+diff --git a/src/services/platformAdminService.ts b/src/services/platformAdminService.ts
+index 833a7d8..160565d 100644
+--- a/src/services/platformAdminService.ts
++++ b/src/services/platformAdminService.ts
+@@ -28,145 +28,21 @@ export interface PlatformAuditLog {
+   created_at: string;
+ }
+ 
+-const STORAGE_KEY_ORGS = 'frostly_platform_demo_orgs';
+-const STORAGE_KEY_AUDIT = 'frostly_platform_demo_audit';
+-
+-// Initial fallback mock data for local demo preview when Supabase backend is not linked
+-const INITIAL_DEMO_ORGS: PlatformOrganization[] = [
+-  {
+-    id: '00000000-0000-0000-0000-000000000001',
+-    name: 'Tema Cold Store Ltd (Headquarters)',
+-    company_name: 'Tema Cold Store Ltd',
+-    subscription_status: 'active',
+-    plan_tier: 'enterprise',
+-    billing_provider: 'none',
+-    billing_currency: 'GHS',
+-    max_staff_seats: 9999,
+-    staff_count: 8,
+-    pending_invites_count: 1,
+-    trial_ends_at: null,
+-    current_period_ends_at: '2027-12-31T23:59:59Z',
+-    created_at: '2025-01-10T08:00:00Z',
+-  },
+-  {
+-    id: '90000000-0000-0000-0000-000000000001',
+-    name: 'Tema Coastal Fisheries Ltd',
+-    company_name: 'Tema Coastal Fisheries Ltd',
+-    subscription_status: 'trial',
+-    plan_tier: 'starter',
+-    billing_provider: 'paystack',
+-    billing_currency: 'GHS',
+-    max_staff_seats: 5,
+-    staff_count: 3,
+-    pending_invites_count: 2,
+-    trial_ends_at: '2026-09-18T12:00:00Z',
+-    current_period_ends_at: null,
+-    created_at: '2026-09-01T10:30:00Z',
+-  },
+-  {
+-    id: '80000000-0000-0000-0000-000000000002',
+-    name: 'Takoradi Deepsea Logistics Ltd',
+-    company_name: 'Takoradi Deepsea Logistics',
+-    subscription_status: 'past_due',
+-    plan_tier: 'standard',
+-    billing_provider: 'paystack',
+-    billing_currency: 'GHS',
+-    max_staff_seats: 20,
+-    staff_count: 14,
+-    pending_invites_count: 0,
+-    trial_ends_at: null,
+-    current_period_ends_at: '2026-09-02T00:00:00Z',
+-    created_at: '2026-06-15T14:20:00Z',
+-  },
+-  {
+-    id: '70000000-0000-0000-0000-000000000003',
+-    name: 'Atlantic Reefer Cold-Chain LLC',
+-    company_name: 'Atlantic Reefer Cold-Chain',
+-    subscription_status: 'active',
+-    plan_tier: 'enterprise',
+-    billing_provider: 'stripe',
+-    billing_currency: 'USD',
+-    max_staff_seats: 9999,
+-    staff_count: 42,
+-    pending_invites_count: 3,
+-    trial_ends_at: null,
+-    current_period_ends_at: '2026-10-01T00:00:00Z',
+-    created_at: '2026-04-10T09:00:00Z',
+-  },
+-  {
+-    id: '60000000-0000-0000-0000-000000000004',
+-    name: 'Cape Coast Seafood Processors',
+-    company_name: 'Cape Coast Seafood Processors',
+-    subscription_status: 'suspended',
+-    plan_tier: 'starter',
+-    billing_provider: 'none',
+-    billing_currency: 'GHS',
+-    max_staff_seats: 5,
+-    staff_count: 2,
+-    pending_invites_count: 0,
+-    trial_ends_at: '2026-08-01T00:00:00Z',
+-    current_period_ends_at: null,
+-    created_at: '2026-07-15T11:00:00Z',
+-  },
+-];
+-
+-const configuredCreatorEmail = typeof import.meta !== 'undefined' ? import.meta.env?.VITE_DEV_CREATOR_EMAIL : undefined;
+-
+-const INITIAL_DEMO_AUDIT: PlatformAuditLog[] = [
+-  {
+-    id: 'aud-001',
+-    actor_id: configuredCreatorEmail || 'platform_admin',
+-    action: 'manual_subscription_update',
+-    target_organization_id: '90000000-0000-0000-0000-000000000001',
+-    previous_state: { subscription_status: 'trial', plan_tier: 'starter' },
+-    new_state: { subscription_status: 'trial', plan_tier: 'starter', trial_ends_at: '2026-09-18T12:00:00Z' },
+-    reason: 'Trial period extended by 14 days following onboard demo',
+-    created_at: '2026-09-04T09:15:00Z',
+-  },
+-  {
+-    id: 'aud-002',
+-    actor_id: configuredCreatorEmail || 'platform_admin',
+-    action: 'manual_subscription_update',
+-    target_organization_id: '70000000-0000-0000-0000-000000000003',
+-    previous_state: { subscription_status: 'trial', plan_tier: 'standard' },
+-    new_state: { subscription_status: 'active', plan_tier: 'enterprise' },
+-    reason: 'Annual contract signed; direct wire transfer of $7,990 received',
+-    created_at: '2026-09-01T15:40:00Z',
+-  },
+-];
+ 
+ export async function checkIsPlatformAdmin(): Promise<boolean> {
+   try {
+     const { data: { user } } = await supabase.auth.getUser();
+-    if (!user) {
+-      // In local development / preview environment, allow creator toggle
+-      const devOverride = localStorage.getItem('frostly_platform_owner_override');
+-      return devOverride === 'true';
+-    }
+-
+-    // Direct check for platform creator account via configured env or metadata
+-    if (
+-      (configuredCreatorEmail && user.email?.toLowerCase() === configuredCreatorEmail.toLowerCase()) ||
+-      user.user_metadata?.role === 'platform_creator' ||
+-      user.app_metadata?.role === 'platform_creator'
+-    ) {
+-      return true;
+-    }
+-
++    if (!user) return false;
++    // Only server-set app_metadata or the platform_admins table (self-readable via RLS) can grant this.
++    if (user.app_metadata?.role === 'platform_creator') return true;
+     const { data, error } = await supabase
+       .from('platform_admins')
+       .select('user_id')
+       .eq('user_id', user.id)
+       .maybeSingle();
+-
+-    if (error || !data) {
+-      const devOverride = localStorage.getItem('frostly_platform_owner_override');
+-      return devOverride === 'true';
+-    }
+-    return true;
++    return !error && Boolean(data);
+   } catch {
+-    const devOverride = localStorage.getItem('frostly_platform_owner_override');
+-    return devOverride === 'true';
++    return false;
+   }
+ }
+ 
+@@ -180,7 +56,7 @@ async function platformServerFetch(
+   try {
+     const session = await getSession();
+     const token = session?.access_token;
+-    if (!token || token.startsWith('local-token-')) {
++    if (!token) {
+       return { ok: false, status: 0, body: null };
+     }
+     const res = await fetch(path, {
+@@ -206,9 +82,6 @@ export async function fetchPlatformOrganizations(): Promise<PlatformOrganization
+       staff_count: Number(d.staff_count || 0),
+       pending_invites_count: Number(d.pending_invites_count || 0),
+     }));
+-    try {
+-      localStorage.setItem(STORAGE_KEY_ORGS, JSON.stringify(liveOrgs));
+-    } catch {}
+     return liveOrgs;
+   }
+ 
+@@ -220,34 +93,18 @@ export async function fetchPlatformOrganizations(): Promise<PlatformOrganization
+         staff_count: Number(d.staff_count || 0),
+         pending_invites_count: Number(d.pending_invites_count || 0),
+       }));
+-      try {
+-        localStorage.setItem(STORAGE_KEY_ORGS, JSON.stringify(liveOrgs));
+-      } catch {}
+       return liveOrgs;
+     }
+   } catch (err) {
+     console.warn('Falling back to local platform organizations storage:', err);
+   }
+ 
+-  // Local storage fallback for standalone preview
+-  const saved = localStorage.getItem(STORAGE_KEY_ORGS);
+-  if (saved) {
+-    try {
+-      return JSON.parse(saved);
+-    } catch {
+-      // ignore
+-    }
+-  }
+-  localStorage.setItem(STORAGE_KEY_ORGS, JSON.stringify(INITIAL_DEMO_ORGS));
+-  return INITIAL_DEMO_ORGS;
++  throw new Error('Could not load organizations from the server.');
+ }
+ 
+ export async function fetchPlatformAuditLogs(): Promise<PlatformAuditLog[]> {
+   const apiRes = await platformServerFetch('/api/platform/audit-logs');
+   if (apiRes.ok && Array.isArray(apiRes.body?.logs)) {
+-    try {
+-      localStorage.setItem(STORAGE_KEY_AUDIT, JSON.stringify(apiRes.body.logs));
+-    } catch {}
+     return apiRes.body.logs;
+   }
+ 
+@@ -259,25 +116,13 @@ export async function fetchPlatformAuditLogs(): Promise<PlatformAuditLog[]> {
+       .limit(50);
+ 
+     if (!error && Array.isArray(data) && data.length > 0) {
+-      try {
+-        localStorage.setItem(STORAGE_KEY_AUDIT, JSON.stringify(data));
+-      } catch {}
+       return data;
+     }
+   } catch (err) {
+     console.warn('Falling back to local platform audit logs storage:', err);
+   }
+ 
+-  const saved = localStorage.getItem(STORAGE_KEY_AUDIT);
+-  if (saved) {
+-    try {
+-      return JSON.parse(saved);
+-    } catch {
+-      // ignore
+-    }
+-  }
+-  localStorage.setItem(STORAGE_KEY_AUDIT, JSON.stringify(INITIAL_DEMO_AUDIT));
+-  return INITIAL_DEMO_AUDIT;
++  throw new Error('Could not load platform audit logs from the server.');
+ }
+ 
+ export async function updatePlatformOrganizationSubscription(params: {
+@@ -315,59 +160,8 @@ export async function updatePlatformOrganizationSubscription(params: {
+     console.warn('RPC execution failed, falling back to local simulation:', err);
+   }
+ 
+-  // Fallback to local storage mutation
+-  const orgs = await fetchPlatformOrganizations();
+-  const index = orgs.findIndex(o => o.id === orgId);
+-  if (index === -1) {
+-    throw new Error(`Organization ${orgId} not found`);
+-  }
+-
+-  const oldOrg = { ...orgs[index] };
+-  const calculatedSeats = maxSeats ?? (planTier === 'enterprise' ? 9999 : planTier === 'standard' ? 20 : 5);
+-
+-  const updatedOrg: PlatformOrganization = {
+-    ...oldOrg,
+-    subscription_status: status,
+-    plan_tier: planTier,
+-    max_staff_seats: calculatedSeats,
+-    trial_ends_at: trialEndsAt !== undefined ? trialEndsAt : oldOrg.trial_ends_at,
+-  };
+-
+-  orgs[index] = updatedOrg;
+-  localStorage.setItem(STORAGE_KEY_ORGS, JSON.stringify(orgs));
+-
+-  // Add audit log
+-  const auditLogs = await fetchPlatformAuditLogs();
+-  const newAudit: PlatformAuditLog = {
+-    id: 'aud-' + Date.now(),
+-    actor_id: configuredCreatorEmail || 'platform_admin',
+-    action: 'manual_subscription_update',
+-    target_organization_id: orgId,
+-    previous_state: {
+-      subscription_status: oldOrg.subscription_status,
+-      plan_tier: oldOrg.plan_tier,
+-      max_staff_seats: oldOrg.max_staff_seats,
+-    },
+-    new_state: {
+-      subscription_status: updatedOrg.subscription_status,
+-      plan_tier: updatedOrg.plan_tier,
+-      max_staff_seats: updatedOrg.max_staff_seats,
+-    },
+-    reason: reason || 'Manual subscription update via Platform Console',
+-    created_at: new Date().toISOString(),
+-  };
+-
+-  auditLogs.unshift(newAudit);
+-  localStorage.setItem(STORAGE_KEY_AUDIT, JSON.stringify(auditLogs.slice(0, 50)));
+-
+-  return {
+-    success: true,
+-    organization_id: orgId,
+-    subscription_status: updatedOrg.subscription_status,
+-    plan_tier: updatedOrg.plan_tier,
+-    max_staff_seats: updatedOrg.max_staff_seats,
+-    reason,
+-  };
++  // The server did not confirm this change; never simulate success locally.
++  throw new Error('The server did not confirm this platform change. No changes were made.');
+ }
+ 
+ /**
+@@ -396,44 +190,8 @@ export async function revokePlatformOrganization(orgId: string, reason: string):
+     console.warn('RPC platform_revoke_organization_access failed, applying local fallback:', err);
+   }
+ 
+-  // Fallback to local storage
+-  const orgs = await fetchPlatformOrganizations();
+-  const index = orgs.findIndex(o => o.id === orgId);
+-  if (index === -1) {
+-    throw new Error(`Organization ${orgId} not found`);
+-  }
+-
+-  const oldOrg = { ...orgs[index] };
+-  const updatedOrg: PlatformOrganization = {
+-    ...oldOrg,
+-    subscription_status: 'suspended',
+-    pending_invites_count: 0,
+-  };
+-
+-  orgs[index] = updatedOrg;
+-  localStorage.setItem(STORAGE_KEY_ORGS, JSON.stringify(orgs));
+-
+-  const auditLogs = await fetchPlatformAuditLogs();
+-  const newAudit: PlatformAuditLog = {
+-    id: 'aud-' + Date.now(),
+-    actor_id: 'platform_owner@frostly.io',
+-    action: 'revoke_organization_access',
+-    target_organization_id: orgId,
+-    previous_state: { subscription_status: oldOrg.subscription_status },
+-    new_state: { subscription_status: 'suspended' },
+-    reason: reason || 'Tenant access revoked: operational lockout applied',
+-    created_at: new Date().toISOString(),
+-  };
+-
+-  auditLogs.unshift(newAudit);
+-  localStorage.setItem(STORAGE_KEY_AUDIT, JSON.stringify(auditLogs.slice(0, 50)));
+-
+-  return {
+-    success: true,
+-    organization_id: orgId,
+-    subscription_status: 'suspended',
+-    reason,
+-  };
++  // The server did not confirm this change; never simulate success locally.
++  throw new Error('The server did not confirm this platform change. No changes were made.');
+ }
+ 
+ /**
+@@ -466,43 +224,8 @@ export async function reinstatePlatformOrganization(
+     console.warn('RPC platform_reinstate_organization_access failed, applying local fallback:', err);
+   }
+ 
+-  // Fallback to local storage
+-  const orgs = await fetchPlatformOrganizations();
+-  const index = orgs.findIndex(o => o.id === orgId);
+-  if (index === -1) {
+-    throw new Error(`Organization ${orgId} not found`);
+-  }
+-
+-  const oldOrg = { ...orgs[index] };
+-  const updatedOrg: PlatformOrganization = {
+-    ...oldOrg,
+-    subscription_status: targetStatus,
+-  };
+-
+-  orgs[index] = updatedOrg;
+-  localStorage.setItem(STORAGE_KEY_ORGS, JSON.stringify(orgs));
+-
+-  const auditLogs = await fetchPlatformAuditLogs();
+-  const newAudit: PlatformAuditLog = {
+-    id: 'aud-' + Date.now(),
+-    actor_id: 'platform_owner@frostly.io',
+-    action: 'reinstate_organization_access',
+-    target_organization_id: orgId,
+-    previous_state: { subscription_status: oldOrg.subscription_status },
+-    new_state: { subscription_status: targetStatus },
+-    reason: reason || 'Tenant access reinstated by administrator',
+-    created_at: new Date().toISOString(),
+-  };
+-
+-  auditLogs.unshift(newAudit);
+-  localStorage.setItem(STORAGE_KEY_AUDIT, JSON.stringify(auditLogs.slice(0, 50)));
+-
+-  return {
+-    success: true,
+-    organization_id: orgId,
+-    subscription_status: targetStatus,
+-    reason,
+-  };
++  // The server did not confirm this change; never simulate success locally.
++  throw new Error('The server did not confirm this platform change. No changes were made.');
+ }
+ 
+ /**
+@@ -538,53 +261,8 @@ export async function deletePlatformOrganization(
+     console.warn('RPC platform_delete_organization failed, applying local fallback:', err);
+   }
+ 
+-  // Fallback to local storage
+-  const orgs = await fetchPlatformOrganizations();
+-  const targetIndex = orgs.findIndex(o => o.id === orgId);
+-  if (targetIndex === -1) {
+-    throw new Error(`Organization ${orgId} not found`);
+-  }
+-
+-  const targetOrg = orgs[targetIndex];
+-
+-  if (confirmName && confirmName.trim().toLowerCase() !== targetOrg.name.trim().toLowerCase()) {
+-    throw new Error(`Confirmation name "${confirmName}" does not match "${targetOrg.name}"`);
+-  }
+-
+-  const remainingOrgs = orgs.filter(o => o.id !== orgId);
+-  localStorage.setItem(STORAGE_KEY_ORGS, JSON.stringify(remainingOrgs));
+-
+-  // Log permanent audit record
+-  const auditLogs = await fetchPlatformAuditLogs();
+-  const deleteAudit: PlatformAuditLog = {
+-    id: 'aud-' + Date.now(),
+-    actor_id: 'platform_owner@frostly.io',
+-    action: 'delete_organization',
+-    target_organization_id: null,
+-    previous_state: {
+-      id: targetOrg.id,
+-      name: targetOrg.name,
+-      plan_tier: targetOrg.plan_tier,
+-      subscription_status: targetOrg.subscription_status,
+-      staff_count: targetOrg.staff_count,
+-    },
+-    new_state: {
+-      status: 'deleted',
+-      deleted_at: new Date().toISOString(),
+-    },
+-    reason: reason || `Tenant organization "${targetOrg.name}" permanently deprovisioned and deleted`,
+-    created_at: new Date().toISOString(),
+-  };
+-
+-  auditLogs.unshift(deleteAudit);
+-  localStorage.setItem(STORAGE_KEY_AUDIT, JSON.stringify(auditLogs.slice(0, 50)));
+-
+-  return {
+-    success: true,
+-    deleted_organization_id: orgId,
+-    deleted_name: targetOrg.name,
+-    reason,
+-  };
++  // The server did not confirm this change; never simulate success locally.
++  throw new Error('The server did not confirm this platform change. No changes were made.');
+ }
+ 
+ /**
