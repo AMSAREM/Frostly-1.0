@@ -211,18 +211,9 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
             window.location.hash = '#signup';
             setUnauthView('create_org');
           }}
-          onExploreDemo={async () => {
-            setIsCheckingSession(true);
-            const res = await signInAsTestUser();
-            if (res.session) {
-              setSession(res.session);
-              const profile = await getStaffProfile(true);
-              setStaffProfile(profile);
-            } else {
-              window.location.hash = '#login';
-              setUnauthView('login');
-            }
-            setIsCheckingSession(false);
+          onExploreDemo={() => {
+            window.location.hash = '#login';
+            setUnauthView('login');
           }}
         />
       );

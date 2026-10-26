@@ -239,122 +239,89 @@ export default function App() {
   // Newly created or active tenant workspaces are initialized completely clean without demo data
   const [batches, setBatches] = useState<InventoryBatch[]>(() => {
     try {
-      if (activeOrgId) {
-        return batchRepository.getLocalCache([], activeOrgId);
-      }
-      return batchRepository.getLocalCache(INITIAL_BATCHES);
+      return batchRepository.getLocalCache([], activeOrgId);
     } catch {
-      return activeOrgId ? [] : INITIAL_BATCHES;
+      return [];
     }
   });
 
   const [orders, setOrders] = useState<ClientOrder[]>(() => {
     try {
-      if (activeOrgId) {
-        return orderRepository.getLocalCache([], activeOrgId);
-      }
-      return orderRepository.getLocalCache(INITIAL_ORDERS);
+      return orderRepository.getLocalCache([], activeOrgId);
     } catch {
-      return activeOrgId ? [] : INITIAL_ORDERS;
+      return [];
     }
   });
 
   const [customers, setCustomers] = useState<Customer[]>(() => {
     try {
-      if (activeOrgId) {
-        return customerRepository.getLocalCache([], activeOrgId);
-      }
-      return customerRepository.getLocalCache(INITIAL_CUSTOMERS);
+      return customerRepository.getLocalCache([], activeOrgId);
     } catch {
-      return activeOrgId ? [] : INITIAL_CUSTOMERS;
+      return [];
     }
   });
 
   const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
     try {
-      if (activeOrgId) {
-        return supplierRepository.getLocalCache([], activeOrgId);
-      }
-      return supplierRepository.getLocalCache(INITIAL_SUPPLIERS);
+      return supplierRepository.getLocalCache([], activeOrgId);
     } catch {
-      return activeOrgId ? [] : INITIAL_SUPPLIERS;
+      return [];
     }
   });
 
   const [products, setProducts] = useState<RetailWholesaleProduct[]>(() => {
     try {
-      if (activeOrgId) {
-        return productRepository.getLocalCache([], activeOrgId);
-      }
-      return productRepository.getLocalCache(INITIAL_PRODUCTS);
+      return productRepository.getLocalCache([], activeOrgId);
     } catch {
-      return activeOrgId ? [] : INITIAL_PRODUCTS;
+      return [];
     }
   });
 
   const [retailSales, setRetailSales] = useState<RetailTransaction[]>(() => {
     try {
-      if (activeOrgId) {
-        return retailTransactionRepository.getLocalCache([], activeOrgId);
-      }
-      return retailTransactionRepository.getLocalCache(INITIAL_RETAIL_TRANSACTIONS);
+      return retailTransactionRepository.getLocalCache([], activeOrgId);
     } catch {
-      return activeOrgId ? [] : INITIAL_RETAIL_TRANSACTIONS;
+      return [];
     }
   });
 
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderLanding[]>(() => {
     try {
-      if (activeOrgId) {
-        return purchaseOrderRepository.getLocalCache([], activeOrgId);
-      }
-      return purchaseOrderRepository.getLocalCache(INITIAL_PURCHASE_ORDERS);
+      return purchaseOrderRepository.getLocalCache([], activeOrgId);
     } catch {
-      return activeOrgId ? [] : INITIAL_PURCHASE_ORDERS;
+      return [];
     }
   });
 
   const [financialEntries, setFinancialEntries] = useState<FinancialLedgerEntry[]>(() => {
     try {
-      if (activeOrgId) {
-        return financialRepository.getLocalCache([], activeOrgId);
-      }
-      return financialRepository.getLocalCache(INITIAL_FINANCIAL_ENTRIES);
+      return financialRepository.getLocalCache([], activeOrgId);
     } catch {
-      return activeOrgId ? [] : INITIAL_FINANCIAL_ENTRIES;
+      return [];
     }
   });
 
   const [adjustmentAccounts, setAdjustmentAccounts] = useState<InventoryAdjustmentAccount[]>(() => {
     try {
-      if (activeOrgId) {
-        return adjustmentAccountRepository.getLocalCache([], activeOrgId);
-      }
-      return adjustmentAccountRepository.getLocalCache(INITIAL_ADJUSTMENT_ACCOUNTS);
+      return adjustmentAccountRepository.getLocalCache([], activeOrgId);
     } catch {
-      return activeOrgId ? [] : INITIAL_ADJUSTMENT_ACCOUNTS;
+      return [];
     }
   });
 
   const [stockAdjustments, setStockAdjustments] = useState<InventoryStockAdjustment[]>(() => {
     try {
-      if (activeOrgId) {
-        return stockAdjustmentRepository.getLocalCache([], activeOrgId);
-      }
-      return stockAdjustmentRepository.getLocalCache(INITIAL_STOCK_ADJUSTMENTS);
+      return stockAdjustmentRepository.getLocalCache([], activeOrgId);
     } catch {
-      return activeOrgId ? [] : INITIAL_STOCK_ADJUSTMENTS;
+      return [];
     }
   });
 
   const [notifications, setNotifications] = useState<SystemNotification[]>(() => {
     try {
-      if (activeOrgId) {
-        return notificationRepository.getLocalCache([], activeOrgId);
-      }
-      return notificationRepository.getLocalCache(INITIAL_NOTIFICATIONS);
+      return notificationRepository.getLocalCache([], activeOrgId);
     } catch {
-      return activeOrgId ? [] : INITIAL_NOTIFICATIONS;
+      return [];
     }
   });
 
@@ -825,23 +792,39 @@ export default function App() {
     });
   };
 
-  const handleResetToDefaults = () => {
-    setBatches(INITIAL_BATCHES);
-    setOrders(INITIAL_ORDERS);
-    setCustomers(INITIAL_CUSTOMERS);
-    setSuppliers(INITIAL_SUPPLIERS);
-    setProducts(INITIAL_PRODUCTS);
-    setRetailSales(INITIAL_RETAIL_TRANSACTIONS);
-    setPurchaseOrders(INITIAL_PURCHASE_ORDERS);
-    setFinancialEntries(INITIAL_FINANCIAL_ENTRIES);
+  const handleResetToDefaults = async () => {
+    if (activeOrgId) {
+      const freshBatches = await batchRepository.getBatches([]);
+      setBatches(freshBatches);
+      const freshOrders = await orderRepository.getOrders([]);
+      setOrders(freshOrders);
+      const freshCust = await customerRepository.getCustomers([]);
+      setCustomers(freshCust);
+      const freshSupp = await supplierRepository.getSuppliers([]);
+      setSuppliers(freshSupp);
+      const freshProd = await productRepository.getProducts([]);
+      setProducts(freshProd);
+      addNotification({
+        title: 'Workspace Refreshed',
+        message: 'Live database records reloaded from workspace storage.',
+        type: 'system',
+        urgency: 'low',
+      });
+      return;
+    }
+    setBatches([]);
+    setOrders([]);
+    setCustomers([]);
+    setSuppliers([]);
+    setProducts([]);
+    setRetailSales([]);
+    setPurchaseOrders([]);
+    setFinancialEntries([]);
     setSettings(DEFAULT_SETTINGS);
     setUseImperial(DEFAULT_SETTINGS.useImperial);
-    localStorage.clear();
-    batchRepository.resetCache(INITIAL_BATCHES);
-    customerRepository.resetCache(INITIAL_CUSTOMERS);
     addNotification({
-      title: 'Demo Data Restored',
-      message: 'All seafood inventory and financials reset to factory sample state.',
+      title: 'Workspace Reset',
+      message: 'Workspace cache reset.',
       type: 'system',
       urgency: 'low'
     });

@@ -155,7 +155,7 @@ export const LandingHero: React.FC<LandingHeroProps> = ({
               id="hero-explore-demo-btn"
               className="bg-slate-900 hover:bg-slate-800 text-white font-medium text-base px-7 py-3.5 rounded-md shadow-sm transition-all active:scale-[0.98] cursor-pointer flex items-center gap-2"
             >
-              <span>Explore Live Demo</span>
+              <span>Sign In to Workspace</span>
               <ArrowRight className="w-4 h-4 text-slate-300" />
             </button>
 

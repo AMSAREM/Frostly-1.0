@@ -299,60 +299,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
     }
   };
 
-  // Tenant Admin Quick-Login Handler
-  const handleDevQuickLogin = async () => {
-    const targetEmail = DEFAULT_TEST_USER_EMAIL || 'admin@frostly.io';
-    const targetPass = DEFAULT_TEST_USER_PASSWORD || 'frostly2026';
-    setEmail(targetEmail);
-    setPassword(targetPass);
-    setIsLoading(true);
-    setErrorMessage(null);
-
-    try {
-      const result = await signInAsTestUser(targetEmail, targetPass);
-      if (result.error) {
-        setErrorMessage(result.error);
-      } else {
-        if (onAuthSuccess) onAuthSuccess();
-      }
-    } catch (err: any) {
-      setErrorMessage(err?.message || 'Tenant admin sign-in failed.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Creator Quick-Login Handler (Platform Owner - Dev Only)
-  const handleCreatorQuickLogin = async () => {
-    if (import.meta.env?.PROD) {
-      setErrorMessage('Creator dev auto-login is disabled in production.');
-      return;
-    }
-    const targetEmail = DEFAULT_CREATOR_EMAIL;
-    const targetPass = DEFAULT_CREATOR_PASSWORD;
-    if (!targetEmail || !targetPass) {
-      setErrorMessage('Creator dev credentials are not configured.');
-      return;
-    }
-    setEmail(targetEmail);
-    setPassword(targetPass);
-    setIsLoading(true);
-    setErrorMessage(null);
-
-    try {
-      const result = await signInAsCreator(targetEmail, targetPass);
-      if (result.error) {
-        setErrorMessage(result.error);
-      } else {
-        if (onAuthSuccess) onAuthSuccess();
-      }
-    } catch (err: any) {
-      setErrorMessage(err?.message || 'Creator sign-in failed.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   // Create Organization Handler
   const handleCreateOrg = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -842,30 +788,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                       <span>Log In to Workspace</span>
                     )}
                   </button>
-
-                  {!enforceBlankStaffLogin && (
-                    <>
-                      <div className="relative my-3">
-                        <div className="absolute inset-0 flex items-center">
-                          <div className="w-full border-t border-slate-200"></div>
-                        </div>
-                        <div className="relative flex justify-center text-[10px] uppercase font-bold tracking-wider">
-                          <span className="bg-white px-2 text-slate-400">or explore without credentials</span>
-                        </div>
-                      </div>
-
-                      <button
-                        id="auth-gate-instant-demo-btn"
-                        type="button"
-                        onClick={handleDevQuickLogin}
-                        disabled={isLoading}
-                        className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
-                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Explore Demo Mode (Instant Access)</span>
-                      </button>
-                    </>
-                  )}
                 </>
               ) : (
                 /* Sub-form: Secure Password Recovery */
@@ -935,89 +857,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                       )}
                       <span>Update Password</span>
                     </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Quick Login Buttons & Credentials Box (Development Only - hidden during POS security re-auth) */}
-              {!enforceBlankStaffLogin && !import.meta.env?.PROD && Boolean(DEFAULT_CREATOR_EMAIL || DEFAULT_TEST_USER_EMAIL) && (
-                <div className="mt-3 space-y-2">
-                  {!import.meta.env?.PROD && DEFAULT_CREATOR_EMAIL && DEFAULT_CREATOR_PASSWORD && (
-                    <button
-                      id="auth-gate-creator-login-btn"
-                      type="button"
-                      onClick={handleCreatorQuickLogin}
-                      disabled={isLoading}
-                      className="w-full py-2 px-3 border border-dashed border-indigo-300 hover:border-indigo-400 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-700 rounded-xl text-xs font-mono-code transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                      title={`Sign in as Platform Creator (${DEFAULT_CREATOR_EMAIL})`}
-                    >
-                      <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>Quick Sign-In: [CREATOR] Platform Owner</span>
-                    </button>
-                  )}
-
-                  {DEFAULT_TEST_USER_EMAIL && DEFAULT_TEST_USER_PASSWORD && (
-                    <button
-                      id="auth-gate-dev-login-btn"
-                      type="button"
-                      onClick={handleDevQuickLogin}
-                      disabled={isLoading}
-                      className="w-full py-2 px-3 border border-dashed border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl text-xs font-mono-code transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                      title={`Quick-login as Amansocean tenant admin (${DEFAULT_TEST_USER_EMAIL})`}
-                    >
-                      <KeyRound className="w-3.5 h-3.5 text-slate-500" />
-                      <span>Quick Sign-In: [AMANSOCEAN] Org Admin</span>
-                    </button>
-                  )}
-
-                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 space-y-2">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                      Configured Dev Credentials (Click to Auto-Fill):
-                    </div>
-                    
-                    {/* Account 1: Creator (Dev Only) */}
-                    {!import.meta.env?.PROD && DEFAULT_CREATOR_EMAIL && DEFAULT_CREATOR_PASSWORD && (
-                      <button
-                        type="button"
-                        id="auth-gate-fill-creator-btn"
-                        onClick={() => {
-                          setEmail(DEFAULT_CREATOR_EMAIL);
-                          setPassword(DEFAULT_CREATOR_PASSWORD);
-                          setErrorMessage(null);
-                        }}
-                        className="w-full text-left p-2 rounded-lg bg-white border border-slate-200/80 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all cursor-pointer group"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold text-indigo-700 text-xs">Platform Creator</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 font-mono">Fill</span>
-                        </div>
-                        <div className="font-mono text-[10px] text-slate-600 mt-0.5">
-                          {DEFAULT_CREATOR_EMAIL} • <span className="text-slate-500">•••••••• (from env)</span>
-                        </div>
-                      </button>
-                    )}
-
-                    {/* Account 2: Tenant Admin */}
-                    {DEFAULT_TEST_USER_EMAIL && DEFAULT_TEST_USER_PASSWORD && (
-                      <button
-                        type="button"
-                        id="auth-gate-fill-admin-btn"
-                        onClick={() => {
-                          setEmail(DEFAULT_TEST_USER_EMAIL);
-                          setPassword(DEFAULT_TEST_USER_PASSWORD);
-                          setErrorMessage(null);
-                        }}
-                        className="w-full text-left p-2 rounded-lg bg-white border border-slate-200/80 hover:border-slate-300 hover:bg-slate-100/50 transition-all cursor-pointer group"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold text-slate-800 text-xs">Amansocean Org Admin</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-mono">Fill</span>
-                        </div>
-                        <div className="font-mono text-[10px] text-slate-600 mt-0.5">
-                          {DEFAULT_TEST_USER_EMAIL} • <span className="text-slate-500">•••••••• (from env)</span>
-                        </div>
-                      </button>
-                    )}
                   </div>
                 </div>
               )}

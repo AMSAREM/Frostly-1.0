@@ -111,12 +111,6 @@ export const LandingHeader: React.FC<LandingHeaderProps> = ({
               </button>
             )}
 
-            <button
-              onClick={onExploreDemo}
-              className="hidden md:inline-flex items-center text-sm font-medium text-slate-700 hover:text-slate-900 px-3 py-1.5 rounded-md hover:bg-slate-100 transition-colors whitespace-nowrap cursor-pointer"
-            >
-              Live Demo
-            </button>
 
             <button
               onClick={onSignIn}
@@ -198,15 +192,7 @@ export const LandingHeader: React.FC<LandingHeaderProps> = ({
                     <span>Install Frostly PWA</span>
                   </button>
                 )}
-                <button
-                  onClick={() => {
-                    setMobileMenuOpen(false);
-                    onExploreDemo();
-                  }}
-                  className="w-full text-center py-2 text-sm font-medium border border-slate-300 text-slate-700 rounded-md hover:bg-slate-50"
-                >
-                  Explore Live Demo
-                </button>
+
                 <button
                   onClick={() => {
                     setMobileMenuOpen(false);
