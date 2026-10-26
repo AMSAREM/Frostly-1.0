@@ -842,37 +842,53 @@ export async function createExpressApp(
   });
 
   // Workspace Data Purge: Wipes all operational & transactional records for a tenant while preserving user accounts & staff credentials
-  app.post('/api/tenant/purge-data', async (req, res) => {
-    const { organizationId, organizationName, confirmName } = req.body;
+  app.post('/api/tenant/purge-data', creatorOnly, async (req, res) => {
+    const { organizationId, confirmName } = req.body;
     const adminClient = getSupabaseAdmin();
     if (!adminClient) {
       res.status(500).json({ error: 'Supabase admin service is not configured.' });
       return;
     }
 
-    try {
-      let targetOrg: any = null;
-      if (organizationId) {
-        const { data } = await adminClient.from('organizations').select('*').eq('id', organizationId).maybeSingle();
-        targetOrg = data;
-      }
-      
-      if (!targetOrg && organizationName) {
-        const { data } = await adminClient
-          .from('organizations')
-          .select('*')
-          .ilike('name', `%${organizationName.trim()}%`)
-          .limit(1);
-        if (data && data.length > 0) targetOrg = data[0];
-      }
+    if (!organizationId || typeof organizationId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(organizationId.trim())) {
+      res.status(400).json({ error: 'A valid organization UUID is required for data purge.' });
+      return;
+    }
 
-      if (!targetOrg) {
-        res.status(404).json({ error: `Organization "${organizationName || organizationId}" not found.` });
+    const cleanOrgId = organizationId.trim().toLowerCase();
+
+    // Refuse HQ or root platform organization
+    if (
+      cleanOrgId === '00000000-0000-0000-0000-000000000000' ||
+      cleanOrgId === '00000000-0000-0000-0000-000000000001'
+    ) {
+      res.status(403).json({ error: 'Cannot purge the Frostly HQ or default root organization.' });
+      return;
+    }
+
+    try {
+      // Lookup target organization strictly by exact UUID
+      const { data: targetOrg, error: orgLookupErr } = await adminClient
+        .from('organizations')
+        .select('id, name')
+        .eq('id', cleanOrgId)
+        .maybeSingle();
+
+      if (orgLookupErr || !targetOrg) {
+        res.status(404).json({ error: `Organization "${cleanOrgId}" not found.` });
         return;
       }
 
-      if (confirmName && confirmName.trim().toLowerCase() !== targetOrg.name.trim().toLowerCase()) {
-        res.status(400).json({ error: `Confirmation name "${confirmName}" does not match organization name "${targetOrg.name}".` });
+      if (targetOrg.name.trim().toLowerCase().includes('frostly hq') || targetOrg.name.trim().toLowerCase() === 'frostly') {
+        res.status(403).json({ error: 'Cannot purge the Frostly HQ platform organization.' });
+        return;
+      }
+
+      // Exact confirmation name match required
+      if (!confirmName || typeof confirmName !== 'string' || confirmName.trim() !== targetOrg.name.trim()) {
+        res.status(400).json({
+          error: `Confirmation name "${confirmName || ''}" does not match exact organization name "${targetOrg.name}".`,
+        });
         return;
       }
 
@@ -887,7 +903,7 @@ export async function createExpressApp(
         return;
       }
 
-      // Fallback: direct table deletions
+      // Fallback: direct table deletions with failure tracking
       const orgId = targetOrg.id;
       const tables = [
         'inventory_adjustments',
@@ -911,12 +927,26 @@ export async function createExpressApp(
         'species'
       ];
 
+      const failedTables: string[] = [];
       for (const t of tables) {
         try {
-          await adminClient.from(t).delete().eq('organization_id', orgId);
-        } catch {
-          // ignore missing table or constraint
+          const { error: delErr } = await adminClient.from(t).delete().eq('organization_id', orgId);
+          if (delErr) {
+            console.error(`[Purge] Table ${t} deletion returned error:`, delErr);
+            failedTables.push(t);
+          }
+        } catch (tableErr) {
+          console.error(`[Purge] Table ${t} exception:`, tableErr);
+          failedTables.push(t);
         }
+      }
+
+      if (failedTables.length > 0) {
+        res.status(500).json({
+          error: `Purge operation failed for tables: ${failedTables.join(', ')}.`,
+          failedTables,
+        });
+        return;
       }
 
       const { data: staff } = await adminClient

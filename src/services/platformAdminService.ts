@@ -601,23 +601,35 @@ export async function purgeTenantWorkspaceData(
   preserved_user_emails?: string[];
   error?: string;
 }> {
-  // 1. Try server endpoint first
+  // 1. Try server endpoint first with authenticated bearer token
   try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const res = await fetch('/api/tenant/purge-data', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
-        organizationId: orgIdOrName.includes('-') ? orgIdOrName : undefined,
-        organizationName: !orgIdOrName.includes('-') ? orgIdOrName : undefined,
+        organizationId: orgIdOrName,
         confirmName,
       }),
     });
 
-    if (res.ok) {
-      const data = await res.json();
+    const data = await res.json().catch(() => null);
+
+    if (res.ok && data?.success) {
       return data;
     }
-  } catch (err) {
+
+    if (data?.error) {
+      return { success: false, error: data.error };
+    }
+  } catch (err: any) {
     console.warn('POST /api/tenant/purge-data failed, attempting Supabase RPC:', err);
   }
 
@@ -631,34 +643,16 @@ export async function purgeTenantWorkspaceData(
     if (!error && data?.success) {
       return data;
     }
-  } catch (err) {
-    console.warn('Supabase RPC purge_tenant_data_except_users failed:', err);
-  }
 
-  // 3. Fallback: Clear tenant-scoped local cache in browser
-  try {
-    const resolvedId = orgIdOrName;
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && (key.includes(`__tenant_${resolvedId}`) || key.includes('frostly_batches') || key.includes('frostly_orders') || key.includes('frostly_customers') || key.includes('frostly_suppliers') || key.includes('frostly_financial_entries') || key.includes('frostly_haccp_inspections') || key.includes('frostly_pos_cart'))) {
-        // Do NOT remove auth keys (frostly_staff_profile, frostly_active_org_id, supabase.auth.token, etc.)
-        if (!key.includes('auth') && !key.includes('profile') && !key.includes('token') && !key.includes('creator')) {
-          keysToRemove.push(key);
-        }
-      }
+    if (error) {
+      return { success: false, error: error.message };
     }
-    keysToRemove.forEach(k => localStorage.removeItem(k));
-
-    return {
-      success: true,
-      organization_id: resolvedId,
-      organization_name: confirmName || orgIdOrName,
-      preserved_users_count: 1,
-    };
-  } catch (e: any) {
-    return { success: false, error: e?.message || 'Failed to purge workspace data' };
+  } catch (err: any) {
+    console.warn('Supabase RPC purge_tenant_data_except_users failed:', err);
+    return { success: false, error: err?.message || 'Purge failed' };
   }
+
+  return { success: false, error: 'Failed to purge workspace data on server and database.' };
 }
 
 

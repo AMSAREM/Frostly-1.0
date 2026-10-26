@@ -96,13 +96,6 @@ export class BaseRepository<TDomain, TDatabaseRow> {
    */
   public async getOrganizationId(): Promise<string> {
     try {
-      const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('frostly_active_org_id') : null;
-      if (stored && !isInvalidOrgId(stored)) {
-        return stored;
-      }
-    } catch {}
-
-    try {
       const profile = await getStaffProfile();
       if (profile?.organization_id && !isInvalidOrgId(profile.organization_id)) {
         return profile.organization_id;
@@ -118,6 +111,13 @@ export class BaseRepository<TDomain, TDatabaseRow> {
     if (current && !isInvalidOrgId(current)) {
       return current;
     }
+
+    try {
+      const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('frostly_active_org_id') : null;
+      if (stored && !isInvalidOrgId(stored)) {
+        return stored;
+      }
+    } catch {}
 
     return '';
   }

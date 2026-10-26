@@ -384,43 +384,10 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       resolvedOrgId = AMANSOCEAN_TENANT_ID;
       resolvedOrgName = AMANSOCEAN_TENANT_NAME;
     } else {
-      // No assigned workspace: check if an existing organization exists in the database
-      let autoFoundOrg: any = null;
-      if (isSupabaseConfigured) {
-        try {
-          const storedOrg = typeof localStorage !== 'undefined' ? localStorage.getItem('frostly_active_org_id') : null;
-          if (storedOrg && isValidOrgId(storedOrg)) {
-            const { data: matched } = await supabase
-              .from('organizations')
-              .select('id, name, plan_tier, subscription_status, trial_ends_at, current_period_ends_at, max_staff_seats')
-              .eq('id', storedOrg)
-              .maybeSingle();
-            if (matched) autoFoundOrg = matched;
-          }
-          if (!autoFoundOrg) {
-            const { data: orgList } = await supabase
-              .from('organizations')
-              .select('id, name, plan_tier, subscription_status, trial_ends_at, current_period_ends_at, max_staff_seats')
-              .neq('id', '00000000-0000-0000-0000-000000000001')
-              .order('created_at', { ascending: false })
-              .limit(1);
-            if (orgList && orgList.length > 0) {
-              autoFoundOrg = orgList[0];
-            }
-          }
-        } catch {}
-      }
-
-      if (autoFoundOrg) {
-        resolvedOrgId = autoFoundOrg.id;
-        resolvedOrgName = autoFoundOrg.name;
-        orgData = autoFoundOrg;
-        isUnprovisioned = false;
-      } else {
-        isUnprovisioned = isSupabaseConfigured;
-        resolvedOrgId = isUnprovisioned ? '' : AMANSOCEAN_TENANT_ID;
-        resolvedOrgName = orgData?.name || (isUnprovisioned ? '' : AMANSOCEAN_TENANT_NAME);
-      }
+      // User has no assigned workspace -> route directly to onboarding without guessing
+      isUnprovisioned = isSupabaseConfigured;
+      resolvedOrgId = isUnprovisioned ? '' : AMANSOCEAN_TENANT_ID;
+      resolvedOrgName = isUnprovisioned ? '' : AMANSOCEAN_TENANT_NAME;
     }
 
     const defaultOrg: TenantOrganization = {
