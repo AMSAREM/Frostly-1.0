@@ -332,6 +332,7 @@ export interface RetailWholesaleProduct {
   isAvailableForWholesale: boolean;
   linkedBatchId?: string;
   storageZone?: StorageZone;
+  minSafetyStockKg?: number;
 }
 
 export interface RetailSaleItem {

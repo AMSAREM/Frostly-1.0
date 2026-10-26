@@ -8,6 +8,7 @@ import {
   Sparkles, 
   Check, 
   AlertCircle,
+  AlertTriangle,
   Upload,
   Info,
   Warehouse
@@ -92,6 +93,9 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const [origin, setOrigin] = useState(editingProduct?.origin || 'Pacific Ocean / San Francisco');
   const [imageUrl, setImageUrl] = useState(editingProduct?.imageUrl || '');
   const [stockKg, setStockKg] = useState<number>(editingProduct?.stockKg ?? 25);
+  const [minSafetyStockKg, setMinSafetyStockKg] = useState<number | ''>(
+    editingProduct?.minSafetyStockKg ?? 25
+  );
   const [costPrice, setCostPrice] = useState<number>(editingProduct?.costPricePerUnit ?? 45);
   const [wholesalePrice, setWholesalePrice] = useState<number>(editingProduct?.wholesalePricePerUnit ?? 65);
   const [retailPrice, setRetailPrice] = useState<number>(editingProduct?.retailPricePerUnit ?? 89);
@@ -122,6 +126,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       setOrigin(editingProduct.origin);
       setImageUrl(editingProduct.imageUrl);
       setStockKg(editingProduct.stockKg);
+      setMinSafetyStockKg(editingProduct.minSafetyStockKg ?? 25);
       setCostPrice(editingProduct.costPricePerUnit);
       setWholesalePrice(editingProduct.wholesalePricePerUnit);
       setRetailPrice(editingProduct.retailPricePerUnit);
@@ -143,6 +148,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       setOrigin('Pacific Ocean / San Francisco');
       setImageUrl('');
       setStockKg(25);
+      setMinSafetyStockKg(25);
       setCostPrice(45);
       setWholesalePrice(65);
       setRetailPrice(89);
@@ -266,6 +272,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         isAvailableForWholesale: isAvailableWholesale,
         linkedBatchId: linkedBatchId || undefined,
         storageZone,
+        minSafetyStockKg: minSafetyStockKg !== '' ? Number(minSafetyStockKg) : undefined,
       };
 
       await onSaveProduct(finalProduct);
@@ -489,7 +496,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
           </div>
 
           {/* Section 3: Stock & Unit */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl">
             <div>
               <label className="block text-[11px] font-bold text-slate-600 mb-1">Current Stock</label>
               <div className="relative">
@@ -502,6 +509,27 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                   className="w-full text-xs font-mono-code font-bold bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900"
                 />
                 <span className="absolute right-3 top-2 text-xs font-medium text-slate-400">{unit}</span>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1 flex items-center justify-between">
+                <span className="flex items-center gap-1 text-amber-700">
+                  <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                  <span>Min Safety Stock</span>
+                </span>
+              </label>
+              <div className="relative">
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  placeholder="e.g. 25"
+                  value={minSafetyStockKg}
+                  onChange={(e) => setMinSafetyStockKg(e.target.value === '' ? '' : parseFloat(e.target.value) || 0)}
+                  className="w-full text-xs font-mono-code font-bold bg-white border border-amber-300 rounded-xl px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+                <span className="absolute right-3 top-2 text-xs font-medium text-amber-600">kg</span>
               </div>
             </div>
 

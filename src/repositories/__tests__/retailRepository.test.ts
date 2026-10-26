@@ -104,4 +104,26 @@ describe('ProductRepository & Retail Sync Tests', () => {
     expect(restored.linkedBatchId).toBe('LOT-AO-2026-002');
     expect(restored.storageZone).toBe('Commercial Cold Storage (-22°C)');
   });
+
+  it('persists and parses minSafetyStockKg safety threshold in origin metadata and domain mapping', async () => {
+    const safetyProduct: RetailWholesaleProduct = {
+      ...sampleProduct,
+      id: 'ao-octopus-test',
+      stockKg: 15,
+      minSafetyStockKg: 50,
+    };
+
+    await productRepository.save(safetyProduct, true);
+
+    const queued = syncQueue.getAll()[0];
+    expect(queued.payload.origin).toContain('minSafetyStockKg');
+    expect(queued.payload.origin).toContain('50');
+
+    const { productMapper } = await import('../../mappers/retailMapper');
+    const restored = productMapper.toDomain(queued.payload as any);
+    expect(restored.minSafetyStockKg).toBe(50);
+    expect(restored.stockKg).toBe(15);
+    expect(restored.stockKg < (restored.minSafetyStockKg ?? 25)).toBe(true);
+  });
 });
+

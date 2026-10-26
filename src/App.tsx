@@ -493,6 +493,7 @@ export default function App() {
       origin: item.origin,
       isAvailableForRetail: true,
       isAvailableForWholesale: true,
+      minSafetyStockKg: item.min_safety_stock_kg,
     }));
 
     (async () => {
@@ -2097,6 +2098,7 @@ export default function App() {
             onNavigateToInventory={() => setActiveTab('inventory')}
             onOpenPosCustomerView={(opts) => handleOpenPosCustomerView(opts)}
             formatCurrency={formatAppCurrency}
+            lowStockThresholdKg={settings.lowStockThresholdKg}
           />
         )}
 

@@ -83,6 +83,7 @@ interface RetailWholesaleViewProps {
   onNavigateToInventory?: () => void;
   onOpenPosCustomerView?: (options?: { customerContact?: string; customerId?: string }) => void;
   formatCurrency: (amount: number) => string;
+  lowStockThresholdKg?: number;
 }
 
 export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
@@ -101,7 +102,8 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   onSyncOfficialPriceList,
   onNavigateToInventory,
   onOpenPosCustomerView,
-  formatCurrency
+  formatCurrency,
+  lowStockThresholdKg = 25,
 }) => {
   const [activeChannelTab, setActiveChannelTab] = useState<'retail_pos' | 'online_storefront' | 'wholesale_orders' | 'price_matrix'>('retail_pos');
   const [matrixSearch, setMatrixSearch] = useState<string>('');
@@ -724,66 +726,174 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
 
             {/* Product Card Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {filteredPOSProducts.map(prod => (
-                <div 
-                  key={prod.id}
-                  onClick={() => handleAddToCart(prod)}
-                  className="bg-white rounded-3xl border border-slate-200 p-4 shadow-xs hover:border-emerald-400 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between space-y-3 group"
-                >
-                  <div className="flex items-start gap-3">
-                    {prod.imageUrl ? (
-                      <div className="relative w-16 h-16 rounded-2xl border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
-                        <img 
-                          src={prod.imageUrl} 
-                          alt={prod.name} 
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                          onError={(e) => {
-                            e.currentTarget.style.display = 'none';
-                            const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
-                            if (fb) (fb as HTMLElement).style.display = 'flex';
-                          }}
-                        />
-                        <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
+              {filteredPOSProducts.map(prod => {
+                const safetyThreshold = typeof prod.minSafetyStockKg === 'number' && !isNaN(prod.minSafetyStockKg)
+                  ? prod.minSafetyStockKg
+                  : (lowStockThresholdKg ?? 25);
+                const currentStock = Number(prod.stockKg || 0);
+                const isLowStock = currentStock < safetyThreshold;
+                const isOutOfStock = currentStock <= 0;
+
+                return (
+                  <div 
+                    key={prod.id}
+                    onClick={() => handleAddToCart(prod)}
+                    className={`bg-white rounded-3xl p-4 shadow-xs hover:shadow-md transition-all cursor-pointer flex flex-col justify-between space-y-3 group relative ${
+                      isOutOfStock
+                        ? 'border-2 border-rose-300 bg-rose-50/20 hover:border-rose-400'
+                        : isLowStock
+                          ? 'border-2 border-amber-300 bg-amber-50/25 hover:border-amber-400'
+                          : 'border border-slate-200 hover:border-emerald-400'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      {prod.imageUrl ? (
+                        <div className="relative w-16 h-16 rounded-2xl border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
+                          <img 
+                            src={prod.imageUrl} 
+                            alt={prod.name} 
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                              const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
+                              if (fb) (fb as HTMLElement).style.display = 'flex';
+                            }}
+                          />
+                          <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
+                            <Package className="w-6 h-6" />
+                          </div>
+                          {isLowStock && (
+                            <div 
+                              className={`absolute top-1 left-1 p-1 rounded-lg text-white shadow-xs z-10 flex items-center justify-center ${
+                                isOutOfStock ? 'bg-rose-600' : 'bg-amber-500'
+                              }`}
+                              title={
+                                isOutOfStock
+                                  ? 'Depleted: Out of Stock'
+                                  : `Low Stock: ${currentStock} kg is below minimum safety threshold of ${safetyThreshold} kg`
+                              }
+                            >
+                              {isOutOfStock ? (
+                                <AlertCircle className="w-3.5 h-3.5" />
+                              ) : (
+                                <AlertTriangle className="w-3.5 h-3.5" />
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="relative w-16 h-16 rounded-2xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
                           <Package className="w-6 h-6" />
+                          {isLowStock && (
+                            <div 
+                              className={`absolute top-1 left-1 p-1 rounded-lg text-white shadow-xs z-10 flex items-center justify-center ${
+                                isOutOfStock ? 'bg-rose-600' : 'bg-amber-500'
+                              }`}
+                              title={
+                                isOutOfStock
+                                  ? 'Depleted: Out of Stock'
+                                  : `Low Stock: ${currentStock} kg is below minimum safety threshold of ${safetyThreshold} kg`
+                              }
+                            >
+                              {isOutOfStock ? (
+                                <AlertCircle className="w-3.5 h-3.5" />
+                              ) : (
+                                <AlertTriangle className="w-3.5 h-3.5" />
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-1.5">
+                          <div className="font-bold text-slate-900 text-xs leading-snug group-hover:text-emerald-700 transition-colors truncate">
+                            {prod.name}
+                          </div>
+                          {isLowStock && (
+                            <span 
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold shrink-0 border ${
+                                isOutOfStock
+                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                  : 'bg-amber-100/90 text-amber-900 border-amber-300'
+                              }`}
+                              title={`Current stock (${currentStock} kg) has fallen below defined minimum safety threshold (${safetyThreshold} kg)`}
+                            >
+                              {isOutOfStock ? (
+                                <>
+                                  <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />
+                                  <span>Out of Stock</span>
+                                </>
+                              ) : (
+                                <>
+                                  <AlertTriangle className="w-3 h-3 text-amber-700 shrink-0" />
+                                  <span>Low Stock</span>
+                                </>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-0.5 truncate">{prod.cutType}</div>
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          <span className="inline-block px-2 py-0.5 bg-emerald-50 text-emerald-800 text-[10px] font-bold rounded-md">
+                            {prod.grade}
+                          </span>
+                          {isLowStock && (
+                            <span className="text-[10px] text-amber-700 font-semibold font-mono-code">
+                              &lt;{safetyThreshold}kg min safe
+                            </span>
+                          )}
                         </div>
                       </div>
-                    ) : (
-                      <div className="w-16 h-16 rounded-2xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
-                        <Package className="w-6 h-6" />
-                      </div>
-                    )}
-                    <div>
-                      <div className="font-bold text-slate-900 text-xs leading-snug group-hover:text-emerald-700 transition-colors">
-                        {prod.name}
-                      </div>
-                      <div className="text-[11px] text-slate-500 mt-0.5">{prod.cutType}</div>
-                      <span className="inline-block mt-1 px-2 py-0.5 bg-emerald-50 text-emerald-800 text-[10px] font-bold rounded-md">
-                        {prod.grade}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                    <div>
-                      <div className="text-[10px] text-slate-400 font-bold uppercase">
-                        {posPricingMode === 'wholesale' ? 'Wholesale Tier' : 'Retail Price'}
-                      </div>
-                      <div className="text-base font-black text-slate-900 font-mono-code">
-                        {formatCurrency(getActivePosUnitPrice(prod))}
-                        <span className="text-[11px] font-normal text-slate-500">
-                          /{posPricingMode === 'wholesale' ? 'kg' : prod.unit}
-                        </span>
-                      </div>
                     </div>
 
-                    <div className="text-right">
-                      <div className="text-[10px] text-slate-400 font-bold uppercase">In Stock</div>
-                      <div className="text-xs font-bold text-slate-700 font-mono-code">{prod.stockKg} kg</div>
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <div>
+                        <div className="text-[10px] text-slate-400 font-bold uppercase">
+                          {posPricingMode === 'wholesale' ? 'Wholesale Tier' : 'Retail Price'}
+                        </div>
+                        <div className="text-base font-black text-slate-900 font-mono-code">
+                          {formatCurrency(getActivePosUnitPrice(prod))}
+                          <span className="text-[11px] font-normal text-slate-500">
+                            /{posPricingMode === 'wholesale' ? 'kg' : prod.unit}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <div className="text-[10px] font-bold uppercase flex items-center justify-end gap-1">
+                          {isLowStock ? (
+                            <span className={`inline-flex items-center gap-1 ${isOutOfStock ? 'text-rose-600' : 'text-amber-700'}`}>
+                              {isOutOfStock ? (
+                                <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />
+                              ) : (
+                                <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                              )}
+                              <span>{isOutOfStock ? 'Depleted' : 'Low Safety'}</span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">In Stock</span>
+                          )}
+                        </div>
+                        <div className={`text-xs font-mono-code ${
+                          isOutOfStock 
+                            ? 'font-black text-rose-600' 
+                            : isLowStock 
+                              ? 'font-black text-amber-800' 
+                              : 'font-bold text-slate-700'
+                        }`}>
+                          {prod.stockKg} kg
+                        </div>
+                        {isLowStock && (
+                          <div className="text-[9px] text-amber-700 font-medium">
+                            Min safe: {safetyThreshold} kg
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -2108,6 +2218,10 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
               const isEditing = editingPriceId === prod.id;
               const retailMargin = ((prod.retailPricePerUnit - prod.costPricePerUnit) / prod.retailPricePerUnit) * 100;
               const wholesaleMargin = ((prod.wholesalePricePerUnit - prod.costPricePerUnit) / prod.wholesalePricePerUnit) * 100;
+              const safetyThreshold = typeof prod.minSafetyStockKg === 'number' && !isNaN(prod.minSafetyStockKg)
+                ? prod.minSafetyStockKg
+                : (lowStockThresholdKg ?? 25);
+              const isLowStock = Number(prod.stockKg || 0) < safetyThreshold;
 
               return (
                 <div key={prod.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
@@ -2166,10 +2280,19 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                         })()}
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 shrink-0">
                         {prod.grade}
                       </span>
+                      {isLowStock && (
+                        <span 
+                          className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shrink-0 inline-flex items-center gap-1"
+                          title={`Stock (${prod.stockKg} kg) is below minimum safety threshold (${safetyThreshold} kg)`}
+                        >
+                          <AlertTriangle className="w-3 h-3 text-amber-600" />
+                          <span>Low Stock ({prod.stockKg}/{safetyThreshold}kg)</span>
+                        </span>
+                      )}
                       <button
                         onClick={() => {
                           setEditingProduct(prod);
@@ -2183,7 +2306,7 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs bg-white p-2.5 rounded-xl border border-slate-200/70">
+                  <div className="grid grid-cols-3 gap-2 text-xs bg-white p-2.5 rounded-xl border border-slate-200/70">
                     <div>
                       <div className="text-[10px] text-slate-400 font-bold uppercase">Landing Cost</div>
                       <div className="font-mono-code font-bold text-slate-700">{formatCurrency(prod.costPricePerUnit)}/{prod.unit}</div>
@@ -2191,6 +2314,13 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                     <div>
                       <div className="text-[10px] text-slate-400 font-bold uppercase">Origin</div>
                       <div className="font-medium text-slate-700 truncate">{prod.origin}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-slate-400 font-bold uppercase">Stock on Hand</div>
+                      <div className={`font-mono-code font-bold ${isLowStock ? 'text-amber-800 flex items-center gap-1' : 'text-slate-700'}`}>
+                        {isLowStock && <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />}
+                        <span>{prod.stockKg} {prod.unit}</span>
+                      </div>
                     </div>
                   </div>
 
@@ -2276,6 +2406,10 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                   const isEditing = editingPriceId === prod.id;
                   const retailMargin = ((prod.retailPricePerUnit - prod.costPricePerUnit) / prod.retailPricePerUnit) * 100;
                   const wholesaleMargin = ((prod.wholesalePricePerUnit - prod.costPricePerUnit) / prod.wholesalePricePerUnit) * 100;
+                  const safetyThreshold = typeof prod.minSafetyStockKg === 'number' && !isNaN(prod.minSafetyStockKg)
+                    ? prod.minSafetyStockKg
+                    : (lowStockThresholdKg ?? 25);
+                  const isLowStock = Number(prod.stockKg || 0) < safetyThreshold;
 
                   return (
                     <tr key={prod.id} className="hover:bg-slate-50/80 transition-colors">
@@ -2304,7 +2438,18 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                             </div>
                           )}
                           <div>
-                            <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-900 text-sm">{prod.name}</span>
+                              {isLowStock && (
+                                <span 
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300"
+                                  title={`Stock (${prod.stockKg} kg) is below minimum safety threshold (${safetyThreshold} kg)`}
+                                >
+                                  <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                                  <span>Low Stock ({prod.stockKg}/{safetyThreshold}kg)</span>
+                                </span>
+                              )}
+                            </div>
                             <div className="text-slate-400 text-[11px]">{prod.cutType} • {prod.sku}</div>
                             {(() => {
                               const linkedBatch = batches.find(b => 

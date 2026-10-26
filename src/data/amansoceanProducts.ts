@@ -74,6 +74,7 @@ export interface AmansoceanOfficialCatalogItem {
   cost_price_per_unit: number;
   wholesale_min_qty: number;
   stock_kg: number;
+  min_safety_stock_kg?: number;
   lot_id: string;
   description: string;
   image_url: string;
@@ -213,6 +214,7 @@ interface RawFlyerSeed {
   wholesale_price: number;
   wholesale_min_qty: number;
   stock_kg: number;
+  min_safety_stock_kg?: number;
   lot_id: string;
   description: string;
   badge?: 'New' | 'Hot' | 'Best Seller';
@@ -644,6 +646,7 @@ const RAW_OFFICIAL_SEEDS: RawFlyerSeed[] = [
     wholesale_price: 150,
     wholesale_min_qty: 5,
     stock_kg: 75,
+    min_safety_stock_kg: 100,
     lot_id: 'LOT-AO-2026-020',
     description: 'Cleaned whole Atlantic octopus tenderized by deep-freeze for charring, braising, and spicy stews.',
     rating: 4.8,
@@ -953,6 +956,8 @@ export const AMANSOCEAN_OFFICIAL_CATALOG: AmansoceanOfficialCatalogItem[] = RAW_
       cost_price_per_unit: Number((seed.wholesale_price * 0.72).toFixed(2)),
       wholesale_min_qty: seed.wholesale_min_qty,
       stock_kg: seed.stock_kg,
+      min_safety_stock_kg:
+        seed.min_safety_stock_kg ?? (seed.wholesale_min_qty ? seed.wholesale_min_qty * 10 : 50),
       lot_id: seed.lot_id,
       description: seed.description,
       image_url: buildSeafoodArtworkUri(

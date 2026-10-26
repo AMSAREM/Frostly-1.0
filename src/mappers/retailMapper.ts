@@ -21,6 +21,7 @@ export interface DatabaseProductRow {
   is_available_for_wholesale: boolean;
   linked_batch_id?: string | null;
   storage_zone?: string | null;
+  min_safety_stock_kg?: number | string | null;
   is_active?: boolean;
   organization_id?: string;
 }
@@ -49,10 +50,12 @@ export function parseProductOriginMeta(rawOrigin?: string | null): {
   cleanOrigin: string;
   linkedBatchId?: string;
   storageZone?: string;
+  minSafetyStockKg?: number;
 } {
   let cleanOrigin = String(rawOrigin || '');
   let linkedBatchId: string | undefined;
   let storageZone: string | undefined;
+  let minSafetyStockKg: number | undefined;
 
   if (cleanOrigin.includes('<!--frostly_lot:')) {
     try {
@@ -61,6 +64,9 @@ export function parseProductOriginMeta(rawOrigin?: string | null): {
         const parsed = JSON.parse(match[1]);
         if (parsed.linkedBatchId) linkedBatchId = String(parsed.linkedBatchId);
         if (parsed.storageZone) storageZone = String(parsed.storageZone);
+        if (parsed.minSafetyStockKg !== undefined && parsed.minSafetyStockKg !== null) {
+          minSafetyStockKg = Number(parsed.minSafetyStockKg);
+        }
       }
     } catch {
       // ignore malformed comment metadata
@@ -68,21 +74,24 @@ export function parseProductOriginMeta(rawOrigin?: string | null): {
     cleanOrigin = cleanOrigin.replace(/<!--frostly_lot:.*?-->/g, '').trim();
   }
 
-  return { cleanOrigin, linkedBatchId, storageZone };
+  return { cleanOrigin, linkedBatchId, storageZone, minSafetyStockKg };
 }
 
 export function encodeProductOriginMeta(
   origin: string,
   linkedBatchId?: string | null,
-  storageZone?: string | null
+  storageZone?: string | null,
+  minSafetyStockKg?: number | null
 ): string {
   const { cleanOrigin } = parseProductOriginMeta(origin);
-  if (!linkedBatchId && !storageZone) {
+  const hasSafety = minSafetyStockKg !== undefined && minSafetyStockKg !== null;
+  if (!linkedBatchId && !storageZone && !hasSafety) {
     return cleanOrigin;
   }
   const meta = JSON.stringify({
     linkedBatchId: linkedBatchId || null,
     storageZone: storageZone || null,
+    minSafetyStockKg: hasSafety ? Number(minSafetyStockKg) : null,
   });
   return cleanOrigin ? `${cleanOrigin} <!--frostly_lot:${meta}-->` : `<!--frostly_lot:${meta}-->`;
 }
@@ -161,6 +170,10 @@ export const productMapper = {
       isAvailableForWholesale: Boolean(row.is_available_for_wholesale),
       linkedBatchId: row.linked_batch_id || meta.linkedBatchId || undefined,
       storageZone: (row.storage_zone || meta.storageZone || undefined) as any,
+      minSafetyStockKg:
+        row.min_safety_stock_kg !== undefined && row.min_safety_stock_kg !== null
+          ? Number(row.min_safety_stock_kg)
+          : meta.minSafetyStockKg,
     };
   },
 
@@ -168,7 +181,8 @@ export const productMapper = {
     const encodedOrigin = encodeProductOriginMeta(
       domain.origin,
       domain.linkedBatchId,
-      domain.storageZone
+      domain.storageZone,
+      domain.minSafetyStockKg
     );
     const validUnit =
       domain.unit === 'kg' || domain.unit === 'lb' || domain.unit === 'piece' || domain.unit === 'pack'

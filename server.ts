@@ -2144,10 +2144,12 @@ export async function createExpressApp(
     cleanOrigin: string;
     linkedBatchId?: string;
     storageZone?: string;
+    minSafetyStockKg?: number;
   } {
     let cleanOrigin = String(rawOrigin || '');
     let linkedBatchId: string | undefined;
     let storageZone: string | undefined;
+    let minSafetyStockKg: number | undefined;
     if (cleanOrigin.includes('<!--frostly_lot:')) {
       try {
         const match = cleanOrigin.match(/<!--frostly_lot:(\{.*?\})-->/);
@@ -2155,23 +2157,29 @@ export async function createExpressApp(
           const parsed = JSON.parse(match[1]);
           if (parsed.linkedBatchId) linkedBatchId = String(parsed.linkedBatchId);
           if (parsed.storageZone) storageZone = String(parsed.storageZone);
+          if (parsed.minSafetyStockKg !== undefined && parsed.minSafetyStockKg !== null) {
+            minSafetyStockKg = Number(parsed.minSafetyStockKg);
+          }
         }
       } catch {}
       cleanOrigin = cleanOrigin.replace(/<!--frostly_lot:.*?-->/g, '').trim();
     }
-    return { cleanOrigin, linkedBatchId, storageZone };
+    return { cleanOrigin, linkedBatchId, storageZone, minSafetyStockKg };
   }
 
   function encodeOriginLotMeta(
     origin: string,
     linkedBatchId?: string | null,
-    storageZone?: string | null
+    storageZone?: string | null,
+    minSafetyStockKg?: number | null
   ): string {
     const { cleanOrigin } = parseOriginLotMeta(origin);
-    if (!linkedBatchId && !storageZone) return cleanOrigin;
+    const hasSafety = minSafetyStockKg !== undefined && minSafetyStockKg !== null;
+    if (!linkedBatchId && !storageZone && !hasSafety) return cleanOrigin;
     const meta = JSON.stringify({
       linkedBatchId: linkedBatchId || null,
       storageZone: storageZone || null,
+      minSafetyStockKg: hasSafety ? Number(minSafetyStockKg) : null,
     });
     return cleanOrigin ? `${cleanOrigin} <!--frostly_lot:${meta}-->` : `<!--frostly_lot:${meta}-->`;
   }
@@ -3467,6 +3475,10 @@ export async function createExpressApp(
       isAvailableForWholesale: row.is_available_for_wholesale !== false,
       linkedBatchId: row.linked_batch_id || originMeta.linkedBatchId || null,
       storageZone: row.storage_zone || originMeta.storageZone || 'Commercial Cold Storage (-22°C)',
+      minSafetyStockKg:
+        row.min_safety_stock_kg !== undefined && row.min_safety_stock_kg !== null
+          ? Number(row.min_safety_stock_kg)
+          : originMeta.minSafetyStockKg,
     };
   }
 
@@ -3614,7 +3626,7 @@ export async function createExpressApp(
         retail_pack_size: retailPackSize,
         sku,
         image_url: imageUrl,
-        origin,
+        origin: encodeOriginLotMeta(origin, body.linkedBatchId, body.storageZone, body.minSafetyStockKg),
         is_available_for_retail: body.isAvailableForRetail !== false,
         is_available_for_wholesale: body.isAvailableForWholesale !== false,
         is_active: true,
@@ -3664,7 +3676,12 @@ export async function createExpressApp(
       if (body.retailPackSize !== undefined || body.retail_pack_size !== undefined) {
         updates.retail_pack_size = String(body.retailPackSize || body.retail_pack_size);
       }
-      if (body.origin !== undefined || body.linkedBatchId !== undefined || body.storageZone !== undefined) {
+      if (
+        body.origin !== undefined ||
+        body.linkedBatchId !== undefined ||
+        body.storageZone !== undefined ||
+        body.minSafetyStockKg !== undefined
+      ) {
         const { data: existingProd } = await adminClient
           .from('retail_wholesale_products')
           .select('origin')
@@ -3677,7 +3694,9 @@ export async function createExpressApp(
           body.linkedBatchId !== undefined ? body.linkedBatchId : prevMeta.linkedBatchId;
         const nextZone =
           body.storageZone !== undefined ? body.storageZone : prevMeta.storageZone;
-        updates.origin = encodeOriginLotMeta(nextOrigin, nextLot, nextZone);
+        const nextSafety =
+          body.minSafetyStockKg !== undefined ? body.minSafetyStockKg : prevMeta.minSafetyStockKg;
+        updates.origin = encodeOriginLotMeta(nextOrigin, nextLot, nextZone, nextSafety);
       }
       if (body.retailPricePerUnit !== undefined || body.retail_price_per_unit !== undefined) {
         updates.retail_price_per_unit = Math.max(0, Number(body.retailPricePerUnit ?? body.retail_price_per_unit));
