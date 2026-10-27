@@ -5,10 +5,10 @@ import {
   getSession, 
   getStaffProfile, 
   signOut as authSignOut, 
-  signInAsTestUser,
   onAuthStateChange,
   StaffProfile 
 } from '../data/auth';
+import { isSupabaseConfigured } from '../utils/supabase';
 import { AuthGateScreen } from './AuthGateScreen';
 import { TenantOnboardingScreen } from './TenantOnboardingScreen';
 import { LandingPage } from './LandingPage';
@@ -169,6 +169,21 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     };
   }, []);
 
+  // State 0: Fail closed. Without a configured backend there is no login, no demo workspace and no local data.
+  if (!isSupabaseConfigured) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-slate-800 border border-slate-700 rounded-2xl p-8 text-center shadow-2xl">
+          <h2 className="text-xl font-bold text-white mb-2">Service not configured</h2>
+          <p className="text-slate-300 text-sm leading-relaxed">
+            This deployment is not connected to its authentication backend, so sign-in is disabled.
+            Please contact your administrator.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // State 1: Brief centered session-check loader (no form flash)
   if (isCheckingSession) {
     return (
@@ -269,6 +284,35 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
           >
             Sign Out
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // State 2.75: Signed in, but the workspace profile could not be loaded (network/RLS error).
+  // Never render the app shell with an empty profile and never mistake this for "needs onboarding".
+  if (!staffProfile) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-slate-800 border border-slate-700 rounded-2xl p-8 text-center shadow-2xl">
+          <h2 className="text-xl font-bold text-white mb-2">Could not load your workspace</h2>
+          <p className="text-slate-300 text-sm mb-6 leading-relaxed">
+            We could not reach your workspace data. Check your connection and try again.
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => { refreshProfile(); }}
+              className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-xl transition"
+            >
+              Retry
+            </button>
+            <button
+              onClick={handleSignOut}
+              className="flex-1 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-xl transition"
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
       </div>
     );

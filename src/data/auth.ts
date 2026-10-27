@@ -124,26 +124,19 @@ export function notifyAuthSubscribers(sess: Session | null): void {
   });
 }
 
+// Legacy demo/offline storage is purged: real sessions are owned and refreshed by supabase-js only.
+const LEGACY_DEMO_KEYS = ['frostly_local_session', 'frostly_offline_users'];
+try {
+  if (typeof localStorage !== 'undefined') LEGACY_DEMO_KEYS.forEach((k) => localStorage.removeItem(k));
+} catch {}
+
+/** @deprecated Local (fake) sessions no longer exist. Always returns null. */
 export function getLocalCachedSession(): Session | null {
-  try {
-    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LOCAL_SESSION_KEY) : null;
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
-export function setLocalCachedSession(sess: Session | null): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      if (sess) {
-        localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(sess));
-      } else {
-        localStorage.removeItem(LOCAL_SESSION_KEY);
-      }
-    }
-  } catch {}
-}
+/** @deprecated Local (fake) sessions no longer exist. Kept as a no-op for import compatibility. */
+export function setLocalCachedSession(_sess: Session | null): void {}
 
 const isDev = typeof import.meta !== 'undefined' ? Boolean(import.meta.env?.DEV) : process.env.NODE_ENV !== 'production';
 
@@ -152,58 +145,37 @@ export const AMANSOCEAN_TENANT_ID = '35a94c6e-e230-4b7c-8404-a4f0ae06b798';
 export const AMANSOCEAN_TENANT_NAME = 'Amansocean Seafoods and Coldstore';
 
 /**
- * Determine if an email address belongs to the Platform Creator
- */
-export function isPlatformCreatorEmail(email?: string | null): boolean {
-  if (!email) return false;
-  const lower = email.trim().toLowerCase();
-  return (
-    lower === 'amoakoimml@gmail.com' ||
-    (Boolean(DEFAULT_CREATOR_EMAIL) && lower === DEFAULT_CREATOR_EMAIL.toLowerCase())
-  );
-}
-
-/**
- * Determine if an email address belongs to Amansocean staff or management tenant
+ * Determine if an email address belongs to Amansocean staff or management domain
  */
 export function isAmansoceanEmail(email?: string | null): boolean {
   if (!email) return false;
   const lower = email.trim().toLowerCase();
-  if (isPlatformCreatorEmail(lower)) return false; // amoakoimml@gmail.com is Platform Creator, not tenant
   return (
     lower === 'info@amansocean.com' ||
     lower === 'admin@amansocean.com' ||
-    lower === 'elenamends@gmail.com' ||
-    lower === 'akokosolutions24@gmail.com' ||
-    lower === 'edmundbgh34@gmail.com' ||
-    lower === 'amoakoemmanuel2020@gmail.com' ||
-    lower === 'amoakoemmanuel2026@gmail.com' ||
     lower.endsWith('@amansocean.com') ||
-    lower.endsWith('@amansocean.store') ||
-    lower.includes('amansocean') ||
-    lower === 'kwesi@amansocean.com' ||
-    lower === 'anna@amansocean.com'
+    lower.endsWith('@amansocean.store')
   );
 }
 
-// Environment credentials - Tenant default is info@amansocean.com
+// Environment credentials
 export const DEFAULT_TEST_USER_EMAIL =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_EMAIL) || 'info@amansocean.com';
 
 export const DEFAULT_TEST_USER_PASSWORD =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) || 'amansocean2726@!!';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_TEST_USER_PASSWORD) || '';
 
 export const DEFAULT_TEST_USER = {
   email: DEFAULT_TEST_USER_EMAIL,
   password: DEFAULT_TEST_USER_PASSWORD,
 };
 
-// Platform Creator credentials: amoakoimml@gmail.com
+// Platform Creator credentials (strictly from env vars, no hardcoded fallbacks)
 export const DEFAULT_CREATOR_EMAIL =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_EMAIL) || 'amoakoimml@gmail.com';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_EMAIL) || '';
 
 export const DEFAULT_CREATOR_PASSWORD =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_PASSWORD) || 'frostly2026';
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_DEV_CREATOR_PASSWORD) || '';
 
 export const DEFAULT_CREATOR_USER = {
   email: DEFAULT_CREATOR_EMAIL,
@@ -215,40 +187,25 @@ export const DEFAULT_CREATOR_USER = {
  * Get the current Supabase auth session, caching it locally
  */
 export async function getSession(): Promise<Session | null> {
-  if (cachedSession) {
-    if (cachedSession.access_token && cachedSession.access_token.startsWith('local-token-')) {
-      cachedSession = null;
-      setLocalCachedSession(null);
-      return null;
-    }
-    return cachedSession;
-  }
-
-  const local = getLocalCachedSession();
-  if (local) {
-    if (local.access_token && local.access_token.startsWith('local-token-')) {
-      setLocalCachedSession(null);
-    } else {
-      cachedSession = local;
-      return cachedSession;
-    }
-  }
-
   if (!isSupabaseConfigured) {
     return null;
   }
 
+  // Reuse the in-memory session only while its access token is comfortably valid.
+  if (cachedSession?.expires_at && cachedSession.expires_at * 1000 - Date.now() > 60_000) {
+    return cachedSession;
+  }
+
   try {
-    if (!isInitialized) {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) {
-        console.warn('[Auth] Error getting session:', error.message);
-        cachedSession = null;
-      } else {
-        cachedSession = data.session;
-      }
-      isInitialized = true;
+    // supabase-js owns persistence and silently refreshes expired access tokens here.
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      console.warn('[Auth] Error getting session:', error.message);
+      cachedSession = null;
+    } else {
+      cachedSession = data.session;
     }
+    isInitialized = true;
     return cachedSession;
   } catch (err) {
     console.warn('[Auth] Exception checking session:', err);
@@ -272,7 +229,8 @@ export async function getCurrentUser(): Promise<User | null> {
 }
 
 /**
- * Fetch the staff profile corresponding to the current authenticated user
+ * Fetch the staff profile corresponding to the current authenticated user.
+ * Strictly derives organization and role from the database (staff_profiles).
  */
 export async function getStaffProfile(forceRefresh = false): Promise<StaffProfile | null> {
   if (cachedStaffProfile && !forceRefresh) {
@@ -284,139 +242,86 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
     cachedStaffProfile = null;
     return null;
   }
+  if (!isSupabaseConfigured) {
+    return null;
+  }
+
+  const ORG_COLUMNS =
+    'name, plan_tier, subscription_status, trial_ends_at, current_period_ends_at, max_staff_seats';
 
   try {
-    let profileData: any = null;
+    // 1. The database is the ONLY source of truth for tenancy: staff_profiles.organization_id.
+    let profileRow: any = null;
     let orgData: any = null;
 
-    if (isSupabaseConfigured) {
-      // 1. Attempt joined query with organizations directly from Supabase
-      const { data: joinedData, error: joinedError } = await supabase
+    const { data: joined, error: joinedError } = await supabase
+      .from('staff_profiles')
+      .select(`*, organizations(${ORG_COLUMNS})`)
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (!joinedError) {
+      profileRow = joined;
+      orgData = (joined as any)?.organizations ?? null;
+    } else {
+      const { data: plain, error: plainError } = await supabase
         .from('staff_profiles')
-        .select('*, organizations(name, plan_tier, subscription_status, trial_ends_at, current_period_ends_at, max_staff_seats)')
+        .select('*')
         .eq('id', user.id)
         .maybeSingle();
-
-      if (!joinedError && joinedData) {
-        profileData = joinedData;
-        orgData = (joinedData as any)?.organizations;
-      } else {
-        // 2. Fallback to direct staff_profiles query if join or relation is unavailable
-        const { data: plainData, error: plainError } = await supabase
-          .from('staff_profiles')
-          .select('*')
-          .eq('id', user.id)
+      if (plainError) {
+        // Transient failure: never mistake it for "no workspace" (that would send the user to onboarding).
+        console.warn('[Auth] Could not load staff profile:', plainError.message);
+        return cachedStaffProfile;
+      }
+      profileRow = plain;
+      if (plain?.organization_id) {
+        const { data: org } = await supabase
+          .from('organizations')
+          .select(ORG_COLUMNS)
+          .eq('id', plain.organization_id)
           .maybeSingle();
-
-        if (!plainError && plainData) {
-          profileData = plainData;
-        }
+        orgData = org ?? null;
       }
     }
 
-    // 3. Fallback: verified fetch from backend profile route if Supabase direct query returned nothing or is unconfigured
-    if (!profileData) {
-      const activeSession = await getSession();
-      if (activeSession?.access_token && !activeSession.access_token.startsWith('local-token-')) {
-        try {
-          const resp = await fetch('/api/auth/profile', {
-            headers: { Authorization: `Bearer ${activeSession.access_token}` },
-          });
-          if (resp.ok) {
-            const body = await resp.json().catch(() => ({}));
-            if (body?.profile) {
-              profileData = body.profile;
-              orgData = body.profile.organizations;
-            }
-          }
-        } catch {}
-      }
-    }
-
-    if (!profileData && (typeof process !== 'undefined' && process.env?.VITEST)) {
-      try {
-        const rawAccounts = localStorage.getItem('frostly_offline_users');
-        if (rawAccounts && user.email) {
-          const accounts = JSON.parse(rawAccounts);
-          const match = accounts[user.email.toLowerCase()];
-          if (match) {
-            profileData = {
-              id: user.id,
-              organization_id: match.orgId,
-              email: user.email,
-              full_name: match.fullName,
-              role: match.role || 'admin',
-              department: match.department || 'Executive Operations',
-              is_active: true,
-            };
-            orgData = {
-              name: match.orgName,
-              plan_tier: match.plan_tier || 'enterprise',
-              subscription_status: 'active',
-              max_staff_seats: 25,
-            };
-          }
-        }
-      } catch {}
-    }
-
+    // 2. Platform operators are identified by the platform_admins table (self-readable) or server-set app_metadata.
     let isPlatformAdmin = false;
-    if (isSupabaseConfigured && user) {
-      try {
-        const { data: pa } = await supabase
-          .from('platform_admins')
-          .select('user_id')
-          .eq('user_id', user.id)
-          .maybeSingle();
-        if (pa?.user_id) isPlatformAdmin = true;
-      } catch {}
-    }
+    try {
+      const { data: pa } = await supabase
+        .from('platform_admins')
+        .select('user_id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      isPlatformAdmin = Boolean(pa?.user_id);
+    } catch {}
+    const isCreator = isPlatformAdmin || user.app_metadata?.role === 'platform_creator';
 
-    const isCreator = 
-      isPlatformCreatorEmail(user.email) ||
-      user.app_metadata?.role === 'platform_creator' ||
-      isPlatformAdmin;
-    const fallbackRole = isCreator ? 'admin' : (isSupabaseConfigured ? 'viewer' : (user.user_metadata?.role || 'admin'));
+    const profileOrgId: string | null = profileRow?.organization_id ?? null;
+    const hasRealOrg = isValidOrgId(profileOrgId);
+    const isProfileInactive = profileRow?.is_active === false;
 
-    // Check if this user belongs to Amansocean
-    const isAmans = isAmansoceanEmail(user.email);
-    const isProfileInactive = profileData?.is_active === false;
-
-    // Check if user has an assigned, non-sentinel organization in staff_profiles or metadata
-    const assignedOrgId = profileData?.organization_id && 
-      profileData.organization_id !== 'org-frostly-hq' && 
-      profileData.organization_id !== '00000000-0000-0000-0000-000000000001'
-        ? profileData.organization_id
-        : null;
-
-    let resolvedOrgId: string;
-    let resolvedOrgName: string;
+    let resolvedOrgId = '';
+    let resolvedOrgName = '';
     let isUnprovisioned = false;
 
     if (isCreator) {
       resolvedOrgId = '00000000-0000-0000-0000-000000000001';
       resolvedOrgName = 'Frostly HQ';
-    } else if (isProfileInactive) {
-      resolvedOrgId = profileData.organization_id || '';
-      resolvedOrgName = orgData?.name || 'Workspace';
-      isUnprovisioned = false;
-    } else if (isAmans) {
-      // Direct resolution to Amansocean Seafoods workspace
-      resolvedOrgId = AMANSOCEAN_TENANT_ID;
-      resolvedOrgName = AMANSOCEAN_TENANT_NAME;
-      isUnprovisioned = false;
-    } else if (assignedOrgId) {
-      // User has their own registered workspace
-      resolvedOrgId = assignedOrgId;
-      resolvedOrgName = orgData?.name || user.user_metadata?.organization_name || 'Enterprise Workspace';
+    } else if (hasRealOrg) {
+      resolvedOrgId = profileOrgId as string;
+      resolvedOrgName = orgData?.name || '';
+      if (!orgData) {
+        // A real workspace whose organization row cannot be read: do not guess plan or status.
+        console.warn('[Auth] Organization record unavailable for workspace', resolvedOrgId);
+        return cachedStaffProfile;
+      }
     } else {
-      // User has no assigned workspace -> route to onboarding
-      isUnprovisioned = true;
-      resolvedOrgId = '';
-      resolvedOrgName = '';
+      // No assigned workspace (or only a platform placeholder): the user completes onboarding or is assigned by an admin.
+      isUnprovisioned = !isProfileInactive;
     }
 
-    const defaultOrg: TenantOrganization = {
+    const organization: TenantOrganization = {
       id: resolvedOrgId,
       name: resolvedOrgName,
       plan_tier: orgData?.plan_tier || 'enterprise',
@@ -426,74 +331,41 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       max_staff_seats: orgData?.max_staff_seats || 25,
     };
 
-    let userFullName = profileData?.full_name || user.user_metadata?.full_name;
-    if (!userFullName) {
-      const emailPrefix = user.email?.split('@')[0] || '';
-      if (emailPrefix.toLowerCase().includes('kwesi')) userFullName = 'Kwesi Mensah';
-      else if (emailPrefix.toLowerCase().includes('anna')) userFullName = 'Anna Mensah';
-      else if (emailPrefix.toLowerCase().includes('admin')) userFullName = 'Amansocean Operations Lead';
-      else if (emailPrefix) {
-        userFullName = emailPrefix
-          .split(/[._-]/)
-          .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
-          .join(' ');
-      } else {
-        userFullName = 'Staff User';
-      }
-    }
+    const emailPrefix = (user.email || '').split('@')[0];
+    const fullName =
+      profileRow?.full_name ||
+      user.user_metadata?.full_name ||
+      (emailPrefix
+        ? emailPrefix
+            .split(/[._-]/)
+            .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+            .join(' ')
+        : 'Staff User');
 
     cachedStaffProfile = {
-      id: profileData?.id || user.id,
+      id: profileRow?.id || user.id,
       organization_id: resolvedOrgId,
       organization_name: resolvedOrgName,
-      organization: defaultOrg,
-      email: profileData?.email || user.email || '',
-      full_name: userFullName,
-      role: (profileData?.role as any) || fallbackRole,
-      department: profileData?.department || user.user_metadata?.department || (isAmans ? 'Operations' : 'Executive'),
-      is_active: profileData?.is_active ?? true,
-      needs_onboarding: isProfileInactive ? false : isUnprovisioned,
+      organization,
+      email: profileRow?.email || user.email || '',
+      full_name: fullName,
+      // The role comes from the database only. Users without a profile get the least-privileged role.
+      role: (profileRow?.role as any) || (isCreator ? 'admin' : 'viewer'),
+      department: profileRow?.department || 'Operations',
+      is_active: profileRow?.is_active ?? true,
+      needs_onboarding: isUnprovisioned,
     };
 
-    if (cachedStaffProfile.organization_id && isValidOrgId(cachedStaffProfile.organization_id) && !isUnprovisioned && !isProfileInactive) {
+    if (isValidOrgId(resolvedOrgId) && !isProfileInactive) {
       try {
-        localStorage.setItem('frostly_active_org_id', cachedStaffProfile.organization_id);
+        localStorage.setItem('frostly_active_org_id', resolvedOrgId);
       } catch {}
-    }
-
-    // Auto-link staff profile in database if unlinked
-    const hasRealOrg = Boolean(
-      profileData?.organization_id && isValidOrgId(profileData.organization_id)
-    );
-    if (isSupabaseConfigured && user.id && isValidOrgId(resolvedOrgId) && !hasRealOrg && !isProfileInactive) {
-      Promise.resolve(
-        supabase.from('staff_profiles').upsert({
-          id: user.id,
-          organization_id: resolvedOrgId,
-          email: user.email || '',
-          full_name: userFullName,
-          role: cachedStaffProfile.role,
-          department: cachedStaffProfile.department,
-          is_active: true,
-        })
-      ).catch((err: any) => console.warn('[Auth] staff_profiles auto-link notice:', err?.message));
-    }
-
-    // Record login activity telemetry (non-blocking)
-    if (user && user.email) {
-      import('../services/activityTrackingService').then(({ recordUserLogin }) => {
-        recordUserLogin(
-          { id: user.id, email: user.email || '' },
-          cachedStaffProfile,
-          cachedStaffProfile?.organization
-        ).catch(() => {});
-      }).catch(() => {});
     }
 
     return cachedStaffProfile;
   } catch (e) {
     console.warn('[Auth] Exception fetching staff profile:', e);
-    return null;
+    return cachedStaffProfile;
   }
 }
 
@@ -514,10 +386,8 @@ export function getCurrentOrganizationId(): string {
 }
 
 /**
-/**
- * Sign in with email and password.
- * Strictly validates credentials against Supabase Auth.
- * Rejects invalid credentials with authentic errors. Never permits mock or offline bypasses.
+ * Sign in with email and password. Strictly validated by Supabase Auth.
+ * There is no demo, offline or test bypass: if the backend is not configured, sign-in fails.
  */
 export async function signIn(
   email: string,
@@ -536,366 +406,48 @@ export async function signIn(
     };
   }
 
-  const isVitest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
-
-  // 1. In production and development when Supabase is configured: direct client-side Supabase Auth
-  // This connects straight to the Supabase Auth API and eliminates 404 errors on static hosts (e.g. GitHub Pages)
-  if (isSupabaseConfigured && !isVitest) {
-    try {
-      const { data: sbData, error: sbError } = await supabase.auth.signInWithPassword({
-        email: emailCheck.normalizedEmail,
-        password,
-      });
-
-      if (sbError || !sbData.session) {
-        // A. Platform Creator Session (amoakoimml@gmail.com)
-        const isCreatorAttempt = 
-          isPlatformCreatorEmail(emailCheck.normalizedEmail) &&
-          (password === 'frostly2026' || password === DEFAULT_CREATOR_PASSWORD || password.length >= 6);
-
-        if (isCreatorAttempt) {
-          clearFailedAttempts(emailCheck.normalizedEmail);
-          const creatorUser: User = {
-            id: 'usr-creator-' + emailCheck.normalizedEmail.replace(/[^a-z0-9]/gi, '-'),
-            app_metadata: { provider: 'email', role: 'platform_creator' },
-            user_metadata: {
-              full_name: 'Emmanuel Amoako',
-              role: 'platform_creator',
-              organization_name: 'Frostly HQ',
-              organization_id: '00000000-0000-0000-0000-000000000001',
-            },
-            aud: 'authenticated',
-            created_at: new Date().toISOString(),
-            email: emailCheck.normalizedEmail,
-          } as any;
-
-          const creatorSession: Session = {
-            access_token: 'creator-token-' + Date.now(),
-            refresh_token: 'creator-refresh-' + Date.now(),
-            expires_in: 86400,
-            token_type: 'bearer',
-            user: creatorUser,
-          };
-
-          cachedSession = creatorSession;
-          setLocalCachedSession(creatorSession);
-
-          const hqOrg: TenantOrganization = {
-            id: '00000000-0000-0000-0000-000000000001',
-            name: 'Frostly HQ',
-            plan_tier: 'enterprise',
-            subscription_status: 'active',
-            trial_ends_at: new Date(Date.now() + 365 * 86400000).toISOString(),
-            max_staff_seats: 9999,
-          };
-
-          cachedStaffProfile = {
-            id: creatorUser.id,
-            organization_id: hqOrg.id,
-            organization_name: hqOrg.name,
-            organization: hqOrg,
-            email: creatorUser.email || emailCheck.normalizedEmail,
-            full_name: 'Emmanuel Amoako',
-            role: 'admin',
-            department: 'Platform Architecture',
-            is_active: true,
-            needs_onboarding: false,
-          };
-
-          try {
-            localStorage.setItem('frostly_active_org_id', hqOrg.id);
-          } catch {}
-
-          notifyAuthSubscribers(creatorSession);
-          return { session: creatorSession, error: null };
-        }
-
-        // B. Amansocean Tenant Session (info@amansocean.com, admin@amansocean.com, elenamends@gmail.com, etc.)
-        const isAmans = isAmansoceanEmail(emailCheck.normalizedEmail);
-        const isAmansAdminMatch = 
-          (emailCheck.normalizedEmail === DEFAULT_TEST_USER_EMAIL.toLowerCase() || isAmans) &&
-          (password === 'amansocean2726@!!' || password === DEFAULT_TEST_USER_PASSWORD || password === 'frostly2026' || password.length >= 6);
-
-        if (isAmansAdminMatch) {
-          clearFailedAttempts(emailCheck.normalizedEmail);
-          const fullName = emailCheck.normalizedEmail.includes('info')
-            ? 'Amansocean Tenant Admin'
-            : emailCheck.normalizedEmail.includes('elena')
-            ? 'Elena Mends'
-            : emailCheck.normalizedEmail.includes('kwesi')
-            ? 'Kwesi Mensah'
-            : 'Amansocean Operations Lead';
-
-          const testUser: User = {
-            id: 'usr-amans-' + emailCheck.normalizedEmail.replace(/[^a-z0-9]/gi, '-'),
-            app_metadata: { provider: 'email', role: 'admin' },
-            user_metadata: {
-              full_name: fullName,
-              role: 'admin',
-              department: 'Executive Operations',
-              organization_name: AMANSOCEAN_TENANT_NAME,
-              organization_id: AMANSOCEAN_TENANT_ID,
-            },
-            aud: 'authenticated',
-            created_at: new Date().toISOString(),
-            email: emailCheck.normalizedEmail,
-          } as any;
-
-          const tenantSession: Session = {
-            access_token: 'tenant-token-' + Date.now(),
-            refresh_token: 'tenant-refresh-' + Date.now(),
-            expires_in: 86400,
-            token_type: 'bearer',
-            user: testUser,
-          };
-
-          cachedSession = tenantSession;
-          setLocalCachedSession(tenantSession);
-
-          const org: TenantOrganization = {
-            id: AMANSOCEAN_TENANT_ID,
-            name: AMANSOCEAN_TENANT_NAME,
-            plan_tier: 'enterprise',
-            subscription_status: 'active',
-            trial_ends_at: new Date(Date.now() + 365 * 86400000).toISOString(),
-            max_staff_seats: 9999,
-          };
-
-          cachedStaffProfile = {
-            id: testUser.id,
-            organization_id: org.id,
-            organization_name: org.name,
-            organization: org,
-            email: testUser.email || emailCheck.normalizedEmail,
-            full_name: fullName,
-            role: 'admin',
-            department: 'Executive Operations',
-            is_active: true,
-            needs_onboarding: false,
-          };
-
-          try {
-            localStorage.setItem('frostly_active_org_id', org.id);
-          } catch {}
-
-          notifyAuthSubscribers(tenantSession);
-          return { session: tenantSession, error: null };
-        }
-
-        recordFailedAttempt(emailCheck.normalizedEmail);
-        return { session: null, error: sbError?.message || 'Invalid login credentials' };
-      }
-
-      clearFailedAttempts(emailCheck.normalizedEmail);
-      cachedSession = sbData.session;
-      setLocalCachedSession(sbData.session);
-      cachedStaffProfile = null;
-      try {
-        localStorage.removeItem('frostly_active_org_id');
-      } catch {}
-
-      await getStaffProfile(true);
-
-      // Record login activity in real-time
-      if (sbData.session?.user && sbData.session.user.email) {
-        import('../services/activityTrackingService')
-          .then(({ recordUserLogin }) => {
-            recordUserLogin(
-              { id: sbData.session.user.id, email: sbData.session.user.email || '' },
-              cachedStaffProfile,
-              cachedStaffProfile?.organization
-            ).catch(() => {});
-          })
-          .catch(() => {});
-      }
-
-      notifyAuthSubscribers(sbData.session);
-      return { session: sbData.session, error: null };
-    } catch (sbErr: any) {
-      recordFailedAttempt(emailCheck.normalizedEmail);
-      return { session: null, error: sbErr?.message || 'Authentication service error' };
-    }
+  if (!isSupabaseConfigured) {
+    return {
+      session: null,
+      error: 'Authentication service is not configured. Please contact your administrator.',
+    };
   }
 
-  // 2. Vitest test runner mock sessions or preview/offline mode when Supabase is not configured
-  if (isVitest || !isSupabaseConfigured) {
-    const isAmans = isAmansoceanEmail(emailCheck.normalizedEmail);
-    let storedOrg: TenantOrganization | null = null;
-    let storedProfile: Partial<StaffProfile> | null = null;
-    try {
-      const rawAccounts = typeof localStorage !== 'undefined' ? localStorage.getItem('frostly_offline_users') : null;
-      if (rawAccounts) {
-        const accounts = JSON.parse(rawAccounts);
-        const match = accounts[emailCheck.normalizedEmail.toLowerCase()];
-        if (match) {
-          storedOrg = {
-            id: match.orgId,
-            name: match.orgName,
-            plan_tier: match.plan_tier || 'enterprise',
-            subscription_status: 'active',
-            trial_ends_at: new Date(Date.now() + 30 * 86400000).toISOString(),
-            max_staff_seats: match.max_staff_seats || 25,
-          };
-          storedProfile = {
-            full_name: match.fullName,
-            role: match.role || 'admin',
-            department: match.department || 'Executive Operations',
-          };
-        }
-      }
-    } catch {}
-
-    const isCreatorAttempt = isPlatformCreatorEmail(emailCheck.normalizedEmail);
-    const resolvedOrgId = isCreatorAttempt
-      ? '00000000-0000-0000-0000-000000000001'
-      : (storedOrg?.id || AMANSOCEAN_TENANT_ID);
-    const resolvedOrgName = isCreatorAttempt
-      ? 'Frostly HQ'
-      : (storedOrg?.name || AMANSOCEAN_TENANT_NAME);
-    const fullName = isCreatorAttempt
-      ? 'Emmanuel Amoako'
-      : (storedProfile?.full_name || 
-        (emailCheck.normalizedEmail.includes('info')
-          ? 'Amansocean Tenant Admin'
-          : emailCheck.normalizedEmail.includes('elena')
-          ? 'Elena Mends'
-          : emailCheck.normalizedEmail.includes('kwesi')
-          ? 'Kwesi Mensah'
-          : emailCheck.normalizedEmail.includes('admin')
-          ? 'Amansocean Operations Lead'
-          : emailCheck.normalizedEmail.split('@')[0]));
-
-    const testUser: User = {
-      id: isCreatorAttempt
-        ? 'usr-creator-emmanuel'
-        : (storedProfile?.id || ('usr-amans-' + emailCheck.normalizedEmail.replace(/[^a-z0-9]/gi, '-'))),
-      app_metadata: { provider: 'email', role: isCreatorAttempt ? 'platform_creator' : 'admin' },
-      user_metadata: {
-        full_name: fullName,
-        role: isCreatorAttempt ? 'platform_creator' : 'admin',
-        department: isCreatorAttempt ? 'Platform Architecture' : 'Operations',
-        organization_name: resolvedOrgName,
-        organization_id: resolvedOrgId,
-      },
-      aud: 'authenticated',
-      created_at: new Date().toISOString(),
-      email: emailCheck.normalizedEmail,
-    } as any;
-
-    const testSession: Session = {
-      access_token: 'test-token-' + Date.now(),
-      refresh_token: 'test-refresh-' + Date.now(),
-      expires_in: 86400,
-      token_type: 'bearer',
-      user: testUser,
-    };
-
-    cachedSession = testSession;
-    setLocalCachedSession(testSession);
-    const org = storedOrg || {
-      id: resolvedOrgId,
-      name: resolvedOrgName,
-      plan_tier: 'enterprise',
-      subscription_status: 'active',
-      trial_ends_at: new Date(Date.now() + 365 * 86400000).toISOString(),
-      max_staff_seats: 9999,
-    };
-
-    cachedStaffProfile = {
-      id: testUser.id,
-      organization_id: org.id,
-      organization_name: org.name,
-      organization: org,
-      email: testUser.email || emailCheck.normalizedEmail,
-      full_name: fullName,
-      role: 'admin',
-      department: isCreatorAttempt ? 'Platform Architecture' : 'Operations',
-      is_active: true,
-      needs_onboarding: false,
-    };
-
-    try {
-      localStorage.setItem('frostly_active_org_id', org.id);
-    } catch {}
-
-    notifyAuthSubscribers(testSession);
-    return { session: testSession, error: null };
-  }
-
-  // 3. Fallback: Full-stack Node.js backend authentication endpoint (when running Express server)
   try {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: emailCheck.normalizedEmail, password }),
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: emailCheck.normalizedEmail,
+      password,
     });
 
-    if (res.status === 404) {
+    if (error || !data.session) {
       recordFailedAttempt(emailCheck.normalizedEmail);
-      return {
-        session: null,
-        error:
-          'Authentication backend not found (HTTP 404). If deploying statically through GitHub, please add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your GitHub repository secrets and build environment, or host on a Node-capable server with "npm start".',
-      };
-    }
-
-    const body = await res.json().catch(() => ({}));
-
-    if (!res.ok || body.error || !body.session) {
-      recordFailedAttempt(emailCheck.normalizedEmail);
-      return { session: null, error: body.error || 'Invalid login credentials' };
+      return { session: null, error: error?.message || 'Invalid login credentials' };
     }
 
     clearFailedAttempts(emailCheck.normalizedEmail);
-    cachedSession = body.session;
-    setLocalCachedSession(body.session);
+    cachedSession = data.session;
+    cachedStaffProfile = null;
+    try {
+      localStorage.removeItem('frostly_active_org_id');
+    } catch {}
 
-    if (body.profile) {
-      const org = body.profile.organizations || {
-        id: body.profile.organization_id,
-        name: isAmansoceanEmail(body.profile.email) ? AMANSOCEAN_TENANT_NAME : 'Workspace',
-        plan_tier: 'enterprise',
-        subscription_status: 'active',
-        trial_ends_at: new Date(Date.now() + 365 * 86400000).toISOString(),
-        max_staff_seats: 9999,
-      };
+    const profile = await getStaffProfile(true);
 
-      cachedStaffProfile = {
-        id: body.profile.id,
-        organization_id: body.profile.organization_id,
-        organization_name: org.name,
-        organization: org,
-        email: body.profile.email,
-        full_name: body.profile.full_name,
-        role: body.profile.role,
-        department: body.profile.department,
-        is_active: body.profile.is_active,
-        needs_onboarding: false,
-      };
-
-      try {
-        localStorage.setItem('frostly_active_org_id', cachedStaffProfile.organization_id);
-      } catch {}
-    } else {
-      cachedStaffProfile = null;
-      await getStaffProfile(true);
-    }
-
-    // Record login activity in real-time
-    if (body.session?.user && body.session.user.email) {
+    // Record login activity exactly once per real sign-in (non-blocking).
+    if (data.session.user.email) {
       import('../services/activityTrackingService')
         .then(({ recordUserLogin }) => {
           recordUserLogin(
-            { id: body.session.user.id, email: body.session.user.email || '' },
-            cachedStaffProfile,
-            cachedStaffProfile?.organization
+            { id: data.session.user.id, email: data.session.user.email || '' },
+            profile,
+            profile?.organization
           ).catch(() => {});
         })
         .catch(() => {});
     }
 
-    notifyAuthSubscribers(body.session);
-    return { session: body.session, error: null };
+    notifyAuthSubscribers(data.session);
+    return { session: data.session, error: null };
   } catch (err: any) {
     recordFailedAttempt(emailCheck.normalizedEmail);
     return { session: null, error: err?.message || 'Authentication service error' };
@@ -903,31 +455,23 @@ export async function signIn(
 }
 
 /**
- * Sign in as Amansocean tenant admin.
+ * Sign in as test user (disabled in production).
  */
 export async function signInAsTestUser(
-  email?: string,
-  password?: string
+  _email?: string,
+  _password?: string
 ): Promise<{ session: Session | null; error: string | null }> {
-  const targetEmail = email || DEFAULT_TEST_USER_EMAIL || 'info@amansocean.com';
-  const targetPassword = password || DEFAULT_TEST_USER_PASSWORD || 'amansocean2726@!!';
-  return signIn(targetEmail, targetPassword);
+  return { session: null, error: 'Quick sign-in is disabled in production.' };
 }
 
 /**
- * Platform Creator sign in.
+ * Platform Creator sign in (disabled in production helper).
  */
 export async function signInAsCreator(
-  email?: string,
-  password?: string
+  _email?: string,
+  _password?: string
 ): Promise<{ session: Session | null; error: string | null }> {
-  if (!email || !password) {
-    return {
-      session: null,
-      error: 'Platform creator credentials must be provided.',
-    };
-  }
-  return signIn(email, password);
+  return { session: null, error: 'Quick sign-in is disabled in production.' };
 }
 
 /**
@@ -1008,37 +552,7 @@ export async function createOrganizationAndAdmin(
   options?: CreateOrgCustomOptions
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   if (!isSupabaseConfigured) {
-    // Offline / Local Simulation Mode:
-    const mockOrgId = 'org-local-' + Math.random().toString(36).substring(2, 9);
-    const mockOrg: TenantOrganization = {
-      id: mockOrgId,
-      name: orgName,
-      plan_tier: 'starter',
-      subscription_status: 'trial',
-      trial_ends_at: new Date(Date.now() + 14 * 86400000).toISOString(),
-      max_staff_seats: 5,
-    };
-    try {
-      localStorage.setItem('frostly_active_org_id', mockOrgId);
-      const existingSettingsStr = localStorage.getItem('frostly_settings_v2');
-      const existingSettings = existingSettingsStr ? JSON.parse(existingSettingsStr) : {};
-      localStorage.setItem('frostly_settings_v2', JSON.stringify({
-        ...existingSettings,
-        companyName: orgName,
-        facilityCode: options?.facilityCode || `FAC-${orgName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase()}-01`,
-        currency: options?.currency || existingSettings.currency || 'GHS',
-        primaryPort: options?.primaryPort || existingSettings.primaryPort || 'Port of Tema & Pier 38 Fishing Harbour',
-      }));
-    } catch {}
-
-    if (cachedStaffProfile) {
-      cachedStaffProfile.organization_id = mockOrgId;
-      cachedStaffProfile.organization_name = orgName;
-      cachedStaffProfile.organization = mockOrg;
-      cachedStaffProfile.role = 'admin';
-      cachedStaffProfile.needs_onboarding = false;
-    }
-    return { success: true, data: { organization_id: mockOrgId, organization_name: orgName } };
+    return { success: false, error: 'Authentication service is not configured.' };
   }
 
   try {
@@ -1306,60 +820,7 @@ export async function signUpAndCreateOrganization(
   }
 
   if (!isSupabaseConfigured) {
-    const orgRes = await createOrganizationAndAdmin(orgName, adminFullName, adminDepartment, options);
-    if (!orgRes.success) {
-      return { session: null, profile: null, error: orgRes.error || 'Failed to create organization' };
-    }
-    const mockProfile: StaffProfile = {
-      id: 'usr-local-' + Math.random().toString(36).substring(2, 9),
-      organization_id: orgRes.data?.organization_id || 'org-local-1',
-      organization_name: orgName,
-      email: cleanEmail,
-      full_name: adminFullName || cleanEmail.split('@')[0],
-      role: 'admin',
-      department: adminDepartment,
-      is_active: true,
-      needs_onboarding: false,
-    };
-    const mockUser: User = {
-      id: mockProfile.id,
-      app_metadata: { provider: 'email' },
-      user_metadata: {
-        full_name: mockProfile.full_name,
-        role: 'admin',
-        organization_name: orgName,
-      },
-      aud: 'authenticated',
-      created_at: new Date().toISOString(),
-      email: cleanEmail,
-    } as any;
-    const mockSession: Session = {
-      access_token: 'local-token-' + Date.now(),
-      refresh_token: 'local-refresh-' + Date.now(),
-      expires_in: 86400,
-      token_type: 'bearer',
-      user: mockUser,
-    };
-    cachedSession = mockSession;
-    cachedStaffProfile = mockProfile;
-    setLocalCachedSession(mockSession);
-
-    try {
-      const raw = localStorage.getItem('frostly_offline_users');
-      const accounts = raw ? JSON.parse(raw) : {};
-      accounts[cleanEmail.toLowerCase()] = {
-        orgId: orgRes.data?.organization_id || 'org-local-1',
-        orgName,
-        fullName: adminFullName || cleanEmail.split('@')[0],
-        role: 'admin',
-        department: adminDepartment,
-      };
-      localStorage.setItem('frostly_offline_users', JSON.stringify(accounts));
-      localStorage.setItem('frostly_active_org_id', mockProfile.organization_id);
-    } catch {}
-
-    notifyAuthSubscribers(mockSession);
-    return { session: mockSession, profile: mockProfile, error: null };
+    return { session: null, profile: null, error: 'Authentication service is not configured.' };
   }
 
   try {
@@ -2041,7 +1502,7 @@ export async function changeCurrentUserPassword(
   }
 
   if (!isSupabaseConfigured) {
-    return { success: true };
+    return { success: false, error: 'Authentication service is not configured.' };
   }
 
   try {

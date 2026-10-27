@@ -26,7 +26,6 @@ import { User } from '@supabase/supabase-js';
 import { FrostlyLogo } from './FrostlyLogo';
 import { createOrganizationAndAdmin } from '../data/auth';
 import { FacilityOperationType } from '../types';
-import { INITIAL_BATCHES } from '../data/mockData';
 import { batchRepository } from '../repositories/batchRepository';
 import { customerRepository } from '../repositories/customerRepository';
 import { orderRepository } from '../repositories/orderRepository';
@@ -164,7 +163,6 @@ export const TenantOnboardingScreen: React.FC<TenantOnboardingScreenProps> = ({
   // Step 3: Starter Seafood Catalog & Commercial Settings
   const [currency, setCurrency] = useState<'GHS' | 'USD' | 'EUR' | 'GBP'>(initialCurrency);
   const [primaryPort, setPrimaryPort] = useState(GHANA_PORTS[0]);
-  const [seedStarterInventory, setSeedStarterInventory] = useState(false);
   const [complianceCertReady, setComplianceCertReady] = useState(true);
 
   // Step 4: Provisioning & Launch Pipeline
@@ -265,25 +263,17 @@ export const TenantOnboardingScreen: React.FC<TenantOnboardingScreenProps> = ({
           retailTransactionRepository.clearTenantCache(targetOrgId);
           notificationRepository.clearTenantCache(targetOrgId);
 
-          if (seedStarterInventory) {
-            // Seed isolated starter lots exclusively if user opted in
-            const starterLots = INITIAL_BATCHES.map(b => ({
-              ...b,
-              id: `LOT-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
-            }));
-            batchRepository.setLocalCache(starterLots, targetOrgId);
-          } else {
-            // Workspace must be completely clean with zero data
-            batchRepository.setLocalCache([], targetOrgId);
-            customerRepository.setLocalCache([], targetOrgId);
-            orderRepository.setLocalCache([], targetOrgId);
-            supplierRepository.setLocalCache([], targetOrgId);
-            financialRepository.setLocalCache([], targetOrgId);
-            purchaseOrderRepository.setLocalCache([], targetOrgId);
-            productRepository.setLocalCache([], targetOrgId);
-            retailTransactionRepository.setLocalCache([], targetOrgId);
-            notificationRepository.setLocalCache([], targetOrgId);
-          }
+          // Workspaces always start completely clean: no sample or demo data is ever seeded.
+          // Workspace must be completely clean with zero data
+          batchRepository.setLocalCache([], targetOrgId);
+          customerRepository.setLocalCache([], targetOrgId);
+          orderRepository.setLocalCache([], targetOrgId);
+          supplierRepository.setLocalCache([], targetOrgId);
+          financialRepository.setLocalCache([], targetOrgId);
+          purchaseOrderRepository.setLocalCache([], targetOrgId);
+          productRepository.setLocalCache([], targetOrgId);
+          retailTransactionRepository.setLocalCache([], targetOrgId);
+          notificationRepository.setLocalCache([], targetOrgId);
         }
 
         const savedSettingsStr = localStorage.getItem('frostly_settings_v2');
@@ -753,27 +743,7 @@ export const TenantOnboardingScreen: React.FC<TenantOnboardingScreenProps> = ({
               </div>
             </div>
 
-            {/* Seed Starter Inventory Option */}
-            <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  id="onboarding-seed-inventory-check"
-                  checked={seedStarterInventory}
-                  onChange={(e) => setSeedStarterInventory(e.target.checked)}
-                  className="mt-0.5 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500"
-                />
-                <div>
-                  <div className="text-xs font-bold text-white flex items-center gap-2">
-                    <Boxes className="w-4 h-4 text-indigo-400" />
-                    <span>Pre-seed Starter Seafood Inventory &amp; Batch Lots</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed mt-1">
-                    Populate your new workspace with realistic sample seafood batches ({selectedFacility.primarySpecies.join(', ')}) with barcodes, catch zones, and temperature logs so you can explore immediately.
-                  </p>
-                </div>
-              </label>
-            </div>
+
 
             {/* Regulatory Compliance Presets */}
             <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">

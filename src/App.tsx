@@ -26,20 +26,7 @@ import { TrialCountdownBanner } from './components/TrialCountdownBanner';
 import { LegalFooter } from './components/LegalFooter';
 import { LegalModal } from './components/LegalModal';
 
-import { 
-  INITIAL_BATCHES, 
-  INITIAL_ORDERS, 
-  INITIAL_CUSTOMERS,
-  INITIAL_SUPPLIERS,
-  INITIAL_PRODUCTS,
-  INITIAL_RETAIL_TRANSACTIONS,
-  INITIAL_PURCHASE_ORDERS,
-  INITIAL_FINANCIAL_ENTRIES,
-  INITIAL_NOTIFICATIONS,
-  INITIAL_ADJUSTMENT_ACCOUNTS,
-  INITIAL_STOCK_ADJUSTMENTS,
-  SPECIES_CATALOG
-} from './data/mockData';
+import { INITIAL_ADJUSTMENT_ACCOUNTS, INITIAL_STOCK_ADJUSTMENTS, SPECIES_CATALOG } from './data/mockData';
 import { AMANSOCEAN_OFFICIAL_CATALOG } from './data/amansoceanProducts';
 
 import { 

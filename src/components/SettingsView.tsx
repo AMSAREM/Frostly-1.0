@@ -151,7 +151,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, [showPlatformConsole, activeCategory]);
   const [formData, setFormData] = useState<AppSettings>({ ...settings });
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
-  const [resetModalOpen, setResetModalOpen] = useState<boolean>(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<boolean>(false);
   const [syncState, setSyncState] = useState<SyncState>(() => syncManager.getState());
@@ -273,7 +272,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     { id: 'units', label: 'Units & Display', icon: Sliders, desc: 'Weight, temperatures & date formats' },
     { id: 'fulfillment', label: 'POS & Fulfillment', icon: ShoppingBag, desc: 'Terms, ice surcharges & QR presets' },
     { id: 'alerts', label: 'Alerts & Auditing', icon: Bell, desc: 'Stock thresholds & sensor alarms' },
-    { id: 'data', label: 'Data & Offline Backup', icon: Database, desc: 'JSON exports, restores & demo reset' },
+    { id: 'data', label: 'Data & Offline Backup', icon: Database, desc: 'JSON exports and restores' },
   ];
 
   return (
@@ -1044,27 +1043,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </label>
                   </div>
                 </div>
-
-                {/* Danger Zone: Reset to Factory Defaults */}
-                <div className="p-5 rounded-2xl bg-rose-50/50 border border-rose-100 flex items-center justify-between gap-4">
-                  <div className="space-y-0.5">
-                    <div className="text-xs font-bold text-rose-900 flex items-center gap-1.5">
-                      <RotateCcw className="w-4 h-4 text-rose-600" />
-                      <span>Reset Application Demo Records</span>
-                    </div>
-                    <div className="text-[11px] text-rose-700">
-                      Reverts all batches, orders, POS sales, and financials back to initial sample state.
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    id="btn-reset-demo-data"
-                    onClick={() => setResetModalOpen(true)}
-                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-xs shrink-0 cursor-pointer"
-                  >
-                    Reset Data
-                  </button>
-                </div>
               </div>
             )}
 
@@ -1215,41 +1193,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </div>
 
-      {/* Reset Confirmation Modal */}
-      {resetModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
-              <AlertTriangle className="w-6 h-6" />
-            </div>
-            <div className="text-center space-y-1">
-              <h3 className="text-base font-bold text-slate-900 font-heading">Reset Application to Initial State?</h3>
-              <p className="text-xs text-slate-500">
-                This will restore all default seafood batches, vessel landings, customer profiles, and initial financial statements. Any custom added lots will be reset.
-              </p>
-            </div>
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                onClick={() => setResetModalOpen(false)}
-                className="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  onResetToDefaults();
-                  setResetModalOpen(false);
-                  setSaveSuccess(true);
-                  setTimeout(() => setSaveSuccess(false), 3000);
-                }}
-                className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-md shadow-rose-200 cursor-pointer"
-              >
-                Confirm Reset
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

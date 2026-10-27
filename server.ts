@@ -31,6 +31,13 @@ import { validatePassword } from './src/utils/passwordValidation';
 
 dotenv.config();
 
+if (!process.env.VITE_SUPABASE_URL && process.env.SUPABASE_URL) {
+  process.env.VITE_SUPABASE_URL = process.env.SUPABASE_URL;
+}
+if (!process.env.VITE_SUPABASE_ANON_KEY && process.env.SUPABASE_ANON_KEY) {
+  process.env.VITE_SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+}
+
 function getSupabaseAdmin() {
   const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -468,147 +475,7 @@ export async function createExpressApp(
     }
   });
 
-  // SECURE USER SIGN IN ENDPOINT
-  // Strictly authenticates against Supabase Auth via password validation.
-  // Never permits mock or offline credential bypasses.
-  app.post('/api/auth/login', async (req, res) => {
-    const { email, password } = req.body || {};
-    if (!email || typeof email !== 'string' || !password || typeof password !== 'string') {
-      res.status(400).json({ error: 'Valid email and password are required.' });
-      return;
-    }
 
-    const cleanEmail = email.trim().toLowerCase();
-    const adminClient = getSupabaseAdmin();
-    if (!adminClient) {
-      res.status(500).json({ error: 'Supabase authentication service is not configured on the server.' });
-      return;
-    }
-
-    try {
-      const { data, error } = await adminClient.auth.signInWithPassword({
-        email: cleanEmail,
-        password,
-      });
-
-      if (error || !data.session || !data.user) {
-        res.status(401).json({ error: error?.message || 'Invalid login credentials.' });
-        return;
-      }
-
-      const user = data.user;
-      const isAmans =
-        cleanEmail === 'akokosolutions24@gmail.com' ||
-        cleanEmail === 'edmundbgh34@gmail.com' ||
-        cleanEmail === 'amoakoemmanuel2020@gmail.com' ||
-        cleanEmail === 'amoakoimml@gmail.com' ||
-        cleanEmail === 'amoakoemmanuel2026@gmail.com' ||
-        cleanEmail.endsWith('@amansocean.com') ||
-        cleanEmail.endsWith('@amansocean.store');
-
-      // Fetch or auto-provision staff profile
-      let { data: profile } = await adminClient
-        .from('staff_profiles')
-        .select('*, organizations(*)')
-        .eq('id', user.id)
-        .maybeSingle();
-
-      if (!profile || (isAmans && profile.organization_id !== '35a94c6e-e230-4b7c-8404-a4f0ae06b798')) {
-        const targetOrgId = isAmans ? '35a94c6e-e230-4b7c-8404-a4f0ae06b798' : (profile?.organization_id || null);
-        if (targetOrgId) {
-          await adminClient.from('staff_profiles').upsert({
-            id: user.id,
-            email: user.email || cleanEmail,
-            full_name: profile?.full_name || user.user_metadata?.full_name || (cleanEmail === 'amoakoemmanuel2020@gmail.com' ? 'Emmanuel Amoako' : 'Staff Member'),
-            role: isAmans ? 'admin' : (profile?.role || 'admin'),
-            department: profile?.department || (isAmans ? 'Executive Operations' : 'General Operations'),
-            organization_id: targetOrgId,
-            is_active: true,
-          }, { onConflict: 'id' });
-
-          const { data: refreshedProfile } = await adminClient
-            .from('staff_profiles')
-            .select('*, organizations(*)')
-            .eq('id', user.id)
-            .maybeSingle();
-          profile = refreshedProfile;
-        }
-      }
-
-      res.json({
-        session: data.session,
-        profile,
-        error: null,
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Authentication service error.' });
-    }
-  });
-
-  // VERIFIED USER PROFILE ENDPOINT
-  app.get('/api/auth/profile', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      res.status(401).json({ error: 'Missing Authorization header.' });
-      return;
-    }
-    const token = authHeader.slice(7).trim();
-    const adminClient = getSupabaseAdmin();
-    if (!adminClient) {
-      res.status(500).json({ error: 'Supabase admin service unavailable.' });
-      return;
-    }
-
-    try {
-      const { data: userData, error: userErr } = await adminClient.auth.getUser(token);
-      if (userErr || !userData?.user) {
-        res.status(401).json({ error: 'Invalid or expired session token.' });
-        return;
-      }
-      const user = userData.user;
-      const cleanEmail = (user.email || '').toLowerCase();
-      const isAmans =
-        cleanEmail === 'akokosolutions24@gmail.com' ||
-        cleanEmail === 'edmundbgh34@gmail.com' ||
-        cleanEmail === 'amoakoemmanuel2020@gmail.com' ||
-        cleanEmail === 'amoakoimml@gmail.com' ||
-        cleanEmail === 'amoakoemmanuel2026@gmail.com' ||
-        cleanEmail.endsWith('@amansocean.com') ||
-        cleanEmail.endsWith('@amansocean.store');
-
-      let { data: profile } = await adminClient
-        .from('staff_profiles')
-        .select('*, organizations(*)')
-        .eq('id', user.id)
-        .maybeSingle();
-
-      if (!profile && isAmans) {
-        await adminClient.from('staff_profiles').upsert({
-          id: user.id,
-          email: user.email,
-          full_name: user.user_metadata?.full_name || (cleanEmail === 'amoakoemmanuel2020@gmail.com' ? 'Emmanuel Amoako' : 'Staff Member'),
-          role: 'admin',
-          department: 'Executive Operations',
-          organization_id: '35a94c6e-e230-4b7c-8404-a4f0ae06b798',
-          is_active: true,
-        }, { onConflict: 'id' });
-
-        const { data: refreshedProfile } = await adminClient
-          .from('staff_profiles')
-          .select('*, organizations(*)')
-          .eq('id', user.id)
-          .maybeSingle();
-        profile = refreshedProfile;
-      }
-
-      res.json({
-        user,
-        profile,
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Failed to fetch user profile.' });
-    }
-  });
 
   // Direct Backend Tenant & User Provisioning Endpoint (bypasses failing Supabase internal SMTP)
   app.post('/api/auth/register-tenant', async (req, res) => {
