@@ -1768,14 +1768,16 @@ export default function App() {
         companyName={companyName}
       />
 
-      {/* Trial and Days Count Status Banner */}
-      <TrialCountdownBanner
-        organization={staffProfile?.organization}
-        onUpgradeClick={() => {
-          setActiveTab('settings');
-          setSettingsCategory('subscription');
-        }}
-      />
+      {/* Trial and Days Count Status Banner - shown only during active evaluation trial */}
+      {staffProfile?.organization?.subscription_status === 'trial' && (
+        <TrialCountdownBanner
+          organization={staffProfile.organization}
+          onUpgradeClick={() => {
+            setActiveTab('settings');
+            setSettingsCategory('subscription');
+          }}
+        />
+      )}
 
       {/* Organization Licensing & Grace Period Status Alert Bar */}
       {isSubscriptionPastDue(staffProfile?.organization) && (

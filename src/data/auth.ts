@@ -1004,6 +1004,15 @@ export async function setPasswordAndActivate(
 }
 
 /**
+ * Update password for current authenticated user
+ */
+export async function changeCurrentUserPassword(
+  newPassword: string
+): Promise<{ success: boolean; error: string | null }> {
+  return setPasswordAndActivate('', newPassword);
+}
+
+/**
  * Dispatches an email verification link to the given address via Google SMTP / Supabase Auth mail relay.
  */
 export async function resendConfirmationEmail(
