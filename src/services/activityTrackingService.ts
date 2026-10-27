@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../utils/supabase';
-import { StaffProfile, TenantOrganization, getSession } from '../data/auth';
+import { StaffProfile, TenantOrganization } from '../data/auth';
 
 export interface UserLoginRecord {
   id: string;
@@ -492,10 +492,8 @@ export async function recordUserLogin(
 ): Promise<void> {
   const device = getDeviceType();
   const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'Browser Client';
-  const orgName = organization?.name || profile?.organization_name || 'Amansocean Coldstore';
-  const rawOrgId = organization?.id || profile?.organization_id || '';
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  const orgId = uuidRegex.test(rawOrgId) ? rawOrgId : '';
+  const orgName = organization?.name || profile?.organization_name || 'Frostly Operations';
+  const orgId = organization?.id || profile?.organization_id || '00000000-0000-0000-0000-000000000001';
 
   const loginRecord: UserLoginRecord = {
     id: 'log-' + Date.now(),
@@ -520,38 +518,11 @@ export async function recordUserLogin(
     localStorage.setItem(STORAGE_KEY_LOGINS, JSON.stringify(updated));
   } catch {}
 
-  // 2. Persist to Supabase via server endpoint (or direct client fallback)
-  let persistedViaServer = false;
-  if (typeof window !== 'undefined' && typeof fetch === 'function') {
-    try {
-      const session = await getSession();
-      const token = session?.access_token;
-      if (token && !token.startsWith('local-token-')) {
-        const res = await fetch('/api/activity/logins', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            organizationId: orgId,
-            organizationName: orgName,
-            email: user.email,
-            fullName: loginRecord.full_name,
-            role: loginRecord.role,
-            deviceType: device,
-            userAgent,
-          }),
-        });
-        persistedViaServer = res.ok;
-      }
-    } catch {}
-  }
-
-  if (!persistedViaServer && isSupabaseConfigured) {
+  // 2. Persist to Supabase if configured
+  if (isSupabaseConfigured) {
     try {
       await supabase.from('user_login_logs').insert({
-        user_id: uuidRegex.test(user.id) ? user.id : null,
+        user_id: user.id,
         organization_id: orgId,
         organization_name: orgName,
         email: user.email,
@@ -610,26 +581,8 @@ export async function recordUserLogout(userId: string, email: string): Promise<v
       }).catch(() => {});
     }
 
-    let persistedViaServer = false;
-    if (typeof window !== 'undefined' && typeof fetch === 'function') {
-      try {
-        const session = await getSession();
-        const token = session?.access_token;
-        if (token && !token.startsWith('local-token-')) {
-          const res = await fetch('/api/activity/logout', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ userId, email }),
-          });
-          persistedViaServer = res.ok;
-        }
-      } catch {}
-    }
-
-    if (!persistedViaServer && isSupabaseConfigured) {
+    if (isSupabaseConfigured) {
+      // Mark active logs as expired
       await supabase
         .from('user_login_logs')
         .update({ session_status: 'expired' })
@@ -699,20 +652,8 @@ export async function trackFeatureAction(
   // 2. Persist to Supabase if configured
   if (isSupabaseConfigured) {
     try {
-      const uuidRegex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      let resolvedUserId: string | null = uuidRegex.test(userId) ? userId : null;
-      if (!resolvedUserId) {
-        const session = await getSession();
-        const sessionUid = session?.user?.id;
-        if (sessionUid && uuidRegex.test(sessionUid)) {
-          resolvedUserId = sessionUid;
-          userEmail = session?.user?.email || userEmail;
-        }
-      }
-
       await supabase.from('user_feature_usage_logs').insert({
-        user_id: resolvedUserId,
+        user_id: userId,
         organization_id: orgId,
         user_email: userEmail,
         user_name: userName,
@@ -733,28 +674,6 @@ export async function trackFeatureAction(
  * Fetch list of users who have logged in with their latest session details
  */
 export async function fetchUserLoginHistory(): Promise<UserLoginRecord[]> {
-  // 0. Try authenticated server endpoint (works across tenant & platform roles)
-  if (typeof window !== 'undefined' && typeof fetch === 'function') {
-    try {
-      const session = await getSession();
-      const token = session?.access_token;
-      if (token && !token.startsWith('local-token-')) {
-        const res = await fetch('/api/activity/logins', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const body = await res.json().catch(() => null);
-          if (Array.isArray(body?.logins) && body.logins.length > 0) {
-            try {
-              localStorage.setItem(STORAGE_KEY_LOGINS, JSON.stringify(body.logins));
-            } catch {}
-            return body.logins as UserLoginRecord[];
-          }
-        }
-      }
-    } catch {}
-  }
-
   // 1. Try Supabase RPC or Table
   if (isSupabaseConfigured) {
     try {
@@ -814,8 +733,6 @@ export async function fetchFeatureUsageAnalytics(days: number = 30): Promise<{
       const { data, error } = await supabase
         .from('user_feature_usage_logs')
         .select('*')
-        .neq('category', 'storefront_internal')
-        .neq('category', 'pos_register_internal')
         .gte('created_at', cutoff)
         .order('created_at', { ascending: false })
         .limit(1000);

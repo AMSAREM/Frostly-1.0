@@ -43,8 +43,17 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Ignore non-GET requests or browser extension protocols
-  if (request.method !== 'GET' || !request.url.startsWith('http')) {
+  // Ignore non-GET requests, non-HTTP protocols, and all dev/Vite assets
+  if (
+    request.method !== 'GET' || 
+    !request.url.startsWith('http') ||
+    url.pathname.startsWith('/api') ||
+    url.pathname.startsWith('/@vite') ||
+    url.pathname.startsWith('/node_modules') ||
+    url.pathname.startsWith('/src') ||
+    url.searchParams.has('v') ||
+    url.searchParams.has('t')
+  ) {
     return;
   }
 

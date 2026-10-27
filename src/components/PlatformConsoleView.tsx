@@ -26,13 +26,11 @@ import {
   RotateCcw,
   AlertOctagon,
   ShieldAlert,
-  BarChart3,
-  Package
+  BarChart3
 } from 'lucide-react';
 import { GoogleSmtpModal } from './GoogleSmtpModal';
 import { PlatformPricingPlansManager } from './PlatformPricingPlansManager';
 import { PlatformAnalyticsView } from './PlatformAnalyticsView';
-import { AmansProductsAdminManager } from './AmansProductsAdminManager';
 import { FrostlyLogo } from './FrostlyLogo';
 import { 
   PlatformOrganization, 
@@ -56,7 +54,7 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'trial' | 'active' | 'past_due' | 'suspended'>('all');
-  const [activeSubTab, setActiveSubTab] = useState<'analytics' | 'amans_products' | 'tenants' | 'pricing' | 'audit' | 'security'>('analytics');
+  const [activeSubTab, setActiveSubTab] = useState<'analytics' | 'tenants' | 'pricing' | 'audit' | 'security'>('analytics');
 
   // Edit Modal State
   const [selectedOrg, setSelectedOrg] = useState<PlatformOrganization | null>(null);
@@ -353,18 +351,6 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
             <span>Platform Analytics</span>
           </button>
           <button
-            id="tab-platform-amans-products"
-            onClick={() => setActiveSubTab('amans_products')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-              activeSubTab === 'amans_products'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/50'
-                : 'text-slate-300 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Package className="w-4 h-4" />
-            <span>Amans Products (GH₵)</span>
-          </button>
-          <button
             id="tab-platform-tenants"
             onClick={() => setActiveSubTab('tenants')}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
@@ -437,9 +423,6 @@ export const PlatformConsoleView: React.FC<PlatformConsoleViewProps> = ({ onClos
           isRefreshing={refreshing}
         />
       )}
-
-      {/* SUB-TAB: AMANS OCEAN OFFICIAL PRODUCT LIST (GH₵) */}
-      {activeSubTab === 'amans_products' && <AmansProductsAdminManager />}
 
       {/* SUB-TAB 1: TENANTS DIRECTORY */}
       {activeSubTab === 'tenants' && (

@@ -400,9 +400,10 @@ describe('Multi-Tenant Migration SQL DDL Contract & Static Syntax Validation', (
       expect(batchRepository.getScopedStorageKey('')).toBeNull();
       expect(batchRepository.getScopedStorageKey(undefined)).toBeNull();
       expect(batchRepository.getScopedStorageKey('org-frostly-hq')).toBeNull();
-      expect(batchRepository.getScopedStorageKey('00000000-0000-0000-0000-000000000001')).toBeNull();
+      expect(batchRepository.getScopedStorageKey('00000000-0000-0000-0000-000000000000')).toBeNull();
 
       // Valid tenant ID must return strictly tenant-scoped key
+      expect(batchRepository.getScopedStorageKey('00000000-0000-0000-0000-000000000001')).toBe('frostly_batches_v3__tenant_00000000-0000-0000-0000-000000000001');
       expect(batchRepository.getScopedStorageKey('org-acme-seafood')).toBe('frostly_batches_v3__tenant_org-acme-seafood');
     });
 

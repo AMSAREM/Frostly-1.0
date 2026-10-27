@@ -174,56 +174,40 @@ export const batchMapper = {
       cleanNotes = cleanNotes ? `${cleanNotes} <!--frostly_image:${batch.imageUrl}-->` : `<!--frostly_image:${batch.imageUrl}-->`;
     }
 
-    const availKg = Math.max(0, Number(batch.availableWeightKg) || 0);
-    const allocKg = Math.max(0, Number(batch.allocatedWeightKg) || 0);
-    const rawInitialKg = Number(batch.initialWeightKg) || 0;
-    const safeInitialKg = Math.max(
-      0.01,
-      rawInitialKg,
-      Number((availKg + allocKg).toFixed(2))
-    );
-
     const payload: Record<string, any> = {
       id: batch.id,
       image_url: batch.imageUrl || null,
       species_id: getSpeciesIdFromName(batch.speciesName, batch.speciesId),
       species_name: batch.speciesName,
-      scientific_name: batch.scientificName || batch.speciesName,
-      category: batch.category || 'Groundfish',
-      harvest_date: batch.harvestDate || new Date().toISOString().split('T')[0],
-      landing_port: batch.landingPort || 'Port of Tema',
-      vessel_name: batch.vesselName || 'Coldstore Intake',
-      vessel_registration: batch.vesselRegistration || 'AO-INT',
-      captain_name: batch.captainName || 'Operations Lead',
-      fao_area: batch.faoArea || 'FAO 34',
+      scientific_name: batch.scientificName,
+      category: batch.category,
+      harvest_date: batch.harvestDate,
+      landing_port: batch.landingPort,
+      vessel_name: batch.vesselName,
+      vessel_registration: batch.vesselRegistration,
+      captain_name: batch.captainName,
+      fao_area: batch.faoArea,
       gps_coordinates: {
         latitude: batch.coordinates?.lat ?? 0,
         longitude: batch.coordinates?.lng ?? 0,
       },
       location_description: batch.coordinates?.description || null,
-      gear_type: batch.gearType || 'Coldstore Intake',
-      grade: batch.grade || 'Grade #1',
-      initial_weight_kg: safeInitialKg,
-      available_weight_kg: availKg,
-      allocated_weight_kg: allocKg,
-      storage_zone: batch.storageZone || 'Commercial Cold Storage (-22°C)',
-      current_temp_celsius: batch.currentTempCelsius ?? -22.0,
-      target_temp_celsius: batch.targetTempCelsius ?? -22.0,
-      cost_per_kg: Math.max(0, Number(batch.costPerKg) || 0),
-      wholesale_price_per_kg: Math.max(0, Number(batch.wholesalePricePerKg) || 0),
+      gear_type: batch.gearType,
+      grade: batch.grade,
+      initial_weight_kg: batch.initialWeightKg,
+      available_weight_kg: batch.availableWeightKg,
+      allocated_weight_kg: batch.allocatedWeightKg,
+      storage_zone: batch.storageZone,
+      current_temp_celsius: batch.currentTempCelsius,
+      target_temp_celsius: batch.targetTempCelsius,
+      cost_per_kg: batch.costPerKg,
+      wholesale_price_per_kg: batch.wholesalePricePerKg,
       certifications: batch.certifications || [],
-      inspection_status:
-        batch.inspectionStatus === 'Passed' ||
-        batch.inspectionStatus === 'Pending' ||
-        batch.inspectionStatus === 'Flagged'
-          ? batch.inspectionStatus
-          : 'Passed',
-      histamine_ppm: batch.histaminePpm != null ? Math.max(0, Number(batch.histaminePpm)) : null,
-      core_temp_celsius: batch.coreTempCelsius ?? -22.0,
-      received_date: batch.receivedDate || new Date().toISOString().split('T')[0],
-      expiry_date:
-        batch.expiryDate ||
-        new Date(Date.now() + 180 * 86400000).toISOString().split('T')[0],
+      inspection_status: batch.inspectionStatus,
+      histamine_ppm: batch.histaminePpm ?? null,
+      core_temp_celsius: batch.coreTempCelsius,
+      received_date: batch.receivedDate,
+      expiry_date: batch.expiryDate,
       qr_code_seed: batch.qrCodeSeed || batch.id,
       notes: cleanNotes || null,
     };

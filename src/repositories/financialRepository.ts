@@ -2,7 +2,6 @@ import { BaseRepository } from './base';
 import { FinancialLedgerEntry } from '../types';
 import { financialMapper, DatabaseFinancialEntryRow } from '../mappers/financialMapper';
 import { supabase } from '../utils/supabase';
-import { erpServerUpsert } from '../services/erpPersistenceClient';
 
 export class FinancialRepository extends BaseRepository<FinancialLedgerEntry, DatabaseFinancialEntryRow> {
   constructor() {
@@ -25,48 +24,33 @@ export class FinancialRepository extends BaseRepository<FinancialLedgerEntry, Da
    */
   public async addEntry(entry: FinancialLedgerEntry): Promise<FinancialLedgerEntry> {
     const orgId = await this.getOrganizationId();
-    const payload: any = this.toDatabase(entry);
-    if (orgId) {
-      payload.organization_id = orgId;
-    }
-
     const canQuery = await this.canAccessSupabase();
     if (canQuery) {
-      const serverRes = await erpServerUpsert<DatabaseFinancialEntryRow>({
-        tableName: this.tableName,
-        payload,
-        organizationId: orgId,
-      });
-
-      if (serverRes.handled) {
-        if (serverRes.error) {
-          throw new Error(`[FinancialRepository] Save error: ${serverRes.error}`);
+      try {
+        const payload: any = this.toDatabase(entry);
+        if (orgId) {
+          payload.organization_id = orgId;
         }
-        const created = serverRes.row ? this.toDomain(serverRes.row) : this.toDomain(payload);
-        const current = this.getLocalCache([], orgId);
-        this.setLocalCache([created, ...current.filter((item) => item.id !== created.id)], orgId);
-        return created;
-      }
+        const { data, error } = await supabase
+          .from(this.tableName)
+          .insert(payload)
+          .select()
+          .single();
 
-      // Direct fallback only when server route is unhandled
-      const { data, error } = await supabase
-        .from(this.tableName)
-        .insert(payload)
-        .select()
-        .single();
-
-      if (error) {
-        throw new Error(`[FinancialRepository] Insert error: ${error.message}`);
-      }
-      if (data) {
-        const created = this.toDomain(data);
-        const current = this.getLocalCache([], orgId);
-        this.setLocalCache([created, ...current.filter((item) => item.id !== created.id)], orgId);
-        return created;
+        if (!error && data) {
+          const created = this.toDomain(data);
+          const current = this.getLocalCache([], orgId);
+          this.setLocalCache([created, ...current], orgId);
+          return created;
+        } else if (error) {
+          console.warn('[FinancialRepository] Insert error:', error.message);
+        }
+      } catch (err) {
+        console.warn('[FinancialRepository] Direct insert error:', err);
       }
     }
 
-    return this.save(entry, true);
+    return this.save(entry);
   }
 }
 

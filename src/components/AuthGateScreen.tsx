@@ -28,13 +28,7 @@ import { GoogleSmtpModal } from './GoogleSmtpModal';
 import { sendDirectGoogleSmtpConfirmation } from '../services/googleSmtpService';
 import { FrostlyLogo } from './FrostlyLogo';
 import { EmailValidationFeedback } from './EmailValidationFeedback';
-import { PasswordValidationFeedback } from './PasswordValidationFeedback';
 import { validateEmail } from '../utils/emailValidation';
-import { validatePassword } from '../utils/passwordValidation';
-import {
-  isPosSecurityReauthActive,
-  clearPosSecurityReauth,
-} from '../services/posCustomerService';
 import { 
   signIn, 
   signInAsTestUser, 
@@ -56,31 +50,20 @@ export interface AuthGateScreenProps {
   onAuthSuccess?: () => void;
   initialMode?: AuthScreenMode;
   onBackToLanding?: () => void;
-  requireStaffCredentials?: boolean;
 }
 
 export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({ 
   onAuthSuccess,
   initialMode = 'login',
-  onBackToLanding,
-  requireStaffCredentials = false,
+  onBackToLanding 
 }) => {
-  const enforceBlankStaffLogin = Boolean(requireStaffCredentials || isPosSecurityReauthActive());
-  const [mode, setMode] = useState<AuthScreenMode>(enforceBlankStaffLogin ? 'login' : initialMode);
+  const [mode, setMode] = useState<AuthScreenMode>(initialMode);
 
   useEffect(() => {
-    if (enforceBlankStaffLogin) {
-      setMode('login');
-      setEmail('');
-      setPassword('');
-      setActivationNotice(null);
-      setIsSettingPassword(false);
-      return;
-    }
     if (initialMode) {
       setMode(initialMode);
     }
-  }, [initialMode, enforceBlankStaffLogin]);
+  }, [initialMode]);
 
   // Input states
   const [email, setEmail] = useState('');
@@ -170,9 +153,9 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
         return;
       }
 
-      // 3. Informational notice for confirmed account landing (skipped during POS security re-auth)
+      // 3. Informational notice for confirmed account landing
       const isAct = params.get('activated') === 'true';
-      if (isAct && emailParam && !enforceBlankStaffLogin) {
+      if (isAct && emailParam) {
         setMode('login');
         setEmail(emailParam);
         setActivationNotice({
@@ -182,7 +165,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
         });
       }
     } catch {}
-  }, [enforceBlankStaffLogin]);
+  }, []);
 
   // Monitor network connectivity
   useEffect(() => {
@@ -208,13 +191,8 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
   // Handler for setting / updating password securely for authenticated or recovery sessions
   const handleSetPasswordAndLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPasswordVal) {
-      setErrorMessage('Please enter a new password.');
-      return;
-    }
-    const passCheck = validatePassword(newPasswordVal);
-    if (!passCheck.isValid) {
-      setErrorMessage(passCheck.errorMessage || 'Password does not meet enterprise security criteria.');
+    if (!newPasswordVal || newPasswordVal.length < 6) {
+      setErrorMessage('Password must be at least 6 characters.');
       return;
     }
     if (newPasswordVal !== confirmPasswordVal) {
@@ -281,15 +259,12 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
       if (result.error) {
         if (result.error.toLowerCase().includes('invalid login credentials')) {
           setErrorMessage(
-            enforceBlankStaffLogin
-              ? 'Invalid credentials. Please verify your staff email and password.'
-              : 'Invalid credentials. Please verify your email and password, or click one of the quick sign-in buttons below.'
+            'Invalid credentials. Please verify your email and password, or click one of the quick sign-in buttons below.'
           );
         } else {
           setErrorMessage(result.error);
         }
       } else {
-        clearPosSecurityReauth();
         if (onAuthSuccess) onAuthSuccess();
       }
     } catch (err: any) {
@@ -299,22 +274,55 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
     }
   };
 
-  // Quick sign in for Amansocean operations
-  const handleDevQuickLogin = async (targetEmail = 'info@amansocean.com', targetPassword = 'amansocean2726@!!') => {
+  // Tenant Admin Quick-Login Handler
+  const handleDevQuickLogin = async () => {
+    const targetEmail = DEFAULT_TEST_USER_EMAIL || 'admin@frostly.io';
+    const targetPass = DEFAULT_TEST_USER_PASSWORD || 'frostly2026';
+    setEmail(targetEmail);
+    setPassword(targetPass);
     setIsLoading(true);
     setErrorMessage(null);
-    setEmail(targetEmail);
-    setPassword(targetPassword);
+
     try {
-      const result = await signIn(targetEmail, targetPassword);
+      const result = await signInAsTestUser(targetEmail, targetPass);
       if (result.error) {
         setErrorMessage(result.error);
       } else {
-        clearPosSecurityReauth();
         if (onAuthSuccess) onAuthSuccess();
       }
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Quick login failed.');
+      setErrorMessage(err?.message || 'Tenant admin sign-in failed.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Creator Quick-Login Handler (Platform Owner - Dev Only)
+  const handleCreatorQuickLogin = async () => {
+    if (import.meta.env?.PROD) {
+      setErrorMessage('Creator dev auto-login is disabled in production.');
+      return;
+    }
+    const targetEmail = DEFAULT_CREATOR_EMAIL;
+    const targetPass = DEFAULT_CREATOR_PASSWORD;
+    if (!targetEmail || !targetPass) {
+      setErrorMessage('Creator dev credentials are not configured.');
+      return;
+    }
+    setEmail(targetEmail);
+    setPassword(targetPass);
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    try {
+      const result = await signInAsCreator(targetEmail, targetPass);
+      if (result.error) {
+        setErrorMessage(result.error);
+      } else {
+        if (onAuthSuccess) onAuthSuccess();
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Creator sign-in failed.');
     } finally {
       setIsLoading(false);
     }
@@ -334,11 +342,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
     }
     if (!password) {
       setErrorMessage('Please enter an admin password.');
-      return;
-    }
-    const passCheck = validatePassword(password);
-    if (!passCheck.isValid) {
-      setErrorMessage(passCheck.errorMessage || 'Password does not satisfy enterprise security requirements.');
       return;
     }
 
@@ -437,11 +440,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
       setErrorMessage('Please enter a password.');
       return;
     }
-    const passCheck = validatePassword(password);
-    if (!passCheck.isValid) {
-      setErrorMessage(passCheck.errorMessage || 'Password does not satisfy enterprise security requirements.');
-      return;
-    }
 
     setIsLoading(true);
     setErrorMessage(null);
@@ -500,12 +498,10 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
             {mode === 'login' && (
               <div className="mt-4">
                 <h1 className="text-xl font-bold font-heading text-slate-900">
-                  {enforceBlankStaffLogin ? 'Staff Sign-In Required' : 'Welcome back.'}
+                  Welcome back.
                 </h1>
                 <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                  {enforceBlankStaffLogin
-                    ? 'Enter verified staff credentials to return from Customer View to the POS workspace.'
-                    : 'Sign in to access your cold-chain management workspace.'}
+                  Sign in to access your cold-chain management workspace.
                 </p>
               </div>
             )}
@@ -719,21 +715,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                 </div>
               )}
 
-              {enforceBlankStaffLogin && (
-                <div
-                  id="pos-security-reauth-banner"
-                  className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 flex items-start gap-2.5"
-                >
-                  <ShieldCheck className="w-4 h-4 text-slate-800 shrink-0 mt-0.5" />
-                  <div className="leading-relaxed">
-                    <span className="font-semibold text-slate-900 block">
-                      Customer View Closed
-                    </span>
-                    Active terminal session has been signed out for counter security. Authenticate below to reopen Retail &amp; Wholesale POS.
-                  </div>
-                </div>
-              )}
-
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">
                   Work Email
@@ -742,7 +723,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                   id="auth-gate-email-input"
                   type="email"
                   required
-                  autoComplete={enforceBlankStaffLogin ? 'off' : 'email'}
+                  autoComplete="email"
                   placeholder="name@company.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -772,7 +753,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                         id="auth-gate-password-input"
                         type={showPassword ? 'text' : 'password'}
                         required
-                        autoComplete={enforceBlankStaffLogin ? 'new-password' : 'current-password'}
+                        autoComplete="current-password"
                         placeholder="••••••••"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
@@ -810,75 +791,25 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                     )}
                   </button>
 
-                  {!enforceBlankStaffLogin && (
-                    <div className="pt-3 border-t border-slate-100 space-y-2 mt-2">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          id="quick-login-amansocean-tenant"
-                          onClick={() => handleDevQuickLogin('info@amansocean.com', 'amansocean2726@!!')}
-                          disabled={isLoading}
-                          className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
-                        >
-                          <Fish className="w-3.5 h-3.5 text-cyan-200" />
-                          <span>Tenant: Amansocean</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          id="quick-login-platform-creator"
-                          onClick={() => handleDevQuickLogin('amoakoimml@gmail.com', 'frostly2026')}
-                          disabled={isLoading}
-                          className="w-full py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
-                        >
-                          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                          <span>Platform Creator</span>
-                        </button>
-                      </div>
-
-                      <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 space-y-2">
-                        {/* Tenant Amansocean */}
-                        <div className="pb-1.5 border-b border-slate-200/70">
-                          <div className="font-semibold text-slate-800 flex items-center justify-between mb-0.5">
-                            <span className="flex items-center gap-1 text-indigo-700">
-                              <Fish className="w-3 h-3" />
-                              <span>Amansocean Seafoods (Tenant)</span>
-                            </span>
-                            <span className="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded font-mono">
-                              Tenant 35a94c6e
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-[10px] font-mono text-slate-600">
-                            <span>Email: <strong className="text-slate-900">info@amansocean.com</strong></span>
-                            <span>Pass: <strong className="text-slate-900">amansocean2726@!!</strong></span>
-                          </div>
-                          <div className="text-[10px] text-slate-400 mt-0.5">
-                            Holds all commercial seafood inventory, customers, and operations.
-                          </div>
-                        </div>
-
-                        {/* Platform Creator */}
-                        <div>
-                          <div className="font-semibold text-slate-800 flex items-center justify-between mb-0.5">
-                            <span className="flex items-center gap-1 text-slate-900">
-                              <Sparkles className="w-3 h-3 text-amber-500" />
-                              <span>Platform Creator (Frostly HQ)</span>
-                            </span>
-                            <span className="text-[10px] text-slate-700 bg-slate-200 px-1.5 py-0.2 rounded font-mono">
-                              Super-Admin
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-[10px] font-mono text-slate-600">
-                            <span>Email: <strong className="text-slate-900">amoakoimml@gmail.com</strong></span>
-                            <span>Pass: <strong className="text-slate-900">frostly2026</strong></span>
-                          </div>
-                          <div className="text-[10px] text-slate-400 mt-0.5">
-                            Full access to Platform Console, audit logs, and multi-tenant management.
-                          </div>
-                        </div>
-                      </div>
+                  <div className="relative my-3">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-slate-200"></div>
                     </div>
-                  )}
+                    <div className="relative flex justify-center text-[10px] uppercase font-bold tracking-wider">
+                      <span className="bg-white px-2 text-slate-400">or explore without credentials</span>
+                    </div>
+                  </div>
+
+                  <button
+                    id="auth-gate-instant-demo-btn"
+                    type="button"
+                    onClick={handleDevQuickLogin}
+                    disabled={isLoading}
+                    className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Explore Demo Mode (Instant Access)</span>
+                  </button>
                 </>
               ) : (
                 /* Sub-form: Secure Password Recovery */
@@ -892,7 +823,7 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                   </p>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      New Password (min 8 characters, complex)
+                      New Password (min 6 characters)
                     </label>
                     <input
                       id="auth-gate-new-password-input"
@@ -902,13 +833,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                       onChange={(e) => setNewPasswordVal(e.target.value)}
                       disabled={isLoading}
                       className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-600"
-                    />
-                    <PasswordValidationFeedback
-                      password={newPasswordVal}
-                      onSuggestPassword={(p) => {
-                        setNewPasswordVal(p);
-                        setConfirmPasswordVal(p);
-                      }}
                     />
                   </div>
                   <div>
@@ -948,6 +872,89 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                       )}
                       <span>Update Password</span>
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Login Buttons & Credentials Box (Development Only) */}
+              {!import.meta.env?.PROD && Boolean(DEFAULT_CREATOR_EMAIL || DEFAULT_TEST_USER_EMAIL) && (
+                <div className="mt-3 space-y-2">
+                  {!import.meta.env?.PROD && DEFAULT_CREATOR_EMAIL && DEFAULT_CREATOR_PASSWORD && (
+                    <button
+                      id="auth-gate-creator-login-btn"
+                      type="button"
+                      onClick={handleCreatorQuickLogin}
+                      disabled={isLoading}
+                      className="w-full py-2 px-3 border border-dashed border-indigo-300 hover:border-indigo-400 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-700 rounded-xl text-xs font-mono-code transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      title={`Sign in as Platform Creator (${DEFAULT_CREATOR_EMAIL})`}
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Quick Sign-In: [CREATOR] Platform Owner</span>
+                    </button>
+                  )}
+
+                  {DEFAULT_TEST_USER_EMAIL && DEFAULT_TEST_USER_PASSWORD && (
+                    <button
+                      id="auth-gate-dev-login-btn"
+                      type="button"
+                      onClick={handleDevQuickLogin}
+                      disabled={isLoading}
+                      className="w-full py-2 px-3 border border-dashed border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl text-xs font-mono-code transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      title={`Quick-login as dev tenant admin (${DEFAULT_TEST_USER_EMAIL})`}
+                    >
+                      <KeyRound className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Quick Sign-In: [TENANT] Org Admin</span>
+                    </button>
+                  )}
+
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 space-y-2">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Configured Dev Credentials (Click to Auto-Fill):
+                    </div>
+                    
+                    {/* Account 1: Creator (Dev Only) */}
+                    {!import.meta.env?.PROD && DEFAULT_CREATOR_EMAIL && DEFAULT_CREATOR_PASSWORD && (
+                      <button
+                        type="button"
+                        id="auth-gate-fill-creator-btn"
+                        onClick={() => {
+                          setEmail(DEFAULT_CREATOR_EMAIL);
+                          setPassword(DEFAULT_CREATOR_PASSWORD);
+                          setErrorMessage(null);
+                        }}
+                        className="w-full text-left p-2 rounded-lg bg-white border border-slate-200/80 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-indigo-700 text-xs">Platform Creator</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 font-mono">Fill</span>
+                        </div>
+                        <div className="font-mono text-[10px] text-slate-600 mt-0.5">
+                          {DEFAULT_CREATOR_EMAIL} • <span className="text-slate-500">•••••••• (from env)</span>
+                        </div>
+                      </button>
+                    )}
+
+                    {/* Account 2: Tenant Admin */}
+                    {DEFAULT_TEST_USER_EMAIL && DEFAULT_TEST_USER_PASSWORD && (
+                      <button
+                        type="button"
+                        id="auth-gate-fill-admin-btn"
+                        onClick={() => {
+                          setEmail(DEFAULT_TEST_USER_EMAIL);
+                          setPassword(DEFAULT_TEST_USER_PASSWORD);
+                          setErrorMessage(null);
+                        }}
+                        className="w-full text-left p-2 rounded-lg bg-white border border-slate-200/80 hover:border-slate-300 hover:bg-slate-100/50 transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-slate-800 text-xs">Tenant Org Admin</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-mono">Fill</span>
+                        </div>
+                        <div className="font-mono text-[10px] text-slate-600 mt-0.5">
+                          {DEFAULT_TEST_USER_EMAIL} • <span className="text-slate-500">•••••••• (from env)</span>
+                        </div>
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -1179,10 +1186,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                     )}
                   </button>
                 </div>
-                <PasswordValidationFeedback
-                  password={password}
-                  onSuggestPassword={(p) => setPassword(p)}
-                />
               </div>
 
               {/* Starter Plan Guarantee */}
@@ -1342,10 +1345,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                     )}
                   </button>
                 </div>
-                <PasswordValidationFeedback
-                  password={password}
-                  onSuggestPassword={(p) => setPassword(p)}
-                />
               </div>
 
               <button

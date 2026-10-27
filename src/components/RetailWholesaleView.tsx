@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState } from 'react';
 import { 
   ShoppingBag, 
   Truck, 
@@ -19,23 +19,14 @@ import {
   ArrowRight,
   TrendingUp,
   UserCheck,
+  Sparkles,
   ChevronRight,
   Edit2,
   AlertCircle,
   ShieldAlert,
   Clock,
   AlertTriangle,
-  Image as ImageIcon,
-  Globe,
-  RefreshCw,
-  MapPin,
-  Phone,
-  Mail,
-  XCircle,
-  Monitor,
-  Copy,
-  Check,
-  FileText
+  Image as ImageIcon
 } from 'lucide-react';
 import { 
   RetailWholesaleProduct, 
@@ -47,24 +38,6 @@ import {
   InventoryBatch 
 } from '../types';
 import { ProductModal } from './Modals/ProductModal';
-import {
-  ErpStorefrontOrder,
-  StorefrontFulfillmentStatus,
-  fetchErpStorefrontOrders,
-  updateErpStorefrontOrderStatus,
-} from '../services/storefrontService';
-import {
-  PosRegisterSessionState,
-  fetchPosRegisterSession,
-  pushCashierPosSession,
-  subscribePosRegisterUpdates,
-  readCachedPosSession,
-} from '../services/posCustomerService';
-import {
-  AMANSOCEAN_PRICE_LIST_PDF_URL,
-  AMANSOCEAN_LOCATION,
-  AMANSOCEAN_CONTACT_PHONE,
-} from '../data/amansoceanProducts';
 
 interface RetailWholesaleViewProps {
   products: RetailWholesaleProduct[];
@@ -79,11 +52,8 @@ interface RetailWholesaleViewProps {
   onUpdateProductPricing: (productId: string, wholesalePrice: number, retailPrice: number) => void;
   onSaveProduct?: (product: RetailWholesaleProduct) => Promise<void> | void;
   onDeleteProduct?: (productId: string) => Promise<void> | void;
-  onSyncOfficialPriceList?: () => Promise<void> | void;
   onNavigateToInventory?: () => void;
-  onOpenPosCustomerView?: (options?: { customerContact?: string; customerId?: string }) => void;
   formatCurrency: (amount: number) => string;
-  lowStockThresholdKg?: number;
 }
 
 export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
@@ -99,118 +69,11 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   onUpdateProductPricing,
   onSaveProduct,
   onDeleteProduct,
-  onSyncOfficialPriceList,
   onNavigateToInventory,
-  onOpenPosCustomerView,
-  formatCurrency,
-  lowStockThresholdKg = 25,
+  formatCurrency
 }) => {
-  const [activeChannelTab, setActiveChannelTab] = useState<'retail_pos' | 'online_storefront' | 'wholesale_orders' | 'price_matrix'>('retail_pos');
-  const [matrixSearch, setMatrixSearch] = useState<string>('');
-  const [matrixCategory, setMatrixCategory] = useState<string>('all');
-  const [syncingPriceList, setSyncingPriceList] = useState<boolean>(false);
-  const [showFlyerPdfModal, setShowFlyerPdfModal] = useState<boolean>(false);
+  const [activeChannelTab, setActiveChannelTab] = useState<'retail_pos' | 'wholesale_orders' | 'price_matrix'>('retail_pos');
   
-  // Online Storefront Queue State
-  const [storefrontOrders, setStorefrontOrders] = useState<ErpStorefrontOrder[]>([]);
-  const [loadingStorefrontOrders, setLoadingStorefrontOrders] = useState<boolean>(false);
-  const [storefrontError, setStorefrontError] = useState<string | null>(null);
-  const [updatingOrderNumber, setUpdatingOrderNumber] = useState<string | null>(null);
-  const [storefrontStatusFilter, setStorefrontStatusFilter] = useState<'all' | StorefrontFulfillmentStatus>('all');
-  const [storefrontSearch, setStorefrontSearch] = useState<string>('');
-
-  const loadStorefrontOrders = useCallback(async () => {
-    setLoadingStorefrontOrders(true);
-    setStorefrontError(null);
-    try {
-      const orders = await fetchErpStorefrontOrders();
-      setStorefrontOrders(orders);
-    } catch (err: any) {
-      // Fallback: derive AO-XXXXX storefront orders from synced wholesaleOrders when running without an active staff API token
-      const derivedFromClientOrders: ErpStorefrontOrder[] = wholesaleOrders
-        .filter((o) => o.id.startsWith('AO-'))
-        .map((o) => {
-          let meta: any = {};
-          try {
-            meta = o.specialInstructions ? JSON.parse(o.specialInstructions) : {};
-          } catch {}
-          const statusMap: Record<string, StorefrontFulfillmentStatus> = {
-            Delivered: 'delivered',
-            Cancelled: 'canceled',
-            'In Reefer Transit': 'out_for_delivery',
-            'Cryo-Packed & Iced': 'packing',
-            'Weighing & Grading': 'packing',
-          };
-          const resolvedStatus: StorefrontFulfillmentStatus =
-            statusMap[o.status] || meta.fulfillment_status || 'confirmed';
-          return {
-            orderNumber: o.id,
-            fulfillmentStatus: resolvedStatus,
-            erpStatus: o.status,
-            paymentStatus: o.paymentStatus,
-            customerName: o.clientName,
-            customerPhone: meta.customer_phone || o.contactPhone,
-            customerEmail: meta.customer_email || o.contactEmail,
-            deliveryAddress: o.deliveryAddress,
-            deliveryNotes: meta.delivery_notes || null,
-            paymentMethod: meta.payment_method || 'Cash / Mobile Money on Delivery',
-            subtotal: Number(meta.subtotal ?? o.quotedTotalUSD),
-            deliveryFee: Number(meta.delivery_fee ?? 0),
-            totalAmount: Number(o.adjustedTotalUSD || o.quotedTotalUSD),
-            createdAt: o.orderDate,
-            items: Array.isArray(meta.items)
-              ? meta.items
-              : o.items.map((it) => ({
-                  productId: it.speciesId,
-                  productName: it.speciesName,
-                  quantity: it.requestedWeightKg,
-                  unitPrice: it.pricePerKg,
-                  lineTotal: Number((it.requestedWeightKg * it.pricePerKg).toFixed(2)),
-                  weightLabel: it.notes || '1 pack',
-                })),
-          };
-        });
-      setStorefrontOrders(derivedFromClientOrders);
-      if (derivedFromClientOrders.length === 0 && err?.message && !/Missing or invalid Authorization/i.test(err.message)) {
-        setStorefrontError(err.message);
-      }
-    } finally {
-      setLoadingStorefrontOrders(false);
-    }
-  }, [wholesaleOrders]);
-
-  useEffect(() => {
-    loadStorefrontOrders();
-  }, [loadStorefrontOrders]);
-
-  const handleAdvanceStorefrontStatus = async (
-    orderNumber: string,
-    nextStatus: StorefrontFulfillmentStatus
-  ) => {
-    setUpdatingOrderNumber(orderNumber);
-    setStorefrontError(null);
-    try {
-      const updated = await updateErpStorefrontOrderStatus(orderNumber, nextStatus);
-      setStorefrontOrders((prev) =>
-        prev.map((order) =>
-          order.orderNumber === orderNumber
-            ? {
-                ...order,
-                fulfillmentStatus: updated.fulfillmentStatus,
-                erpStatus: updated.erpStatus,
-                paymentStatus:
-                  updated.fulfillmentStatus === 'delivered' ? 'Paid' : order.paymentStatus,
-              }
-            : order
-        )
-      );
-    } catch (err: any) {
-      setStorefrontError(err?.message || 'Unable to update storefront order fulfillment stage.');
-    } finally {
-      setUpdatingOrderNumber(null);
-    }
-  };
-
   // Product & Image Management Modal State
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<RetailWholesaleProduct | null>(null);
@@ -218,8 +81,6 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   // POS State
   const [posSearch, setPosSearch] = useState('');
   const [posCategory, setPosCategory] = useState<string>('all');
-  const [posPricingMode, setPosPricingMode] = useState<'retail' | 'wholesale'>('retail');
-  const [copiedDisplayLink, setCopiedDisplayLink] = useState<boolean>(false);
   const [posCart, setPosCart] = useState<{ product: RetailWholesaleProduct; quantity: number }[]>([]);
   const [posCustomerName, setPosCustomerName] = useState('Walk-in Customer');
   const [posDiscountPct, setPosDiscountPct] = useState<number>(0);
@@ -230,19 +91,6 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   const [isOverrideAcknowledged, setIsOverrideAcknowledged] = useState<boolean>(false);
   const [wholesaleFilter, setWholesaleFilter] = useState<'all' | 'credit' | 'paid'>('all');
   const [completedReceiptModal, setCompletedReceiptModal] = useState<RetailTransaction | null>(null);
-
-  const isApplyingRemotePosRef = useRef<boolean>(false);
-  const lastAppliedPosVersionRef = useRef<number>(0);
-
-  const getActivePosUnitPrice = useCallback(
-    (product: RetailWholesaleProduct): number => {
-      if (posPricingMode === 'wholesale' && Number(product.wholesalePricePerUnit) > 0) {
-        return Number(product.wholesalePricePerUnit);
-      }
-      return Number(product.retailPricePerUnit);
-    },
-    [posPricingMode]
-  );
 
   // Selected customer for credit accounts
   const selectedCreditCustomer = customers.find(c => c.id === selectedCustomerId);
@@ -255,219 +103,12 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   const [editRetailPrice, setEditRetailPrice] = useState<string>('');
 
   // POS Cart Calculations
-  const cartSubtotal = posCart.reduce((sum, item) => sum + (getActivePosUnitPrice(item.product) * item.quantity), 0);
+  const cartSubtotal = posCart.reduce((sum, item) => sum + (item.product.retailPricePerUnit * item.quantity), 0);
   const discountAmount = (cartSubtotal * posDiscountPct) / 100;
   const taxableAmount = cartSubtotal - discountAmount;
   const taxAmount = taxableAmount * 0.0875; // 8.75% local sales tax
   const cartGrandTotal = taxableAmount + taxAmount;
   const cartCostTotal = posCart.reduce((sum, item) => sum + (item.product.costPricePerUnit * item.quantity), 0);
-
-  // Reconcile incoming Customer View / Kiosk basket actions into Cashier POS state
-  const applyRemoteSessionToPos = useCallback(
-    (session: PosRegisterSessionState) => {
-      if (!session || session.version <= lastAppliedPosVersionRef.current) return;
-      lastAppliedPosVersionRef.current = session.version;
-      isApplyingRemotePosRef.current = true;
-
-      setPosPricingMode(session.pricingMode === 'wholesale' ? 'wholesale' : 'retail');
-      if (session.customerName) {
-        setPosCustomerName(session.customerName);
-      }
-      if (typeof session.discountPct === 'number') {
-        setPosDiscountPct(session.discountPct);
-      }
-      if (session.customerAccount?.id) {
-        setSelectedCustomerId(session.customerAccount.id);
-      }
-
-      const mappedCart: { product: RetailWholesaleProduct; quantity: number }[] = session.items
-        .filter((line) => line.quantity > 0)
-        .map((line) => {
-          const existingProd = products.find(
-            (p) => p.id === line.productId || p.sku === line.sku
-          );
-          const fallbackProduct: RetailWholesaleProduct = existingProd || {
-            id: line.productId,
-            sku: line.sku || line.productId.toUpperCase(),
-            speciesId: 'spec-prawns',
-            name: line.name,
-            cutType: 'IQF Flash Frozen Box',
-            category: 'Crustacean',
-            grade: (line.grade as QualityGrade) || 'Grade #1',
-            unit: line.unit === 'pack' ? 'pack' : 'kg',
-            retailPackSize: line.unit,
-            wholesalePricePerUnit: line.wholesalePricePerUnit || line.unitPrice,
-            retailPricePerUnit: line.retailPricePerUnit || line.unitPrice,
-            costPricePerUnit: Number(((line.wholesalePricePerUnit || line.unitPrice) * 0.72).toFixed(2)),
-            stockKg: 50,
-            wholesaleMinQty: 5,
-            origin: 'Amansocean Coldstore',
-            isAvailableForRetail: true,
-            isAvailableForWholesale: true,
-            imageUrl: line.imageUrl || '',
-          };
-          return {
-            product: fallbackProduct,
-            quantity: line.quantity,
-          };
-        });
-
-      setPosCart(mappedCart);
-
-      setTimeout(() => {
-        isApplyingRemotePosRef.current = false;
-      }, 60);
-    },
-    [products]
-  );
-
-  // Hydrate initial register state & subscribe to Customer View / Secondary Kiosk updates
-  useEffect(() => {
-    const cached = readCachedPosSession('REG-1');
-    if (cached && cached.items.length > 0 && posCart.length === 0) {
-      applyRemoteSessionToPos(cached);
-    }
-
-    const unsubscribe = subscribePosRegisterUpdates('REG-1', (incoming) => {
-      applyRemoteSessionToPos(incoming);
-    });
-
-    const pollInterval = window.setInterval(async () => {
-      try {
-        const remote = await fetchPosRegisterSession('REG-1');
-        if (remote && remote.sourceId !== 'cashier-pos' && remote.version > lastAppliedPosVersionRef.current) {
-          applyRemoteSessionToPos(remote);
-        }
-      } catch {
-        // Ignore transient offline poll errors
-      }
-    }, 3500);
-
-    return () => {
-      unsubscribe();
-      window.clearInterval(pollInterval);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyRemoteSessionToPos]);
-
-  // Push Cashier POS basket, customer account, pricing tier & completed receipt to Customer View
-  useEffect(() => {
-    if (isApplyingRemotePosRef.current) return;
-
-    const timer = window.setTimeout(() => {
-      const customerSummary = selectedCreditCustomer
-        ? {
-            id: selectedCreditCustomer.id,
-            name: selectedCreditCustomer.name,
-            companyName: selectedCreditCustomer.companyName,
-            type: selectedCreditCustomer.type,
-            tier: selectedCreditCustomer.tier,
-            email: selectedCreditCustomer.email,
-            phone: selectedCreditCustomer.phone,
-            paymentTerms: selectedCreditCustomer.paymentTerms,
-            creditLimitUSD: selectedCreditCustomer.creditLimitUSD,
-            outstandingBalanceUSD: selectedCreditCustomer.outstandingBalanceUSD,
-            availableCreditUSD: Math.max(
-              0,
-              selectedCreditCustomer.creditLimitUSD - selectedCreditCustomer.outstandingBalanceUSD
-            ),
-            status: selectedCreditCustomer.status,
-          }
-        : null;
-
-      const receiptSummary = completedReceiptModal
-        ? {
-            id: completedReceiptModal.id,
-            receiptNumber: completedReceiptModal.receiptNumber,
-            date: completedReceiptModal.date,
-            customerName: completedReceiptModal.customerName,
-            saleType: completedReceiptModal.saleType || 'Direct Payment',
-            creditTerms: completedReceiptModal.creditTerms,
-            paymentMethod: completedReceiptModal.paymentMethod,
-            subtotal: completedReceiptModal.subtotal,
-            discountAmount: completedReceiptModal.discountAmount,
-            taxAmount: completedReceiptModal.taxAmount,
-            totalAmount: completedReceiptModal.totalAmount,
-            items: completedReceiptModal.items.map((it) => ({
-              productId: it.productId,
-              productName: it.productName,
-              cutType: it.cutType,
-              quantity: it.quantity,
-              unit: it.unit,
-              unitPrice: it.unitPrice,
-              lineTotal: it.lineTotal,
-            })),
-          }
-        : null;
-
-      pushCashierPosSession({
-        registerId: 'REG-1',
-        pricingMode: posPricingMode,
-        customerName:
-          selectedCreditCustomer
-            ? `${selectedCreditCustomer.name} (${selectedCreditCustomer.companyName})`
-            : posCustomerName || 'Walk-in Customer',
-        customerAccount: customerSummary,
-        items: posCart.map((item) => {
-          const activePrice = getActivePosUnitPrice(item.product);
-          return {
-            productId: item.product.id,
-            sku: item.product.sku,
-            name: item.product.name,
-            cutType: item.product.cutType,
-            grade: item.product.grade,
-            unit: posPricingMode === 'wholesale' ? 'kg' : item.product.unit,
-            quantity: item.quantity,
-            retailPricePerUnit: item.product.retailPricePerUnit,
-            wholesalePricePerUnit: item.product.wholesalePricePerUnit,
-            unitPrice: activePrice,
-            lineTotal: Number((activePrice * item.quantity).toFixed(2)),
-            storageZone: item.product.storageZone || 'Commercial Cold Storage (-22°C)',
-            imageUrl: item.product.imageUrl || '',
-          };
-        }),
-        discountPct: posDiscountPct,
-        paymentMethod: posPaymentMethod,
-        allowCustomerBasketEdits: true,
-        lastCompletedReceipt: receiptSummary,
-      })
-        .then((synced) => {
-          if (synced?.version) {
-            lastAppliedPosVersionRef.current = Math.max(
-              lastAppliedPosVersionRef.current,
-              synced.version
-            );
-          }
-        })
-        .catch(() => {});
-    }, 150);
-
-    return () => window.clearTimeout(timer);
-  }, [
-    posCart,
-    posPricingMode,
-    posCustomerName,
-    posDiscountPct,
-    posPaymentMethod,
-    selectedCreditCustomer,
-    completedReceiptModal,
-    getActivePosUnitPrice,
-  ]);
-
-  const handleCopyCounterDisplayLink = async () => {
-    if (typeof window === 'undefined') return;
-    const url = new URL(window.location.href);
-    url.searchParams.set('view', 'pos-customer');
-    url.searchParams.set('register', 'REG-1');
-    try {
-      await navigator.clipboard.writeText(url.toString());
-      setCopiedDisplayLink(true);
-      window.setTimeout(() => setCopiedDisplayLink(false), 2400);
-    } catch {
-      setCopiedDisplayLink(true);
-      window.setTimeout(() => setCopiedDisplayLink(false), 2400);
-    }
-  };
 
   // Credit check logic
   const isCreditAccountSale = posPaymentMethod === 'Customer Credit Account';
@@ -520,20 +161,16 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
     if (posCart.length === 0) return;
     if (isCreditAccountSale && !canSubmitCreditSale) return;
 
-    const saleItems: RetailSaleItem[] = posCart.map(item => {
-      const unitPrice = getActivePosUnitPrice(item.product);
-      return {
-        productId: item.product.id,
-        productName: item.product.name,
-        cutType: item.product.cutType,
-        imageUrl: item.product.imageUrl || '',
-        quantity: item.quantity,
-        unit: posPricingMode === 'wholesale' ? 'kg' : item.product.unit,
-        unitPrice,
-        costPrice: item.product.costPricePerUnit,
-        lineTotal: parseFloat((unitPrice * item.quantity).toFixed(2))
-      };
-    });
+    const saleItems: RetailSaleItem[] = posCart.map(item => ({
+      productId: item.product.id,
+      productName: item.product.name,
+      cutType: item.product.cutType,
+      quantity: item.quantity,
+      unit: item.product.unit,
+      unitPrice: item.product.retailPricePerUnit,
+      costPrice: item.product.costPricePerUnit,
+      lineTotal: parseFloat((item.product.retailPricePerUnit * item.quantity).toFixed(2))
+    }));
 
     const finalCustName = isCreditAccountSale && selectedCreditCustomer 
       ? `${selectedCreditCustomer.name} (${selectedCreditCustomer.companyName})` 
@@ -586,107 +223,58 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Top Channel Navigation Header */}
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 xl:gap-6 bg-white p-4 sm:p-5 lg:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-xs min-w-0 max-w-full overflow-hidden">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className="p-2 bg-indigo-100/80 text-indigo-700 rounded-xl shrink-0">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-xs">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="p-2 bg-indigo-100/80 text-indigo-700 rounded-xl">
               <ShoppingBag className="w-5 h-5" />
             </span>
-            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight leading-tight min-w-0 break-words">
-              Retail &amp; Wholesale Sales Hub
-            </h1>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Retail & Wholesale Sales Hub</h1>
           </div>
-          <p className="text-xs sm:text-sm text-slate-500 mt-1.5 leading-relaxed max-w-2xl">
+          <p className="text-sm text-slate-500 mt-1">
             Dual-channel execution: Walk-in counter POS, B2B restaurant bulk contracts, and dual price matrices.
           </p>
         </div>
 
-        <div
-          role="group"
-          aria-label="Sales Hub Channels and POS Customer Display"
-          className="bg-slate-100 p-1.5 rounded-2xl border border-slate-200 grid grid-cols-1 min-[360px]:grid-cols-2 sm:grid-cols-3 gap-1.5 lg:flex lg:flex-wrap lg:items-center lg:gap-1 w-full lg:w-auto lg:self-start xl:self-auto min-w-0 max-w-full"
-        >
+        <div className="bg-slate-100 p-1.5 rounded-2xl flex items-center gap-1 border border-slate-200 overflow-x-auto no-scrollbar w-full sm:w-auto shrink-0">
           <button
             id="tab-retail-pos"
-            type="button"
-            aria-pressed={activeChannelTab === 'retail_pos'}
             onClick={() => setActiveChannelTab('retail_pos')}
-            className={`w-full lg:w-auto min-w-0 min-h-[44px] lg:min-h-[40px] px-3 sm:px-3.5 xl:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold leading-tight text-left lg:text-center transition-all duration-150 active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 cursor-pointer flex items-center justify-start lg:justify-center gap-2 whitespace-normal lg:whitespace-nowrap lg:shrink-0 ${
+            className={`px-3.5 sm:px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0 ${
               activeChannelTab === 'retail_pos'
                 ? 'bg-emerald-600 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <ShoppingBag className="w-4 h-4 shrink-0" />
+            <ShoppingBag className="w-4 h-4" />
             <span>Retail Counter POS</span>
           </button>
 
           <button
-            id="tab-online-storefront"
-            type="button"
-            aria-pressed={activeChannelTab === 'online_storefront'}
-            onClick={() => {
-              setActiveChannelTab('online_storefront');
-              loadStorefrontOrders();
-            }}
-            className={`w-full lg:w-auto min-w-0 min-h-[44px] lg:min-h-[40px] px-3 sm:px-3.5 xl:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold leading-tight text-left lg:text-center tabular-nums transition-all duration-150 active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 cursor-pointer flex items-center justify-start lg:justify-center gap-2 whitespace-normal lg:whitespace-nowrap lg:shrink-0 ${
-              activeChannelTab === 'online_storefront'
-                ? 'bg-sky-700 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-            }`}
-          >
-            <Globe className="w-4 h-4 shrink-0" />
-            <span>Online Storefront ({storefrontOrders.length})</span>
-          </button>
-
-          <button
             id="tab-wholesale-orders"
-            type="button"
-            aria-pressed={activeChannelTab === 'wholesale_orders'}
             onClick={() => setActiveChannelTab('wholesale_orders')}
-            className={`w-full lg:w-auto min-w-0 min-h-[44px] lg:min-h-[40px] px-3 sm:px-3.5 xl:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold leading-tight text-left lg:text-center tabular-nums transition-all duration-150 active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 cursor-pointer flex items-center justify-start lg:justify-center gap-2 whitespace-normal lg:whitespace-nowrap lg:shrink-0 ${
+            className={`px-3.5 sm:px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0 ${
               activeChannelTab === 'wholesale_orders'
                 ? 'bg-indigo-600 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Truck className="w-4 h-4 shrink-0" />
+            <Truck className="w-4 h-4" />
             <span>Wholesale Bulk ({wholesaleOrders.length})</span>
           </button>
 
           <button
             id="tab-price-matrix"
-            type="button"
-            aria-pressed={activeChannelTab === 'price_matrix'}
             onClick={() => setActiveChannelTab('price_matrix')}
-            className={`w-full lg:w-auto min-w-0 min-h-[44px] lg:min-h-[40px] px-3 sm:px-3.5 xl:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold leading-tight text-left lg:text-center transition-all duration-150 active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 cursor-pointer flex items-center justify-start lg:justify-center gap-2 whitespace-normal lg:whitespace-nowrap lg:shrink-0 ${
+            className={`px-3.5 sm:px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0 ${
               activeChannelTab === 'price_matrix'
                 ? 'bg-slate-900 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Tag className="w-4 h-4 shrink-0" />
+            <Tag className="w-4 h-4" />
             <span>Dual Price Book</span>
           </button>
-
-          {onOpenPosCustomerView && (
-            <button
-              id="btn-launch-pos-customer-view"
-              type="button"
-              onClick={() =>
-                onOpenPosCustomerView({
-                  customerContact:
-                    selectedCreditCustomer?.email || selectedCreditCustomer?.phone || '',
-                  customerId: selectedCreditCustomer?.id || '',
-                })
-              }
-              className="min-[360px]:col-span-2 sm:col-span-2 w-full lg:w-auto min-w-0 min-h-[44px] lg:min-h-[40px] px-3.5 xl:px-4 py-2 rounded-xl text-[11px] sm:text-xs font-bold leading-tight bg-[#C8102E] hover:bg-[#9B0B20] text-white shadow-xs transition-all duration-150 active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C8102E] cursor-pointer flex items-center justify-center gap-2 whitespace-normal lg:whitespace-nowrap lg:shrink-0"
-              title="Open POS Customer View Display & Kiosk"
-            >
-              <Monitor className="w-4 h-4 shrink-0" />
-              <span>Customer View</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -708,11 +296,11 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
               </div>
 
               <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
-                {['all', 'Pelagic', 'Groundfish', 'Crustacean', 'Mollusk', 'Salmonid'].map(cat => (
+                {['all', 'Pelagic', 'Salmonid', 'Crustacean', 'Mollusk'].map(cat => (
                   <button
                     key={cat}
                     onClick={() => setPosCategory(cat)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                       posCategory === cat
                         ? 'bg-slate-900 text-white'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -726,174 +314,52 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
 
             {/* Product Card Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {filteredPOSProducts.map(prod => {
-                const safetyThreshold = typeof prod.minSafetyStockKg === 'number' && !isNaN(prod.minSafetyStockKg)
-                  ? prod.minSafetyStockKg
-                  : (lowStockThresholdKg ?? 25);
-                const currentStock = Number(prod.stockKg || 0);
-                const isLowStock = currentStock < safetyThreshold;
-                const isOutOfStock = currentStock <= 0;
-
-                return (
-                  <div 
-                    key={prod.id}
-                    onClick={() => handleAddToCart(prod)}
-                    className={`bg-white rounded-3xl p-4 shadow-xs hover:shadow-md transition-all cursor-pointer flex flex-col justify-between space-y-3 group relative ${
-                      isOutOfStock
-                        ? 'border-2 border-rose-300 bg-rose-50/20 hover:border-rose-400'
-                        : isLowStock
-                          ? 'border-2 border-amber-300 bg-amber-50/25 hover:border-amber-400'
-                          : 'border border-slate-200 hover:border-emerald-400'
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      {prod.imageUrl ? (
-                        <div className="relative w-16 h-16 rounded-2xl border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
-                          <img 
-                            src={prod.imageUrl} 
-                            alt={prod.name} 
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                            onError={(e) => {
-                              e.currentTarget.style.display = 'none';
-                              const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
-                              if (fb) (fb as HTMLElement).style.display = 'flex';
-                            }}
-                          />
-                          <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
-                            <Package className="w-6 h-6" />
-                          </div>
-                          {isLowStock && (
-                            <div 
-                              className={`absolute top-1 left-1 p-1 rounded-lg text-white shadow-xs z-10 flex items-center justify-center ${
-                                isOutOfStock ? 'bg-rose-600' : 'bg-amber-500'
-                              }`}
-                              title={
-                                isOutOfStock
-                                  ? 'Depleted: Out of Stock'
-                                  : `Low Stock: ${currentStock} kg is below minimum safety threshold of ${safetyThreshold} kg`
-                              }
-                            >
-                              {isOutOfStock ? (
-                                <AlertCircle className="w-3.5 h-3.5" />
-                              ) : (
-                                <AlertTriangle className="w-3.5 h-3.5" />
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="relative w-16 h-16 rounded-2xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
-                          <Package className="w-6 h-6" />
-                          {isLowStock && (
-                            <div 
-                              className={`absolute top-1 left-1 p-1 rounded-lg text-white shadow-xs z-10 flex items-center justify-center ${
-                                isOutOfStock ? 'bg-rose-600' : 'bg-amber-500'
-                              }`}
-                              title={
-                                isOutOfStock
-                                  ? 'Depleted: Out of Stock'
-                                  : `Low Stock: ${currentStock} kg is below minimum safety threshold of ${safetyThreshold} kg`
-                              }
-                            >
-                              {isOutOfStock ? (
-                                <AlertCircle className="w-3.5 h-3.5" />
-                              ) : (
-                                <AlertTriangle className="w-3.5 h-3.5" />
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-1.5">
-                          <div className="font-bold text-slate-900 text-xs leading-snug group-hover:text-emerald-700 transition-colors truncate">
-                            {prod.name}
-                          </div>
-                          {isLowStock && (
-                            <span 
-                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold shrink-0 border ${
-                                isOutOfStock
-                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                  : 'bg-amber-100/90 text-amber-900 border-amber-300'
-                              }`}
-                              title={`Current stock (${currentStock} kg) has fallen below defined minimum safety threshold (${safetyThreshold} kg)`}
-                            >
-                              {isOutOfStock ? (
-                                <>
-                                  <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />
-                                  <span>Out of Stock</span>
-                                </>
-                              ) : (
-                                <>
-                                  <AlertTriangle className="w-3 h-3 text-amber-700 shrink-0" />
-                                  <span>Low Stock</span>
-                                </>
-                              )}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-slate-500 mt-0.5 truncate">{prod.cutType}</div>
-                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                          <span className="inline-block px-2 py-0.5 bg-emerald-50 text-emerald-800 text-[10px] font-bold rounded-md">
-                            {prod.grade}
-                          </span>
-                          {isLowStock && (
-                            <span className="text-[10px] text-amber-700 font-semibold font-mono-code">
-                              &lt;{safetyThreshold}kg min safe
-                            </span>
-                          )}
-                        </div>
+              {filteredPOSProducts.map(prod => (
+                <div 
+                  key={prod.id}
+                  onClick={() => handleAddToCart(prod)}
+                  className="bg-white rounded-3xl border border-slate-200 p-4 shadow-xs hover:border-emerald-400 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between space-y-3 group"
+                >
+                  <div className="flex items-start gap-3">
+                    {prod.imageUrl ? (
+                      <img 
+                        src={prod.imageUrl} 
+                        alt={prod.name} 
+                        className="w-16 h-16 rounded-2xl object-cover border border-slate-200 shrink-0 bg-slate-100"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="w-16 h-16 rounded-2xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
+                        <Package className="w-6 h-6" />
                       </div>
-                    </div>
-
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <div>
-                        <div className="text-[10px] text-slate-400 font-bold uppercase">
-                          {posPricingMode === 'wholesale' ? 'Wholesale Tier' : 'Retail Price'}
-                        </div>
-                        <div className="text-base font-black text-slate-900 font-mono-code">
-                          {formatCurrency(getActivePosUnitPrice(prod))}
-                          <span className="text-[11px] font-normal text-slate-500">
-                            /{posPricingMode === 'wholesale' ? 'kg' : prod.unit}
-                          </span>
-                        </div>
+                    )}
+                    <div>
+                      <div className="font-bold text-slate-900 text-xs leading-snug group-hover:text-emerald-700 transition-colors">
+                        {prod.name}
                       </div>
-
-                      <div className="text-right shrink-0">
-                        <div className="text-[10px] font-bold uppercase flex items-center justify-end gap-1">
-                          {isLowStock ? (
-                            <span className={`inline-flex items-center gap-1 ${isOutOfStock ? 'text-rose-600' : 'text-amber-700'}`}>
-                              {isOutOfStock ? (
-                                <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />
-                              ) : (
-                                <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
-                              )}
-                              <span>{isOutOfStock ? 'Depleted' : 'Low Safety'}</span>
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">In Stock</span>
-                          )}
-                        </div>
-                        <div className={`text-xs font-mono-code ${
-                          isOutOfStock 
-                            ? 'font-black text-rose-600' 
-                            : isLowStock 
-                              ? 'font-black text-amber-800' 
-                              : 'font-bold text-slate-700'
-                        }`}>
-                          {prod.stockKg} kg
-                        </div>
-                        {isLowStock && (
-                          <div className="text-[9px] text-amber-700 font-medium">
-                            Min safe: {safetyThreshold} kg
-                          </div>
-                        )}
-                      </div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">{prod.cutType}</div>
+                      <span className="inline-block mt-1 px-2 py-0.5 bg-emerald-50 text-emerald-800 text-[10px] font-bold rounded-md">
+                        {prod.grade}
+                      </span>
                     </div>
                   </div>
-                );
-              })}
+
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] text-slate-400 font-bold uppercase">Retail Price</div>
+                      <div className="text-base font-black text-slate-900 font-mono-code">
+                        {formatCurrency(prod.retailPricePerUnit)}
+                        <span className="text-[11px] font-normal text-slate-500">/{prod.unit}</span>
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      <div className="text-[10px] text-slate-400 font-bold uppercase">In Stock</div>
+                      <div className="text-xs font-bold text-slate-700 font-mono-code">{prod.stockKg} kg</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -906,65 +372,18 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                 </div>
                 <div>
                   <h2 className="text-base font-bold text-slate-900">Counter Order Cart</h2>
-                  <p className="text-[11px] text-slate-400">Direct POS Register #1 · Live Customer Sync</p>
+                  <p className="text-[11px] text-slate-400">Direct Retail POS Register #1</p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              {posCart.length > 0 && (
                 <button
-                  type="button"
-                  onClick={handleCopyCounterDisplayLink}
-                  className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center gap-1 cursor-pointer whitespace-nowrap"
-                  title="Copy URL for secondary customer-facing tablet/screen"
+                  onClick={handleClearCart}
+                  className="text-xs text-rose-600 hover:text-rose-800 font-bold cursor-pointer"
                 >
-                  {copiedDisplayLink ? (
-                    <>
-                      <Check className="w-3 h-3 text-emerald-600" />
-                      <span>Link Copied</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3 h-3" />
-                      <span>Pair Screen</span>
-                    </>
-                  )}
+                  Clear
                 </button>
-
-                {posCart.length > 0 && (
-                  <button
-                    onClick={handleClearCart}
-                    className="text-xs text-rose-600 hover:text-rose-800 font-bold cursor-pointer"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* POS Pricing Tier Toggle: Retail Pack vs Wholesale Bulk */}
-            <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
-              <button
-                type="button"
-                onClick={() => setPosPricingMode('retail')}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
-                  posPricingMode === 'retail'
-                    ? 'bg-white text-slate-900 shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Retail Pack Tier
-              </button>
-              <button
-                type="button"
-                onClick={() => setPosPricingMode('wholesale')}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
-                  posPricingMode === 'wholesale'
-                    ? 'bg-white text-slate-900 shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Wholesale B2B Tier
-              </button>
+              )}
             </div>
 
             {/* Customer Type / VIP Selector */}
@@ -1004,34 +423,10 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                     key={item.product.id}
                     className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-2 text-xs"
                   >
-                    <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                      {item.product.imageUrl ? (
-                        <div className="relative w-10 h-10 rounded-xl border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
-                          <img
-                            src={item.product.imageUrl}
-                            alt={item.product.name}
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                            onError={(e) => {
-                              e.currentTarget.style.display = 'none';
-                              const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
-                              if (fb) (fb as HTMLElement).style.display = 'flex';
-                            }}
-                          />
-                          <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
-                            <Package className="w-4 h-4" />
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="w-10 h-10 rounded-xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
-                          <Package className="w-4 h-4" />
-                        </div>
-                      )}
-                      <div className="min-w-0">
-                        <div className="font-bold text-slate-900 truncate">{item.product.name}</div>
-                        <div className="text-[11px] text-slate-500">
-                          {formatCurrency(getActivePosUnitPrice(item.product))}/{posPricingMode === 'wholesale' ? 'kg' : item.product.unit}
-                        </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-slate-900 truncate">{item.product.name}</div>
+                      <div className="text-[11px] text-slate-500">
+                        {formatCurrency(item.product.retailPricePerUnit)}/{item.product.unit}
                       </div>
                     </div>
 
@@ -1044,7 +439,7 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                           <Minus className="w-3 h-3" />
                         </button>
                         <span className="w-12 text-center font-mono-code font-bold text-slate-900 text-xs">
-                          {item.quantity} {posPricingMode === 'wholesale' ? 'kg' : item.product.unit}
+                          {item.quantity} {item.product.unit}
                         </span>
                         <button
                           onClick={() => handleUpdateCartQty(item.product.id, parseFloat((item.quantity + (item.product.unit === 'pack' ? 1 : 0.25)).toFixed(2)))}
@@ -1055,7 +450,7 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                       </div>
 
                       <div className="font-mono-code font-black text-slate-900 w-16 text-right">
-                        {formatCurrency(getActivePosUnitPrice(item.product) * item.quantity)}
+                        {formatCurrency(item.product.retailPricePerUnit * item.quantity)}
                       </div>
 
                       <button
@@ -1284,524 +679,6 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
           )}
         </div>
       )}
-
-      {/* 1B. ONLINE D2C STOREFRONT FULFILLMENT QUEUE (AO-XXXXX) */}
-      {activeChannelTab === 'online_storefront' && (() => {
-        const activePackCount = storefrontOrders.filter(
-          (o) => o.fulfillmentStatus === 'confirmed' || o.fulfillmentStatus === 'packing'
-        ).length;
-        const inTransitCount = storefrontOrders.filter(
-          (o) => o.fulfillmentStatus === 'out_for_delivery'
-        ).length;
-        const deliveredCount = storefrontOrders.filter(
-          (o) => o.fulfillmentStatus === 'delivered'
-        ).length;
-        const onlineGrossRevenue = storefrontOrders
-          .filter((o) => o.fulfillmentStatus !== 'canceled')
-          .reduce((sum, o) => sum + Number(o.totalAmount || 0), 0);
-
-        const filteredStorefrontOrders = storefrontOrders.filter((order) => {
-          const matchesStatus =
-            storefrontStatusFilter === 'all' || order.fulfillmentStatus === storefrontStatusFilter;
-          const q = storefrontSearch.trim().toLowerCase();
-          const matchesQuery =
-            !q ||
-            order.orderNumber.toLowerCase().includes(q) ||
-            order.customerName.toLowerCase().includes(q) ||
-            (order.customerPhone || '').toLowerCase().includes(q) ||
-            (order.customerEmail || '').toLowerCase().includes(q) ||
-            order.deliveryAddress.toLowerCase().includes(q);
-          return matchesStatus && matchesQuery;
-        });
-
-        const statusMeta: Record<
-          StorefrontFulfillmentStatus,
-          { label: string; textClass: string; icon: React.ReactNode }
-        > = {
-          confirmed: {
-            label: 'Confirmed · Awaiting Pack',
-            textClass: 'text-amber-700',
-            icon: <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />,
-          },
-          packing: {
-            label: 'Cryo-Packed & Iced',
-            textClass: 'text-sky-700',
-            icon: <Package className="w-3.5 h-3.5 text-sky-600 shrink-0" />,
-          },
-          out_for_delivery: {
-            label: 'Out for Cold-Fleet Delivery',
-            textClass: 'text-indigo-700',
-            icon: <Truck className="w-3.5 h-3.5 text-indigo-600 shrink-0" />,
-          },
-          delivered: {
-            label: 'Delivered',
-            textClass: 'text-emerald-700',
-            icon: <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />,
-          },
-          canceled: {
-            label: 'Canceled',
-            textClass: 'text-rose-700',
-            icon: <XCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />,
-          },
-        };
-
-        return (
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">
-                  Amansocean Online Storefront Queue
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Direct-to-consumer cold-chain orders synced from Supabase with automatic FEFO lot deduction and live customer tracking.
-                </p>
-              </div>
-
-              <button
-                onClick={loadStorefrontOrders}
-                disabled={loadingStorefrontOrders}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap shrink-0"
-              >
-                <RefreshCw
-                  className={`w-3.5 h-3.5 ${loadingStorefrontOrders ? 'animate-spin text-sky-600' : 'text-slate-500'}`}
-                />
-                <span>Refresh Queue</span>
-              </button>
-            </div>
-
-            {storefrontError && (
-              <div className="p-3.5 rounded-2xl border border-rose-200 bg-rose-50 text-xs text-rose-800 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                  <span>{storefrontError}</span>
-                </div>
-                <button
-                  onClick={loadStorefrontOrders}
-                  className="px-3 py-1 rounded-lg bg-white border border-rose-200 text-rose-700 font-bold hover:bg-rose-100 cursor-pointer whitespace-nowrap shrink-0"
-                >
-                  Retry
-                </button>
-              </div>
-            )}
-
-            {/* KPI Strip */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                <div className="text-xs text-slate-500 font-medium">Awaiting Pack &amp; Ice</div>
-                <div className="text-xl font-black text-slate-900 font-mono tabular-nums mt-1">
-                  {activePackCount}
-                </div>
-                <div className="text-[11px] text-slate-500 mt-0.5">Confirmed · Packing</div>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                <div className="text-xs text-slate-500 font-medium">In Reefer Transit</div>
-                <div className="text-xl font-black text-slate-900 font-mono tabular-nums mt-1">
-                  {inTransitCount}
-                </div>
-                <div className="text-[11px] text-slate-500 mt-0.5">Dispatched to doorstep</div>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                <div className="text-xs text-slate-500 font-medium">Delivered Orders</div>
-                <div className="text-xl font-black text-emerald-700 font-mono tabular-nums mt-1">
-                  {deliveredCount}
-                </div>
-                <div className="text-[11px] text-slate-500 mt-0.5">Completed cold-chain drops</div>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                <div className="text-xs text-slate-500 font-medium">Online D2C Volume</div>
-                <div className="text-xl font-black text-slate-900 font-mono tabular-nums mt-1">
-                  {formatCurrency(onlineGrossRevenue)}
-                </div>
-                <div className="text-[11px] text-slate-500 mt-0.5">
-                  {storefrontOrders.length} total online orders
-                </div>
-              </div>
-            </div>
-
-            {/* Search & Segmented Status Filter */}
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-1 border-b border-slate-100 pb-4">
-              <div className="relative w-full lg:w-80">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Search AO-XXXXX, customer, phone, or address..."
-                  value={storefrontSearch}
-                  onChange={(e) => setStorefrontSearch(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900"
-                />
-              </div>
-
-              <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl overflow-x-auto no-scrollbar">
-                {(
-                  [
-                    { id: 'all', label: `All (${storefrontOrders.length})` },
-                    { id: 'confirmed', label: 'Confirmed' },
-                    { id: 'packing', label: 'Packing' },
-                    { id: 'out_for_delivery', label: 'Out for Delivery' },
-                    { id: 'delivered', label: 'Delivered' },
-                    { id: 'canceled', label: 'Canceled' },
-                  ] as const
-                ).map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setStorefrontStatusFilter(tab.id)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                      storefrontStatusFilter === tab.id
-                        ? 'bg-white text-slate-900 shadow-2xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Loading / Empty / Data Table */}
-            {loadingStorefrontOrders && storefrontOrders.length === 0 ? (
-              <div className="space-y-3 py-4">
-                {[1, 2, 3].map((row) => (
-                  <div
-                    key={row}
-                    className="h-16 rounded-2xl bg-slate-100 animate-pulse border border-slate-200/60"
-                  />
-                ))}
-              </div>
-            ) : filteredStorefrontOrders.length === 0 ? (
-              <div className="py-12 px-4 text-center bg-slate-50/70 rounded-2xl border border-slate-200/80 space-y-2">
-                <Globe className="w-8 h-8 text-slate-400 mx-auto stroke-1" />
-                <div className="text-sm font-bold text-slate-900">
-                  {storefrontOrders.length === 0
-                    ? 'No Online Storefront Orders Yet'
-                    : 'No Matching Storefront Orders'}
-                </div>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  {storefrontOrders.length === 0
-                    ? 'Customer orders placed on the public Amansocean storefront appear here automatically with deducted cold-storage inventory and AO-XXXXX tracking codes.'
-                    : 'Adjust your search query or fulfillment status filter above to view other orders.'}
-                </p>
-              </div>
-            ) : (
-              <>
-                {/* Mobile Cards */}
-                <div className="space-y-3 md:hidden">
-                  {filteredStorefrontOrders.map((order) => {
-                    const meta = statusMeta[order.fulfillmentStatus] || statusMeta.confirmed;
-                    const isBusy = updatingOrderNumber === order.orderNumber;
-                    return (
-                      <div
-                        key={order.orderNumber}
-                        className="p-4 rounded-2xl border border-slate-200 bg-white space-y-3"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <div className="font-mono tabular-nums font-black text-slate-900 text-sm">
-                              {order.orderNumber}
-                            </div>
-                            <div className="text-xs font-semibold text-slate-800 mt-0.5">
-                              {order.customerName}
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="font-mono tabular-nums font-black text-slate-900 text-sm">
-                              {formatCurrency(order.totalAmount)}
-                            </div>
-                            <div
-                              className={`inline-flex items-center gap-1 text-[11px] font-semibold mt-0.5 ${meta.textClass}`}
-                            >
-                              {meta.icon}
-                              <span>{meta.label}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="text-xs text-slate-600 space-y-1">
-                          <div className="flex items-start gap-1.5">
-                            <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
-                            <span>{order.deliveryAddress}</span>
-                          </div>
-                          <div className="text-[11px] text-slate-500">
-                            {[order.customerPhone, order.customerEmail, order.paymentMethod]
-                              .filter(Boolean)
-                              .join(' · ')}
-                          </div>
-                        </div>
-
-                        <div className="pt-2 border-t border-slate-100 text-xs text-slate-700 space-y-1.5">
-                          {order.items.map((it, idx) => {
-                            const matchedImg = (it as any).imageUrl || products.find(p => p.id === it.productId || p.name.toLowerCase() === it.productName.toLowerCase())?.imageUrl;
-                            return (
-                              <div
-                                key={`${order.orderNumber}-${it.productId}-${idx}`}
-                                className="flex items-center justify-between gap-2"
-                              >
-                                <div className="flex items-center gap-2 min-w-0">
-                                  {matchedImg ? (
-                                    <div className="relative w-7 h-7 rounded-lg border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
-                                      <img
-                                        src={matchedImg}
-                                        alt={it.productName}
-                                        className="w-full h-full object-cover"
-                                        referrerPolicy="no-referrer"
-                                        onError={(e) => {
-                                          e.currentTarget.style.display = 'none';
-                                          const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
-                                          if (fb) (fb as HTMLElement).style.display = 'flex';
-                                        }}
-                                      />
-                                      <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
-                                        <Package className="w-3.5 h-3.5" />
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div className="w-7 h-7 rounded-lg border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
-                                      <Package className="w-3.5 h-3.5" />
-                                    </div>
-                                  )}
-                                  <span className="truncate">
-                                    <span className="font-mono tabular-nums font-bold">
-                                      {it.quantity}×
-                                    </span>{' '}
-                                    {it.productName}
-                                  </span>
-                                </div>
-                                <span className="font-mono tabular-nums text-slate-600 shrink-0">
-                                  {formatCurrency(it.lineTotal)}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
-                          {order.fulfillmentStatus === 'confirmed' && (
-                            <button
-                              disabled={isBusy}
-                              onClick={() =>
-                                handleAdvanceStorefrontStatus(order.orderNumber, 'packing')
-                              }
-                              className="flex-1 py-2 px-3 rounded-xl bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                            >
-                              {isBusy ? 'Saving...' : 'Pack & Ice'}
-                            </button>
-                          )}
-                          {(order.fulfillmentStatus === 'confirmed' ||
-                            order.fulfillmentStatus === 'packing') && (
-                            <button
-                              disabled={isBusy}
-                              onClick={() =>
-                                handleAdvanceStorefrontStatus(
-                                  order.orderNumber,
-                                  'out_for_delivery'
-                                )
-                              }
-                              className="flex-1 py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                            >
-                              {isBusy ? 'Saving...' : 'Dispatch Cold-Fleet'}
-                            </button>
-                          )}
-                          {order.fulfillmentStatus === 'out_for_delivery' && (
-                            <button
-                              disabled={isBusy}
-                              onClick={() =>
-                                handleAdvanceStorefrontStatus(order.orderNumber, 'delivered')
-                              }
-                              className="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                            >
-                              {isBusy ? 'Saving...' : 'Mark Delivered'}
-                            </button>
-                          )}
-                          {order.fulfillmentStatus !== 'delivered' &&
-                            order.fulfillmentStatus !== 'canceled' && (
-                              <button
-                                disabled={isBusy}
-                                onClick={() =>
-                                  handleAdvanceStorefrontStatus(order.orderNumber, 'canceled')
-                                }
-                                className="py-2 px-3 rounded-xl border border-slate-200 hover:bg-rose-50 hover:text-rose-700 text-slate-600 text-xs font-semibold cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                              >
-                                Cancel
-                              </button>
-                            )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Desktop High-Density Fulfillment Table */}
-                <div className="overflow-x-auto hidden md:block">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50 text-slate-500 font-bold border-y border-slate-200">
-                      <tr>
-                        <th className="py-3 px-4">Order Code</th>
-                        <th className="py-3 px-4">Customer &amp; Delivery</th>
-                        <th className="py-3 px-4">Cold-Chain Pack List</th>
-                        <th className="py-3 px-4">Payment</th>
-                        <th className="py-3 px-4 text-right">Total</th>
-                        <th className="py-3 px-4">Fulfillment Stage</th>
-                        <th className="py-3 px-4 text-right">Stage Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {filteredStorefrontOrders.map((order) => {
-                        const meta = statusMeta[order.fulfillmentStatus] || statusMeta.confirmed;
-                        const isBusy = updatingOrderNumber === order.orderNumber;
-                        return (
-                          <tr
-                            key={order.orderNumber}
-                            className="hover:bg-slate-50/70 transition-colors"
-                          >
-                            <td className="py-3.5 px-4 align-top">
-                              <div className="font-mono tabular-nums font-bold text-slate-900 text-sm">
-                                {order.orderNumber}
-                              </div>
-                              <div className="text-[11px] text-slate-400 font-mono tabular-nums mt-0.5">
-                                {order.createdAt
-                                  ? new Date(order.createdAt).toLocaleDateString('en-US', {
-                                      month: 'short',
-                                      day: 'numeric',
-                                      hour: '2-digit',
-                                      minute: '2-digit',
-                                    })
-                                  : 'Today'}
-                              </div>
-                            </td>
-
-                            <td className="py-3.5 px-4 align-top max-w-xs">
-                              <div className="font-bold text-slate-900">{order.customerName}</div>
-                              <div className="text-[11px] text-slate-600 mt-0.5 truncate" title={order.deliveryAddress}>
-                                {order.deliveryAddress}
-                              </div>
-                              <div className="text-[11px] text-slate-400 font-mono tabular-nums mt-0.5 truncate">
-                                {[order.customerPhone, order.customerEmail]
-                                  .filter(Boolean)
-                                  .join(' · ')}
-                              </div>
-                              {order.deliveryNotes && (
-                                <div className="text-[11px] text-slate-500 italic mt-0.5 truncate">
-                                  Note: {order.deliveryNotes}
-                                </div>
-                              )}
-                            </td>
-
-                            <td className="py-3.5 px-4 align-top">
-                              <div className="space-y-0.5">
-                                {order.items.map((item, idx) => (
-                                  <div
-                                    key={`${order.orderNumber}-row-${idx}`}
-                                    className="text-slate-800"
-                                  >
-                                    <span className="font-mono tabular-nums font-bold text-slate-900">
-                                      {item.quantity}×
-                                    </span>{' '}
-                                    <span>{item.productName}</span>
-                                    {item.weightLabel && (
-                                      <span className="text-slate-400"> · {item.weightLabel}</span>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </td>
-
-                            <td className="py-3.5 px-4 align-top">
-                              <div className="font-medium text-slate-800">
-                                {order.paymentMethod}
-                              </div>
-                              <div className="text-[11px] text-slate-500 mt-0.5">
-                                {order.paymentStatus || 'Pending Settlement'}
-                              </div>
-                            </td>
-
-                            <td className="py-3.5 px-4 align-top text-right font-mono tabular-nums font-black text-sm text-slate-900">
-                              {formatCurrency(order.totalAmount)}
-                            </td>
-
-                            <td className="py-3.5 px-4 align-top">
-                              <div
-                                className={`inline-flex items-center gap-1.5 font-semibold ${meta.textClass}`}
-                              >
-                                {meta.icon}
-                                <span>{meta.label}</span>
-                              </div>
-                            </td>
-
-                            <td className="py-3.5 px-4 align-top text-right">
-                              <div className="inline-flex items-center justify-end gap-1.5">
-                                {order.fulfillmentStatus === 'confirmed' && (
-                                  <button
-                                    disabled={isBusy}
-                                    onClick={() =>
-                                      handleAdvanceStorefrontStatus(order.orderNumber, 'packing')
-                                    }
-                                    className="px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                                  >
-                                    {isBusy ? 'Saving...' : 'Pack & Ice'}
-                                  </button>
-                                )}
-                                {order.fulfillmentStatus === 'packing' && (
-                                  <button
-                                    disabled={isBusy}
-                                    onClick={() =>
-                                      handleAdvanceStorefrontStatus(
-                                        order.orderNumber,
-                                        'out_for_delivery'
-                                      )
-                                    }
-                                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                                  >
-                                    {isBusy ? 'Saving...' : 'Dispatch Fleet'}
-                                  </button>
-                                )}
-                                {order.fulfillmentStatus === 'out_for_delivery' && (
-                                  <button
-                                    disabled={isBusy}
-                                    onClick={() =>
-                                      handleAdvanceStorefrontStatus(
-                                        order.orderNumber,
-                                        'delivered'
-                                      )
-                                    }
-                                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                                  >
-                                    {isBusy ? 'Saving...' : 'Mark Delivered'}
-                                  </button>
-                                )}
-                                {order.fulfillmentStatus !== 'delivered' &&
-                                  order.fulfillmentStatus !== 'canceled' && (
-                                    <button
-                                      disabled={isBusy}
-                                      onClick={() =>
-                                        handleAdvanceStorefrontStatus(
-                                          order.orderNumber,
-                                          'canceled'
-                                        )
-                                      }
-                                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-rose-50 hover:text-rose-700 text-slate-600 text-xs font-semibold cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                                    >
-                                      Cancel
-                                    </button>
-                                  )}
-                                {(order.fulfillmentStatus === 'delivered' ||
-                                  order.fulfillmentStatus === 'canceled') && (
-                                  <span className="text-[11px] text-slate-400">Closed</span>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-          </div>
-        );
-      })()}
 
       {/* 2. WHOLESALE BULK ORDERS VIEW */}
       {activeChannelTab === 'wholesale_orders' && (() => {
@@ -2092,89 +969,47 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
       })()}
 
       {/* 3. DUAL PRICE LIST & CATALOG MATRIX */}
-      {activeChannelTab === 'price_matrix' && (() => {
-        const filteredMatrixProducts = products.filter((prod) => {
-          const matchesCat = matrixCategory === 'all' || prod.category === matrixCategory;
-          if (!matchesCat) return false;
-          if (!matrixSearch.trim()) return true;
-          const q = matrixSearch.toLowerCase();
-          return (
-            prod.name.toLowerCase().includes(q) ||
-            prod.sku.toLowerCase().includes(q) ||
-            prod.cutType.toLowerCase().includes(q)
-          );
-        });
-
-        return (
+      {activeChannelTab === 'price_matrix' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-4">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h2 className="text-lg font-bold text-slate-900">Official Amans Ocean Price List &amp; Dual Catalog (GH₵)</h2>
-              <p className="text-xs text-slate-500">Live Ghana Cedi (GH₵) retail &amp; wholesale rates, 10kg+ bulk tiers, MOQs, and coldstore inventory sync.</p>
+              <h2 className="text-lg font-bold text-slate-900">Dual Wholesale vs Retail Pricing Catalog</h2>
+              <p className="text-xs text-slate-500">Live price matrix, minimum order quantities (MOQ), product images, and margin spreads by cut.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setShowFlyerPdfModal(true)}
-                className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              >
-                <FileText className="w-4 h-4 text-slate-500" />
-                <span>Price List Flyer (PDF)</span>
-              </button>
-
-              {onSyncOfficialPriceList && (
-                <button
-                  type="button"
-                  disabled={syncingPriceList}
-                  onClick={async () => {
-                    setSyncingPriceList(true);
-                    try {
-                      await onSyncOfficialPriceList();
-                    } catch {} finally {
-                      setSyncingPriceList(false);
-                    }
-                  }}
-                  className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-sky-50 hover:bg-sky-100 text-sky-900 border border-sky-200 rounded-xl text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-60"
-                >
-                  <RefreshCw className={`w-4 h-4 ${syncingPriceList ? 'animate-spin' : ''}`} />
-                  <span>{syncingPriceList ? 'Syncing...' : 'Sync Official Flyer'}</span>
-                </button>
-              )}
-
-              <button
-                onClick={() => {
-                  setEditingProduct(null);
-                  setIsProductModalOpen(true);
-                }}
-                className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Add Product</span>
-              </button>
-            </div>
+            <button
+              onClick={() => {
+                setEditingProduct(null);
+                setIsProductModalOpen(true);
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer shrink-0"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Add Retail Product</span>
+            </button>
           </div>
 
           {/* Dual Channel Connection Explainer */}
-          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-700">
+          <div className="bg-gradient-to-r from-indigo-50/80 via-blue-50/50 to-slate-50 p-4 rounded-2xl border border-indigo-100/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-700">
             <div className="flex items-start gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-slate-900 text-white flex items-center justify-center shrink-0">
+              <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
                 <Tag className="w-4 h-4" />
               </div>
               <div className="space-y-0.5">
                 <div className="font-bold text-slate-900 flex items-center gap-2 flex-wrap">
-                  <span>Supabase Dual-Channel Price Matrix</span>
-                  <span aria-hidden="true">·</span>
-                  <span className="text-slate-600 tabular-nums">{products.length} Active SKUs</span>
+                  <span>How Dual Price Catalog Connects to Inventory Ledger</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800">
+                    {products.length} Products Configured
+                  </span>
                 </div>
                 <p className="text-[11px] text-slate-600 leading-relaxed max-w-3xl">
-                  Each item maintains live GH₵ wholesale and retail pricing synced to Supabase, Storefront checkout, and POS Customer View. Discounted offers apply above 5kg, with 10kg+ bulk tiers on Peeled Shrimps (GH₵ 200/kg) and Squid (GH₵ 130/kg).
+                  Each product in this matrix has dual wholesale ($/kg) and retail ($/unit) pricing matrices. Every active product is directly linked to an inspected cold-storage lot in the <strong>Inventory Ledger</strong>, ensuring automatic stock deduction across both counter POS receipts and B2B invoices.
                 </p>
               </div>
             </div>
             {onNavigateToInventory && (
               <button
                 onClick={onNavigateToInventory}
-                className="px-3.5 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-800 text-xs font-bold border border-slate-200 transition-colors cursor-pointer shrink-0 flex items-center gap-1 self-start sm:self-center whitespace-nowrap"
+                className="px-3.5 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-indigo-700 text-xs font-bold border border-indigo-200 transition-colors shadow-2xs cursor-pointer shrink-0 flex items-center gap-1 self-start sm:self-center"
               >
                 <span>View In Inventory</span>
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -2182,68 +1017,24 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
             )}
           </div>
 
-          {/* Search & Category Filter inside Matrix */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-              {['all', 'Pelagic', 'Groundfish', 'Crustacean', 'Mollusk', 'Salmonid'].map((cat) => (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() => setMatrixCategory(cat)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                    matrixCategory === cat
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {cat === 'all' ? 'All Categories' : cat}
-                </button>
-              ))}
-            </div>
-            <div className="relative w-full sm:w-72 shrink-0">
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search Red Snapper, Prawns, SKU..."
-                value={matrixSearch}
-                onChange={(e) => setMatrixSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900"
-              />
-            </div>
-          </div>
-
           {/* Mobile Price Matrix Cards */}
           <div className="space-y-3 md:hidden">
-            {filteredMatrixProducts.map(prod => {
+            {products.map(prod => {
               const isEditing = editingPriceId === prod.id;
               const retailMargin = ((prod.retailPricePerUnit - prod.costPricePerUnit) / prod.retailPricePerUnit) * 100;
               const wholesaleMargin = ((prod.wholesalePricePerUnit - prod.costPricePerUnit) / prod.wholesalePricePerUnit) * 100;
-              const safetyThreshold = typeof prod.minSafetyStockKg === 'number' && !isNaN(prod.minSafetyStockKg)
-                ? prod.minSafetyStockKg
-                : (lowStockThresholdKg ?? 25);
-              const isLowStock = Number(prod.stockKg || 0) < safetyThreshold;
 
               return (
                 <div key={prod.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2.5">
                       {prod.imageUrl ? (
-                        <div className="relative w-11 h-11 rounded-xl border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
-                          <img
-                            src={prod.imageUrl}
-                            alt={prod.name}
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                            onError={(e) => {
-                              e.currentTarget.style.display = 'none';
-                              const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
-                              if (fb) (fb as HTMLElement).style.display = 'flex';
-                            }}
-                          />
-                          <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
-                            <Package className="w-5 h-5" />
-                          </div>
-                        </div>
+                        <img
+                          src={prod.imageUrl}
+                          alt={prod.name}
+                          className="w-11 h-11 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100"
+                          referrerPolicy="no-referrer"
+                        />
                       ) : (
                         <div className="w-11 h-11 rounded-xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
                           <Package className="w-5 h-5" />
@@ -2280,19 +1071,10 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                         })()}
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                    <div className="flex items-center gap-1.5">
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 shrink-0">
                         {prod.grade}
                       </span>
-                      {isLowStock && (
-                        <span 
-                          className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shrink-0 inline-flex items-center gap-1"
-                          title={`Stock (${prod.stockKg} kg) is below minimum safety threshold (${safetyThreshold} kg)`}
-                        >
-                          <AlertTriangle className="w-3 h-3 text-amber-600" />
-                          <span>Low Stock ({prod.stockKg}/{safetyThreshold}kg)</span>
-                        </span>
-                      )}
                       <button
                         onClick={() => {
                           setEditingProduct(prod);
@@ -2306,7 +1088,7 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 text-xs bg-white p-2.5 rounded-xl border border-slate-200/70">
+                  <div className="grid grid-cols-2 gap-2 text-xs bg-white p-2.5 rounded-xl border border-slate-200/70">
                     <div>
                       <div className="text-[10px] text-slate-400 font-bold uppercase">Landing Cost</div>
                       <div className="font-mono-code font-bold text-slate-700">{formatCurrency(prod.costPricePerUnit)}/{prod.unit}</div>
@@ -2314,13 +1096,6 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                     <div>
                       <div className="text-[10px] text-slate-400 font-bold uppercase">Origin</div>
                       <div className="font-medium text-slate-700 truncate">{prod.origin}</div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-slate-400 font-bold uppercase">Stock on Hand</div>
-                      <div className={`font-mono-code font-bold ${isLowStock ? 'text-amber-800 flex items-center gap-1' : 'text-slate-700'}`}>
-                        {isLowStock && <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />}
-                        <span>{prod.stockKg} {prod.unit}</span>
-                      </div>
                     </div>
                   </div>
 
@@ -2402,54 +1177,29 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredMatrixProducts.map(prod => {
+                {products.map(prod => {
                   const isEditing = editingPriceId === prod.id;
                   const retailMargin = ((prod.retailPricePerUnit - prod.costPricePerUnit) / prod.retailPricePerUnit) * 100;
                   const wholesaleMargin = ((prod.wholesalePricePerUnit - prod.costPricePerUnit) / prod.wholesalePricePerUnit) * 100;
-                  const safetyThreshold = typeof prod.minSafetyStockKg === 'number' && !isNaN(prod.minSafetyStockKg)
-                    ? prod.minSafetyStockKg
-                    : (lowStockThresholdKg ?? 25);
-                  const isLowStock = Number(prod.stockKg || 0) < safetyThreshold;
 
                   return (
                     <tr key={prod.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
                           {prod.imageUrl ? (
-                            <div className="relative w-10 h-10 rounded-xl border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
-                              <img
-                                src={prod.imageUrl}
-                                alt={prod.name}
-                                className="w-full h-full object-cover"
-                                referrerPolicy="no-referrer"
-                                onError={(e) => {
-                                  e.currentTarget.style.display = 'none';
-                                  const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
-                                  if (fb) (fb as HTMLElement).style.display = 'flex';
-                                }}
-                              />
-                              <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
-                                <Package className="w-4 h-4" />
-                              </div>
-                            </div>
+                            <img
+                              src={prod.imageUrl}
+                              alt={prod.name}
+                              className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-100"
+                              referrerPolicy="no-referrer"
+                            />
                           ) : (
                             <div className="w-10 h-10 rounded-xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
                               <Package className="w-4 h-4" />
                             </div>
                           )}
                           <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-slate-900 text-sm">{prod.name}</span>
-                              {isLowStock && (
-                                <span 
-                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300"
-                                  title={`Stock (${prod.stockKg} kg) is below minimum safety threshold (${safetyThreshold} kg)`}
-                                >
-                                  <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
-                                  <span>Low Stock ({prod.stockKg}/{safetyThreshold}kg)</span>
-                                </span>
-                              )}
-                            </div>
+                            <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
                             <div className="text-slate-400 text-[11px]">{prod.cutType} • {prod.sku}</div>
                             {(() => {
                               const linkedBatch = batches.find(b => 
@@ -2574,48 +1324,6 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
             </table>
           </div>
         </div>
-        );
-      })()}
-
-      {/* Official Amans Ocean Price List Flyer PDF Modal */}
-      {showFlyerPdfModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden shadow-xl">
-            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-4">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">
-                  Official Amans Ocean Price List Flyer
-                </h3>
-                <p className="text-xs text-slate-500">
-                  {AMANSOCEAN_LOCATION} · Tel {AMANSOCEAN_CONTACT_PHONE}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <a
-                  href={AMANSOCEAN_PRICE_LIST_PDF_URL}
-                  download="AmansOcean_Official_PriceList.pdf"
-                  className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 whitespace-nowrap shrink-0"
-                >
-                  Download PDF
-                </a>
-                <button
-                  type="button"
-                  onClick={() => setShowFlyerPdfModal(false)}
-                  className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 cursor-pointer"
-                >
-                  <XCircle className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 bg-slate-100">
-              <iframe
-                src={AMANSOCEAN_PRICE_LIST_PDF_URL}
-                title="Official Amans Ocean Price List PDF"
-                className="w-full h-full border-0"
-              />
-            </div>
-          </div>
-        </div>
       )}
 
       {/* POS Receipt Modal on successful checkout */}
@@ -2634,36 +1342,12 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
             {/* Receipt Item lines */}
             <div className="space-y-2 text-xs divide-y divide-slate-100">
               {completedReceiptModal.items.map(item => (
-                <div key={item.productId} className="pt-2 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    {item.imageUrl ? (
-                      <div className="relative w-8 h-8 rounded-lg border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
-                        <img
-                          src={item.imageUrl}
-                          alt={item.productName}
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                          onError={(e) => {
-                            e.currentTarget.style.display = 'none';
-                            const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
-                            if (fb) (fb as HTMLElement).style.display = 'flex';
-                          }}
-                        />
-                        <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
-                          <Package className="w-3.5 h-3.5" />
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="w-8 h-8 rounded-lg border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
-                        <Package className="w-3.5 h-3.5" />
-                      </div>
-                    )}
-                    <div className="min-w-0">
-                      <div className="font-bold text-slate-900 truncate">{item.productName}</div>
-                      <div className="text-[11px] text-slate-400">{item.quantity} {item.unit} @ {formatCurrency(item.unitPrice)}</div>
-                    </div>
+                <div key={item.productId} className="pt-2 flex justify-between">
+                  <div>
+                    <div className="font-bold text-slate-900">{item.productName}</div>
+                    <div className="text-[11px] text-slate-400">{item.quantity} {item.unit} @ {formatCurrency(item.unitPrice)}</div>
                   </div>
-                  <div className="font-mono-code font-bold text-slate-900 shrink-0">{formatCurrency(item.lineTotal)}</div>
+                  <div className="font-mono-code font-bold text-slate-900">{formatCurrency(item.lineTotal)}</div>
                 </div>
               ))}
             </div>

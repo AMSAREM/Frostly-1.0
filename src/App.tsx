@@ -8,7 +8,6 @@ import { FinancialsView } from './components/FinancialsView';
 import { InventoryLedgerView } from './components/InventoryLedgerView';
 import { SettingsView } from './components/SettingsView';
 import { PlatformConsoleView } from './components/PlatformConsoleView';
-import { PosCustomerView } from './components/PosCustomerView';
 
 import { TraceabilityPassportModal } from './components/Modals/TraceabilityPassportModal';
 import { CatchWeightWeigherModal } from './components/Modals/CatchWeightWeigherModal';
@@ -26,8 +25,20 @@ import { TrialCountdownBanner } from './components/TrialCountdownBanner';
 import { LegalFooter } from './components/LegalFooter';
 import { LegalModal } from './components/LegalModal';
 
-import { INITIAL_ADJUSTMENT_ACCOUNTS, INITIAL_STOCK_ADJUSTMENTS, SPECIES_CATALOG } from './data/mockData';
-import { AMANSOCEAN_OFFICIAL_CATALOG } from './data/amansoceanProducts';
+import { 
+  INITIAL_BATCHES, 
+  INITIAL_ORDERS, 
+  INITIAL_CUSTOMERS,
+  INITIAL_SUPPLIERS,
+  INITIAL_PRODUCTS,
+  INITIAL_RETAIL_TRANSACTIONS,
+  INITIAL_PURCHASE_ORDERS,
+  INITIAL_FINANCIAL_ENTRIES,
+  INITIAL_NOTIFICATIONS,
+  INITIAL_ADJUSTMENT_ACCOUNTS,
+  INITIAL_STOCK_ADJUSTMENTS,
+  SPECIES_CATALOG
+} from './data/mockData';
 
 import { 
   InventoryBatch, 
@@ -61,37 +72,21 @@ import { adjustmentAccountRepository, stockAdjustmentRepository } from './reposi
 import { StockAdjustmentData } from './components/Inventory/StockAdjustmentModal';
 import { syncManager } from './sync/syncManager';
 import { useAuth } from './components/AuthGate';
-import {
-  activatePosCustomerKioskLock,
-  isPosCustomerKioskLocked,
-  consumePosPostLoginTab,
-} from './services/posCustomerService';
 import { 
   signInAsTestUser, 
   StaffProfile,
   isSubscriptionPastDue,
-  isSubscriptionLockedOut,
-  getCurrentOrganizationId,
-  getSession
+  isSubscriptionLockedOut
 } from './data/auth';
-import { isInvalidOrgId } from './repositories/base';
 import { User } from '@supabase/supabase-js';
-import { supabase, isSupabaseConfigured } from './utils/supabase';
 
 export default function App() {
   // Single authoritative source of truth for session and staff profile from AuthGate
-  const {
-    session,
-    user: currentUser,
-    staffProfile,
-    refreshProfile: handleRefreshProfile,
-    signOut: handleSignOut,
-    exitCustomerViewToLogin,
-  } = useAuth();
+  const { session, user: currentUser, staffProfile, refreshProfile: handleRefreshProfile, signOut: handleSignOut } = useAuth();
 
   const isSentinelFallbackOrg = 
-    staffProfile?.organization_id === '00000000-0000-0000-0000-000000000001' ||
-    staffProfile?.organization_id === 'org-frostly-hq';
+    staffProfile?.organization_id === 'org-frostly-hq' ||
+    staffProfile?.organization_id === '00000000-0000-0000-0000-000000000000';
 
   const activeOrgId = (!isSentinelFallbackOrg && staffProfile?.organization_id) ? staffProfile.organization_id : null;
   const isTenantUser = Boolean(activeOrgId);
@@ -118,26 +113,12 @@ export default function App() {
     }
   });
 
-  // Navigation & Search - Support post-Customer-View POS return and PWA App Shortcut URLs (e.g. ?tab=settings)
+  // Navigation & Search - Support PWA App Shortcut URLs (e.g. ?tab=settings)
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
-    const validTabs: ActiveTab[] = [
-      'dashboard',
-      'retail_wholesale',
-      'customers',
-      'suppliers',
-      'financials',
-      'inventory',
-      'settings',
-      'platform',
-    ];
     try {
-      const postLoginTarget = consumePosPostLoginTab() as ActiveTab | null;
-      if (postLoginTarget && validTabs.includes(postLoginTarget)) {
-        return postLoginTarget;
-      }
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get('tab') as ActiveTab;
-      if (tabParam && validTabs.includes(tabParam)) {
+      if (tabParam && ['dashboard', 'retail_wholesale', 'customers', 'suppliers', 'financials', 'inventory', 'settings', 'platform'].includes(tabParam)) {
         return tabParam;
       }
     } catch (e) {
@@ -147,58 +128,6 @@ export default function App() {
   });
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [useImperial, setUseImperial] = useState<boolean>(() => settings.useImperial ?? false);
-  const [posCustomerView, setPosCustomerView] = useState<{
-    isOpen: boolean;
-    registerId: string;
-    customerContact?: string;
-    customerId?: string;
-  }>(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const isPosCust =
-        params.get('view') === 'pos-customer' ||
-        window.location.hash.toLowerCase() === '#pos-customer' ||
-        isPosCustomerKioskLocked();
-      if (isPosCust) {
-        activatePosCustomerKioskLock();
-      }
-      return {
-        isOpen: isPosCust,
-        registerId: (params.get('register') || 'REG-1').toUpperCase(),
-      };
-    } catch {
-      return { isOpen: false, registerId: 'REG-1' };
-    }
-  });
-
-  const handleOpenPosCustomerView = (opts?: { customerContact?: string; customerId?: string }) => {
-    activatePosCustomerKioskLock();
-    setPosCustomerView({
-      isOpen: true,
-      registerId: 'REG-1',
-      customerContact: opts?.customerContact,
-      customerId: opts?.customerId,
-    });
-  };
-
-  // Prevent URL hash tampering or browser Back navigation from bypassing staff login while Customer View is locked
-  useEffect(() => {
-    if (!posCustomerView.isOpen) return;
-    const enforceKioskBoundary = () => {
-      if (
-        isPosCustomerKioskLocked() &&
-        window.location.hash.toLowerCase() !== '#pos-customer'
-      ) {
-        exitCustomerViewToLogin();
-      }
-    };
-    window.addEventListener('hashchange', enforceKioskBoundary);
-    window.addEventListener('popstate', enforceKioskBoundary);
-    return () => {
-      window.removeEventListener('hashchange', enforceKioskBoundary);
-      window.removeEventListener('popstate', enforceKioskBoundary);
-    };
-  }, [posCustomerView.isOpen, exitCustomerViewToLogin]);
 
   // Currency Formatter aware of current settings
   const formatAppCurrency = (amount: number) => {
@@ -227,89 +156,122 @@ export default function App() {
   // Newly created or active tenant workspaces are initialized completely clean without demo data
   const [batches, setBatches] = useState<InventoryBatch[]>(() => {
     try {
-      return batchRepository.getLocalCache([], activeOrgId);
+      if (activeOrgId) {
+        return batchRepository.getLocalCache([], activeOrgId);
+      }
+      return batchRepository.getLocalCache(INITIAL_BATCHES);
     } catch {
-      return [];
+      return activeOrgId ? [] : INITIAL_BATCHES;
     }
   });
 
   const [orders, setOrders] = useState<ClientOrder[]>(() => {
     try {
-      return orderRepository.getLocalCache([], activeOrgId);
+      if (activeOrgId) {
+        return orderRepository.getLocalCache([], activeOrgId);
+      }
+      return orderRepository.getLocalCache(INITIAL_ORDERS);
     } catch {
-      return [];
+      return activeOrgId ? [] : INITIAL_ORDERS;
     }
   });
 
   const [customers, setCustomers] = useState<Customer[]>(() => {
     try {
-      return customerRepository.getLocalCache([], activeOrgId);
+      if (activeOrgId) {
+        return customerRepository.getLocalCache([], activeOrgId);
+      }
+      return customerRepository.getLocalCache(INITIAL_CUSTOMERS);
     } catch {
-      return [];
+      return activeOrgId ? [] : INITIAL_CUSTOMERS;
     }
   });
 
   const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
     try {
-      return supplierRepository.getLocalCache([], activeOrgId);
+      if (activeOrgId) {
+        return supplierRepository.getLocalCache([], activeOrgId);
+      }
+      return supplierRepository.getLocalCache(INITIAL_SUPPLIERS);
     } catch {
-      return [];
+      return activeOrgId ? [] : INITIAL_SUPPLIERS;
     }
   });
 
   const [products, setProducts] = useState<RetailWholesaleProduct[]>(() => {
     try {
-      return productRepository.getLocalCache([], activeOrgId);
+      if (activeOrgId) {
+        return productRepository.getLocalCache([], activeOrgId);
+      }
+      return productRepository.getLocalCache(INITIAL_PRODUCTS);
     } catch {
-      return [];
+      return activeOrgId ? [] : INITIAL_PRODUCTS;
     }
   });
 
   const [retailSales, setRetailSales] = useState<RetailTransaction[]>(() => {
     try {
-      return retailTransactionRepository.getLocalCache([], activeOrgId);
+      if (activeOrgId) {
+        return retailTransactionRepository.getLocalCache([], activeOrgId);
+      }
+      return retailTransactionRepository.getLocalCache(INITIAL_RETAIL_TRANSACTIONS);
     } catch {
-      return [];
+      return activeOrgId ? [] : INITIAL_RETAIL_TRANSACTIONS;
     }
   });
 
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderLanding[]>(() => {
     try {
-      return purchaseOrderRepository.getLocalCache([], activeOrgId);
+      if (activeOrgId) {
+        return purchaseOrderRepository.getLocalCache([], activeOrgId);
+      }
+      return purchaseOrderRepository.getLocalCache(INITIAL_PURCHASE_ORDERS);
     } catch {
-      return [];
+      return activeOrgId ? [] : INITIAL_PURCHASE_ORDERS;
     }
   });
 
   const [financialEntries, setFinancialEntries] = useState<FinancialLedgerEntry[]>(() => {
     try {
-      return financialRepository.getLocalCache([], activeOrgId);
+      if (activeOrgId) {
+        return financialRepository.getLocalCache([], activeOrgId);
+      }
+      return financialRepository.getLocalCache(INITIAL_FINANCIAL_ENTRIES);
     } catch {
-      return [];
+      return activeOrgId ? [] : INITIAL_FINANCIAL_ENTRIES;
     }
   });
 
   const [adjustmentAccounts, setAdjustmentAccounts] = useState<InventoryAdjustmentAccount[]>(() => {
     try {
-      return adjustmentAccountRepository.getLocalCache([], activeOrgId);
+      if (activeOrgId) {
+        return adjustmentAccountRepository.getLocalCache([], activeOrgId);
+      }
+      return adjustmentAccountRepository.getLocalCache(INITIAL_ADJUSTMENT_ACCOUNTS);
     } catch {
-      return [];
+      return activeOrgId ? [] : INITIAL_ADJUSTMENT_ACCOUNTS;
     }
   });
 
   const [stockAdjustments, setStockAdjustments] = useState<InventoryStockAdjustment[]>(() => {
     try {
-      return stockAdjustmentRepository.getLocalCache([], activeOrgId);
+      if (activeOrgId) {
+        return stockAdjustmentRepository.getLocalCache([], activeOrgId);
+      }
+      return stockAdjustmentRepository.getLocalCache(INITIAL_STOCK_ADJUSTMENTS);
     } catch {
-      return [];
+      return activeOrgId ? [] : INITIAL_STOCK_ADJUSTMENTS;
     }
   });
 
   const [notifications, setNotifications] = useState<SystemNotification[]>(() => {
     try {
-      return notificationRepository.getLocalCache([], activeOrgId);
+      if (activeOrgId) {
+        return notificationRepository.getLocalCache([], activeOrgId);
+      }
+      return notificationRepository.getLocalCache(INITIAL_NOTIFICATIONS);
     } catch {
-      return [];
+      return activeOrgId ? [] : INITIAL_NOTIFICATIONS;
     }
   });
 
@@ -461,55 +423,13 @@ export default function App() {
       console.warn('[App] Purchase Order repository load error:', err);
     });
 
-    const officialDomainFallback: RetailWholesaleProduct[] = AMANSOCEAN_OFFICIAL_CATALOG.map((item) => ({
-      id: item.id,
-      speciesId: item.species_id,
-      name: item.name,
-      cutType: item.cut_type,
-      category: item.db_category,
-      grade: item.grade,
-      stockKg: item.stock_kg,
-      unit: item.unit,
-      costPricePerUnit: item.cost_price_per_unit,
-      wholesalePricePerUnit: item.wholesale_price_per_unit,
-      retailPricePerUnit: item.retail_price_per_unit,
-      wholesaleMinQty: item.wholesale_min_qty,
-      retailPackSize: item.retail_pack_size,
-      sku: item.sku,
-      imageUrl: item.image_url,
-      origin: item.origin,
-      isAvailableForRetail: true,
-      isAvailableForWholesale: true,
-      minSafetyStockKg: item.min_safety_stock_kg,
-    }));
-
-    (async () => {
-      try {
-        const session = await getSession();
-        const token = session?.access_token;
-        if (token) {
-          const apiRes = await fetch('/api/erp/amansocean-products', {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (apiRes.ok) {
-            const payload = await apiRes.json();
-            if (isMounted && Array.isArray(payload.products) && payload.products.length > 0) {
-              setProducts(payload.products);
-              return;
-            }
-          }
-        }
-        const fresh = await productRepository.getProducts(officialDomainFallback);
-        if (isMounted) {
-          setProducts(fresh && fresh.length > 0 ? fresh : officialDomainFallback);
-        }
-      } catch (err) {
-        console.warn('[App] Product repository load error:', err);
-        if (isMounted) {
-          setProducts(officialDomainFallback);
-        }
+    productRepository.getProducts(fallbackList).then(fresh => {
+      if (isMounted) {
+        setProducts(fresh || []);
       }
-    })();
+    }).catch(err => {
+      console.warn('[App] Product repository load error:', err);
+    });
 
     retailTransactionRepository.getTransactions(fallbackList).then(fresh => {
       if (isMounted) {
@@ -708,127 +628,49 @@ export default function App() {
     financialEntries?: FinancialLedgerEntry[];
     settings?: AppSettings;
   }) => {
-    if (imported.customers) {
-      setCustomers(imported.customers);
-      customerRepository.resetCache(imported.customers);
-      customerRepository.saveAll(imported.customers).catch((err) => {
-        console.warn('[App] customerRepository restore error:', err);
-      });
-    }
-    if (imported.suppliers) {
-      setSuppliers(imported.suppliers);
-      supplierRepository.resetCache(imported.suppliers);
-      supplierRepository.saveAll(imported.suppliers).catch((err) => {
-        console.warn('[App] supplierRepository restore error:', err);
-      });
-    }
-    if (imported.products) {
-      setProducts(imported.products);
-      productRepository.resetCache(imported.products);
-      productRepository.saveAll(imported.products).catch((err) => {
-        console.warn('[App] productRepository restore error:', err);
-      });
-    }
     if (imported.batches) {
       setBatches(imported.batches);
       batchRepository.resetCache(imported.batches);
-      batchRepository.saveAll(imported.batches).catch((err) => {
-        console.warn('[App] batchRepository restore error:', err);
-      });
     }
-    if (imported.orders) {
-      setOrders(imported.orders);
-      orderRepository.resetCache(imported.orders);
-      Promise.all(imported.orders.map((ord) => orderRepository.saveOrderWithItems(ord))).catch((err) => {
-        console.warn('[App] orderRepository restore error:', err);
-      });
+    if (imported.orders) setOrders(imported.orders);
+    if (imported.customers) {
+      setCustomers(imported.customers);
+      customerRepository.resetCache(imported.customers);
     }
-    if (imported.retailSales) {
-      setRetailSales(imported.retailSales);
-      retailTransactionRepository.resetCache(imported.retailSales);
-      Promise.all(imported.retailSales.map((tx) => retailTransactionRepository.recordSaleWithItems(tx))).catch((err) => {
-        console.warn('[App] retailTransactionRepository restore error:', err);
-      });
-    }
-    if (imported.purchaseOrders) {
-      setPurchaseOrders(imported.purchaseOrders);
-      purchaseOrderRepository.resetCache(imported.purchaseOrders);
-      Promise.all(imported.purchaseOrders.map((po) => purchaseOrderRepository.savePurchaseOrderWithItems(po))).catch((err) => {
-        console.warn('[App] purchaseOrderRepository restore error:', err);
-      });
-    }
-    if (imported.financialEntries) {
-      setFinancialEntries(imported.financialEntries);
-      financialRepository.resetCache(imported.financialEntries);
-      Promise.all(imported.financialEntries.map((fe) => financialRepository.addEntry(fe))).catch((err) => {
-        console.warn('[App] financialRepository restore error:', err);
-      });
-    }
+    if (imported.suppliers) setSuppliers(imported.suppliers);
+    if (imported.products) setProducts(imported.products);
+    if (imported.retailSales) setRetailSales(imported.retailSales);
+    if (imported.purchaseOrders) setPurchaseOrders(imported.purchaseOrders);
+    if (imported.financialEntries) setFinancialEntries(imported.financialEntries);
     if (imported.settings) {
       setSettings(imported.settings);
       setUseImperial(imported.settings.useImperial);
-      settingsRepository.saveSettings(imported.settings).catch((err) => {
-        console.warn('[App] settingsRepository restore error:', err);
-      });
     }
     addNotification({
       title: 'Database Restored',
-      message: 'Complete ERP records restored from JSON backup archive and synced to Supabase.',
+      message: 'Complete ERP records restored from JSON backup archive.',
       type: 'system',
       urgency: 'low'
     });
   };
 
-  const handleResetToDefaults = async () => {
-    if (activeOrgId) {
-      const freshBatches = await batchRepository.getBatches([]);
-      setBatches(freshBatches);
-      const freshOrders = await orderRepository.getOrders([]);
-      setOrders(freshOrders);
-      const freshCust = await customerRepository.getCustomers([]);
-      setCustomers(freshCust);
-      const freshSupp = await supplierRepository.getSuppliers([]);
-      setSuppliers(freshSupp);
-      const freshProd = await productRepository.getProducts([]);
-      setProducts(freshProd);
-      addNotification({
-        title: 'Workspace Refreshed',
-        message: 'Live database records reloaded from workspace storage.',
-        type: 'system',
-        urgency: 'low',
-      });
-      return;
-    }
-    setBatches([]);
-    setOrders([]);
-    setCustomers([]);
-    setSuppliers([]);
-    setProducts([]);
-    setRetailSales([]);
-    setPurchaseOrders([]);
-    setFinancialEntries([]);
+  const handleResetToDefaults = () => {
+    setBatches(INITIAL_BATCHES);
+    setOrders(INITIAL_ORDERS);
+    setCustomers(INITIAL_CUSTOMERS);
+    setSuppliers(INITIAL_SUPPLIERS);
+    setProducts(INITIAL_PRODUCTS);
+    setRetailSales(INITIAL_RETAIL_TRANSACTIONS);
+    setPurchaseOrders(INITIAL_PURCHASE_ORDERS);
+    setFinancialEntries(INITIAL_FINANCIAL_ENTRIES);
     setSettings(DEFAULT_SETTINGS);
     setUseImperial(DEFAULT_SETTINGS.useImperial);
+    localStorage.clear();
+    batchRepository.resetCache(INITIAL_BATCHES);
+    customerRepository.resetCache(INITIAL_CUSTOMERS);
     addNotification({
-      title: 'Workspace Reset',
-      message: 'Workspace cache reset.',
-      type: 'system',
-      urgency: 'low'
-    });
-  };
-
-  const handlePurgeWorkspaceData = () => {
-    setBatches([]);
-    setOrders([]);
-    setCustomers([]);
-    setSuppliers([]);
-    setProducts([]);
-    setRetailSales([]);
-    setPurchaseOrders([]);
-    setFinancialEntries([]);
-    addNotification({
-      title: 'Workspace Data Cleared',
-      message: 'All operational records, seafood batches, orders, and statements have been wiped. User accounts and login credentials remain active.',
+      title: 'Demo Data Restored',
+      message: 'All seafood inventory and financials reset to factory sample state.',
       type: 'system',
       urgency: 'low'
     });
@@ -1079,7 +921,7 @@ export default function App() {
     addNotification({
       type: 'order_update',
       title: `Catch-Weight Calibrated: Order ${orderId}`,
-      message: `Yield weighed on certified scale. Adjusted total recalibrated to ${formatAppCurrency(adjustedTotal)}.`,
+      message: `Yield weighed on certified scale. Adjusted total recalibrated to $${adjustedTotal.toFixed(2)}.`,
       urgency: 'low'
     });
   };
@@ -1167,7 +1009,7 @@ export default function App() {
     addNotification({
       type: 'order_update',
       title: `New Customer Enrolled: ${newCust.name}`,
-      message: `${newCust.companyName} registered with ${newCust.tier}. Credit Limit: ${formatAppCurrency(newCust.creditLimitUSD)}.`,
+      message: `${newCust.companyName} registered with ${newCust.tier}. Credit Limit: $${newCust.creditLimitUSD.toLocaleString()}.`,
       urgency: 'low'
     });
   };
@@ -1387,47 +1229,12 @@ export default function App() {
 
     addNotification({
       type: 'order_update',
-      title: isCreditAccountSale ? `Credit Sale Logged: ${formatAppCurrency(sale.totalAmount)}` : `Retail POS Sale: ${formatAppCurrency(sale.totalAmount)}`,
+      title: isCreditAccountSale ? `Credit Sale Logged: $${sale.totalAmount.toFixed(2)}` : `Retail POS Sale: $${sale.totalAmount.toFixed(2)}`,
       message: isCreditAccountSale 
         ? `Receipt ${sale.receiptNumber} billed to ${sale.customerName}'s credit facility.`
         : `Receipt ${sale.receiptNumber} processed via ${sale.paymentMethod}.`,
       urgency: 'low'
     });
-  };
-
-  const handleSyncOfficialPriceList = async () => {
-    try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      const session = await getSession();
-      const token = session?.access_token;
-      if (token) headers.Authorization = `Bearer ${token}`;
-      const res = await fetch('/api/erp/amansocean-products/sync', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ forceResetPrices: true }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || 'Could not sync official price list.');
-      }
-      if (Array.isArray(data.products) && data.products.length > 0) {
-        setProducts(data.products);
-      }
-      addNotification({
-        type: 'order_update',
-        title: 'Official Amans Ocean Price List Synced',
-        message: `${data.syncedCount || 32} GH₵ seafood & powder SKUs synced directly to Supabase.`,
-        urgency: 'low',
-      });
-    } catch (err: any) {
-      addNotification({
-        type: 'system',
-        title: 'Catalog Sync Failed',
-        message: err?.message || 'Unable to sync official price list right now.',
-        urgency: 'high',
-      });
-      throw err;
-    }
   };
 
   const handleUpdateProductPricing = (productId: string, wholesalePrice: number, retailPrice: number) => {
@@ -1456,19 +1263,7 @@ export default function App() {
 
   const handleSaveProduct = async (product: RetailWholesaleProduct) => {
     try {
-      const targetOrgId = activeOrgId || staffProfile?.organization_id || getCurrentOrganizationId();
-      if (!targetOrgId || isInvalidOrgId(targetOrgId)) {
-        setIsOnboardingModalOpen(true);
-        addNotification({
-          type: 'system',
-          title: 'Workspace Setup Required',
-          message: 'Please complete organization setup or connect a tenant workspace before saving catalog products.',
-          urgency: 'medium',
-        });
-        return;
-      }
-
-      await productRepository.save(product, false, targetOrgId);
+      await productRepository.save(product);
       setProducts(prev => {
         const index = prev.findIndex(p => p.id === product.id);
         if (index >= 0) {
@@ -1526,7 +1321,6 @@ export default function App() {
             notes: `Retail Inventory Lot for ${product.name} (${product.cutType}). SKU: ${product.sku}. Pack: ${product.retailPackSize || 'Standard'}. Channel: ${channelLabel}`,
             linkedProductId: product.id,
             productSku: product.sku,
-            imageUrl: product.imageUrl || existingLot.imageUrl,
             isRetailCutLot: true
           };
         }
@@ -1586,13 +1380,12 @@ export default function App() {
           notes: `Retail Inventory Lot for ${product.name} (${product.cutType}). SKU: ${product.sku}. Pack: ${product.retailPackSize || 'Standard'}. Channel: ${channelLabel}`,
           linkedProductId: product.id,
           productSku: product.sku,
-          imageUrl: product.imageUrl,
           isRetailCutLot: true
         };
       }
 
       // Persist the inventory lot via batchRepository
-      await batchRepository.save(linkedBatch, isNewBatch, targetOrgId);
+      await batchRepository.save(linkedBatch, isNewBatch);
 
       // Update state for instant UI reflection in Inventory Ledger
       setBatches(prev => {
@@ -1770,11 +1563,7 @@ export default function App() {
       const targetPOId = specificOrderId || refId;
       setPurchaseOrders(prev => prev.map(po => {
         if (po.id === targetPOId || (!specificOrderId && po.supplierId === entityId && po.paymentStatus !== 'Paid in Full')) {
-          const updatedPo: PurchaseOrderLanding = { ...po, paymentStatus: 'Paid in Full' };
-          purchaseOrderRepository.save(updatedPo, false).catch(err => {
-            console.warn('[App] purchaseOrderRepository save on AP settlement failed:', err);
-          });
-          return updatedPo;
+          return { ...po, paymentStatus: 'Paid in Full' };
         }
         return po;
       }));
@@ -1942,18 +1731,6 @@ export default function App() {
     });
   };
 
-  if (posCustomerView.isOpen) {
-    return (
-      <PosCustomerView
-        registerId={posCustomerView.registerId}
-        initialCustomerContact={posCustomerView.customerContact}
-        initialCustomerId={posCustomerView.customerId}
-        formatCurrency={formatAppCurrency}
-        onExitToCashier={exitCustomerViewToLogin}
-      />
-    );
-  }
-
   return (
     <div className="min-h-screen bg-[#f8f9fc] flex flex-col selection:bg-indigo-500 selection:text-white w-full max-w-full overflow-x-hidden">
       {/* Offline Status & PWA Banner */}
@@ -1989,7 +1766,6 @@ export default function App() {
         userEmail={currentUser?.email ?? null}
         showPlatformConsole={showPlatformConsole}
         companyName={companyName}
-        onOpenPosCustomerView={() => handleOpenPosCustomerView()}
       />
 
       {/* Trial and Days Count Status Banner */}
@@ -2081,11 +1857,8 @@ export default function App() {
             onUpdateProductPricing={handleUpdateProductPricing}
             onSaveProduct={handleSaveProduct}
             onDeleteProduct={handleDeleteProduct}
-            onSyncOfficialPriceList={handleSyncOfficialPriceList}
             onNavigateToInventory={() => setActiveTab('inventory')}
-            onOpenPosCustomerView={(opts) => handleOpenPosCustomerView(opts)}
             formatCurrency={formatAppCurrency}
-            lowStockThresholdKg={settings.lowStockThresholdKg}
           />
         )}
 
@@ -2137,7 +1910,6 @@ export default function App() {
         {activeTab === 'inventory' && (
           <InventoryLedgerView
             batches={batches}
-            staffProfile={staffProfile}
             products={products}
             adjustmentAccounts={adjustmentAccounts}
             stockAdjustments={stockAdjustments}
@@ -2173,7 +1945,6 @@ export default function App() {
             onOpenOnboardingWizard={() => setIsOnboardingModalOpen(true)}
             onRestoreAllData={handleRestoreAllData}
             onResetToDefaults={handleResetToDefaults}
-            onPurgeWorkspaceData={handlePurgeWorkspaceData}
           />
         )}
 
@@ -2220,7 +1991,6 @@ export default function App() {
       {passportBatch && (
         <TraceabilityPassportModal
           batch={passportBatch}
-          products={products}
           onClose={() => setPassportBatch(null)}
           useImperial={useImperial}
         />
@@ -2240,8 +2010,6 @@ export default function App() {
         <InvoiceModal
           order={invoiceOrder}
           customers={customers}
-          batches={batches}
-          products={products}
           onClose={() => setInvoiceOrder(null)}
           useImperial={useImperial}
           onUpdatePaymentStatus={handleUpdatePaymentStatus}
@@ -2261,7 +2029,6 @@ export default function App() {
         <NewOrderModal
           batches={batches}
           customers={customers}
-          products={products}
           preselectedCustomerId={preselectedCustomerId}
           onClose={() => {
             setIsNewOrderModalOpen(false);

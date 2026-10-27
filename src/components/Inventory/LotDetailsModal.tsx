@@ -21,12 +21,10 @@ import {
   Truck,
   ArrowRight,
   Camera,
-  Upload,
-  ZoomIn
+  Upload
 } from 'lucide-react';
 import { InventoryBatch } from '../../types';
 import { formatCurrency, formatWeight, formatTemp } from '../../utils/formatters';
-import { ImageLightboxModal, ImageLightboxDetails } from '../Common/ImageLightboxModal';
 
 interface LotDetailsModalProps {
   batch: InventoryBatch | null;
@@ -49,8 +47,6 @@ export const LotDetailsModal: React.FC<LotDetailsModalProps> = ({
   onOpenImageUpload,
   useImperial
 }) => {
-  const [lightboxDetails, setLightboxDetails] = React.useState<ImageLightboxDetails | null>(null);
-
   if (!batch) return null;
 
   // User-provided image only - never auto-generate stock images
@@ -122,28 +118,6 @@ export const LotDetailsModal: React.FC<LotDetailsModalProps> = ({
                 >
                   <Camera className="w-3.5 h-3.5" />
                   <span>{userImage ? 'Change Photo' : 'Upload Lot Photo'}</span>
-                </button>
-              )}
-
-              {userImage && (
-                <button
-                  type="button"
-                  onClick={() => setLightboxDetails({
-                    imageUrl: userImage,
-                    title: batch.speciesName,
-                    subtitle: `${batch.scientificName} · Lot ${batch.id}`,
-                    sourceLabel: 'Catch Lot Photo',
-                    sourceType: 'batch',
-                    lotId: batch.id,
-                    grade: batch.grade,
-                    origin: `${batch.landingPort} (${batch.faoArea})`,
-                    temperature: `${formatTemp(batch.coreTempCelsius, useImperial)}`,
-                    verifiedAt: batch.harvestDate,
-                  })}
-                  className="px-3 py-1 rounded-full text-xs font-bold bg-indigo-600/80 hover:bg-indigo-600 text-white border border-indigo-400/40 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
-                >
-                  <ZoomIn className="w-3.5 h-3.5" />
-                  <span>Enlarge Photo</span>
                 </button>
               )}
 
@@ -476,13 +450,6 @@ export const LotDetailsModal: React.FC<LotDetailsModalProps> = ({
           </div>
         </div>
       </div>
-
-      {/* Enlarged High-Resolution Image Preview Lightbox */}
-      <ImageLightboxModal
-        isOpen={Boolean(lightboxDetails)}
-        onClose={() => setLightboxDetails(null)}
-        details={lightboxDetails}
-      />
     </div>
   );
 };

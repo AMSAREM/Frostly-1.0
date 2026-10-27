@@ -47,12 +47,9 @@ import { LotDetailsModal } from './Inventory/LotDetailsModal';
 import { StockAdjustmentModal, StockAdjustmentData } from './Inventory/StockAdjustmentModal';
 import { AdjustmentAccountsModal } from './Inventory/AdjustmentAccountsModal';
 import { BatchImageUploadModal } from './Inventory/BatchImageUploadModal';
-import { StaffProfile } from '../data/auth';
-import { canUserPerform } from '../utils/rbac';
 
 interface InventoryLedgerViewProps {
   batches: InventoryBatch[];
-  staffProfile?: StaffProfile | null;
   products?: RetailWholesaleProduct[];
   adjustmentAccounts?: InventoryAdjustmentAccount[];
   stockAdjustments?: InventoryStockAdjustment[];
@@ -72,7 +69,6 @@ type QuickFilterStatus = 'all' | 'retail_cuts' | 'in_stock' | 'low_stock' | 'fre
 
 export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
   batches = [],
-  staffProfile,
   products = [],
   adjustmentAccounts = [],
   stockAdjustments = [],
@@ -87,8 +83,6 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
   setSearchQuery,
   useImperial
 }) => {
-  const canCreateBatch = canUserPerform(staffProfile?.role, 'create_batch');
-  const canAdjustInventory = canUserPerform(staffProfile?.role, 'adjust_inventory');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedZone, setSelectedZone] = useState<string>('All');
   const [selectedGrade, setSelectedGrade] = useState<string>('All');
@@ -104,21 +98,9 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
 
   const categories: ('All' | SpeciesCategory)[] = ['All', 'Pelagic', 'Salmonid', 'Crustacean', 'Mollusk', 'Groundfish'];
 
-  // User-provided images only - checks lot image, then falls back to linked catalog product image
+  // User-provided images only - NEVER generate automatic or placeholder stock images
   const getBatchUserImage = (batch: InventoryBatch): string | null => {
-    if (batch.imageUrl?.trim()) return batch.imageUrl.trim();
-    if (products && products.length > 0) {
-      const linkedProduct = products.find(p =>
-        (batch.linkedProductId && p.id === batch.linkedProductId) ||
-        (p.linkedBatchId && p.linkedBatchId === batch.id) ||
-        (batch.productSku && p.sku && batch.productSku.toLowerCase() === p.sku.toLowerCase()) ||
-        batch.id === `LOT-RET-${p.id.replace('prod-', '')}`
-      );
-      if (linkedProduct?.imageUrl?.trim()) {
-        return linkedProduct.imageUrl.trim();
-      }
-    }
-    return null;
+    return batch.imageUrl?.trim() || null;
   };
 
   // Unlinked retail catalog products calculation for inventory reconciliation
@@ -261,24 +243,13 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
               </button>
             )}
 
-            {canCreateBatch ? (
-              <button
-                onClick={onOpenNewBatch}
-                className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-xs transition-all cursor-pointer w-full sm:w-auto"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Intake Landed Catch</span>
-              </button>
-            ) : (
-              <button
-                disabled
-                title="Intake restricted: Requires Operations or Admin permissions"
-                className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-slate-100 text-slate-400 text-xs font-bold border border-slate-200 cursor-not-allowed w-full sm:w-auto opacity-70"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Intake Landed Catch</span>
-              </button>
-            )}
+            <button
+              onClick={onOpenNewBatch}
+              className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white text-xs font-bold shadow-md shadow-indigo-200 transition-all cursor-pointer w-full sm:w-auto"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Intake Landed Catch</span>
+            </button>
           </div>
         </div>
 
@@ -679,24 +650,12 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
                     onClick={() => setInspectingBatch(batch)}
                   >
                     {userImg ? (
-                      <>
-                        <img 
-                          src={userImg} 
-                          alt={batch.speciesName}
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 opacity-90"
-                          onError={(e) => {
-                            e.currentTarget.style.display = 'none';
-                            const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
-                            if (fb) (fb as HTMLElement).style.display = 'flex';
-                          }}
-                        />
-                        <div className="w-full h-full bg-slate-900/95 hidden flex-col items-center justify-center text-slate-400 group-hover:text-indigo-200 transition-colors p-3 text-center border-b border-slate-800 img-fallback">
-                          <Camera className="w-7 h-7 mb-1 text-slate-500 group-hover:text-indigo-400 group-hover:scale-110 transition-all" />
-                          <span className="text-[11px] font-semibold text-slate-300">Image unavailable</span>
-                          <span className="text-[10px] text-slate-400">Click to view lot or upload photo</span>
-                        </div>
-                      </>
+                      <img 
+                        src={userImg} 
+                        alt={batch.speciesName}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 opacity-90"
+                      />
                     ) : (
                       <div className="w-full h-full bg-slate-900/95 flex flex-col items-center justify-center text-slate-400 group-hover:text-indigo-200 transition-colors p-3 text-center border-b border-slate-800">
                         <Camera className="w-7 h-7 mb-1 text-slate-500 group-hover:text-indigo-400 group-hover:scale-110 transition-all" />
@@ -938,27 +897,13 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
                           {userImg ? (
-                            <div className="relative w-10 h-10 rounded-xl overflow-hidden shrink-0 border border-slate-200">
-                              <img 
-                                src={userImg} 
-                                alt={batch.speciesName}
-                                referrerPolicy="no-referrer"
-                                className="w-full h-full object-cover cursor-pointer"
-                                onClick={() => setInspectingBatch(batch)}
-                                onError={(e) => {
-                                  e.currentTarget.style.display = 'none';
-                                  const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
-                                  if (fb) (fb as HTMLElement).style.display = 'flex';
-                                }}
-                              />
-                              <div 
-                                className="w-full h-full bg-slate-100 hidden items-center justify-center cursor-pointer text-slate-400 hover:text-indigo-600 transition-colors img-fallback"
-                                onClick={() => setUploadingImageBatch(batch)}
-                                title="Image unavailable. Click to upload."
-                              >
-                                <Camera className="w-4 h-4" />
-                              </div>
-                            </div>
+                            <img 
+                              src={userImg} 
+                              alt={batch.speciesName}
+                              referrerPolicy="no-referrer"
+                              className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0 cursor-pointer"
+                              onClick={() => setInspectingBatch(batch)}
+                            />
                           ) : (
                             <div 
                               className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-indigo-50 border border-slate-200 flex items-center justify-center shrink-0 cursor-pointer text-slate-400 hover:text-indigo-600 transition-colors"

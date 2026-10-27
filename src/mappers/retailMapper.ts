@@ -21,7 +21,6 @@ export interface DatabaseProductRow {
   is_available_for_wholesale: boolean;
   linked_batch_id?: string | null;
   storage_zone?: string | null;
-  min_safety_stock_kg?: number | string | null;
   is_active?: boolean;
   organization_id?: string;
 }
@@ -46,109 +45,8 @@ export interface DatabaseRetailTransactionRow {
   items?: any[];
 }
 
-export function parseProductOriginMeta(rawOrigin?: string | null): {
-  cleanOrigin: string;
-  linkedBatchId?: string;
-  storageZone?: string;
-  minSafetyStockKg?: number;
-} {
-  let cleanOrigin = String(rawOrigin || '');
-  let linkedBatchId: string | undefined;
-  let storageZone: string | undefined;
-  let minSafetyStockKg: number | undefined;
-
-  if (cleanOrigin.includes('<!--frostly_lot:')) {
-    try {
-      const match = cleanOrigin.match(/<!--frostly_lot:(\{.*?\})-->/);
-      if (match && match[1]) {
-        const parsed = JSON.parse(match[1]);
-        if (parsed.linkedBatchId) linkedBatchId = String(parsed.linkedBatchId);
-        if (parsed.storageZone) storageZone = String(parsed.storageZone);
-        if (parsed.minSafetyStockKg !== undefined && parsed.minSafetyStockKg !== null) {
-          minSafetyStockKg = Number(parsed.minSafetyStockKg);
-        }
-      }
-    } catch {
-      // ignore malformed comment metadata
-    }
-    cleanOrigin = cleanOrigin.replace(/<!--frostly_lot:.*?-->/g, '').trim();
-  }
-
-  return { cleanOrigin, linkedBatchId, storageZone, minSafetyStockKg };
-}
-
-export function encodeProductOriginMeta(
-  origin: string,
-  linkedBatchId?: string | null,
-  storageZone?: string | null,
-  minSafetyStockKg?: number | null
-): string {
-  const { cleanOrigin } = parseProductOriginMeta(origin);
-  const hasSafety = minSafetyStockKg !== undefined && minSafetyStockKg !== null;
-  if (!linkedBatchId && !storageZone && !hasSafety) {
-    return cleanOrigin;
-  }
-  const meta = JSON.stringify({
-    linkedBatchId: linkedBatchId || null,
-    storageZone: storageZone || null,
-    minSafetyStockKg: hasSafety ? Number(minSafetyStockKg) : null,
-  });
-  return cleanOrigin ? `${cleanOrigin} <!--frostly_lot:${meta}-->` : `<!--frostly_lot:${meta}-->`;
-}
-
-const VALID_CUT_TYPES = new Set<string>([
-  'Whole Round Fish',
-  'Headless & Gutted (H&G)',
-  'Skin-On Loin / Fillet',
-  'Skinless Sashimi Saku Block',
-  'Live in Oxygen Tank',
-  'Packaged 500g Tray',
-  'IQF Flash Frozen Box',
-]);
-
-export function normalizeRetailCutType(cutType?: string | null): SeafoodCutType {
-  const raw = String(cutType || '').trim();
-  if (VALID_CUT_TYPES.has(raw)) {
-    return raw as SeafoodCutType;
-  }
-  const lower = raw.toLowerCase();
-  if (/saku|sashimi/.test(lower)) return 'Skinless Sashimi Saku Block';
-  if (/fillet|loin|portion|chunk/.test(lower)) return 'Skin-On Loin / Fillet';
-  if (/headless|gutted|h&g/.test(lower)) return 'Headless & Gutted (H&G)';
-  if (/tray|pack|powder/.test(lower)) return 'Packaged 500g Tray';
-  if (/live|tank/.test(lower)) return 'Live in Oxygen Tank';
-  if (/whole|round/.test(lower)) return 'Whole Round Fish';
-  return 'IQF Flash Frozen Box';
-}
-
-export function normalizeRetailPaymentMethod(
-  method?: string | null
-): 'Cash' | 'Credit Card' | 'Apple Pay / Contactless' | 'Store Credit' {
-  const raw = String(method || '').trim();
-  if (
-    raw === 'Cash' ||
-    raw === 'Credit Card' ||
-    raw === 'Apple Pay / Contactless' ||
-    raw === 'Store Credit'
-  ) {
-    return raw;
-  }
-  const lower = raw.toLowerCase();
-  if (/credit account|store credit|net-|on account/.test(lower)) {
-    return 'Store Credit';
-  }
-  if (/mobile|momo|apple|contactless|qr|transfer/.test(lower)) {
-    return 'Apple Pay / Contactless';
-  }
-  if (/card|visa|mastercard|pos/.test(lower)) {
-    return 'Credit Card';
-  }
-  return 'Cash';
-}
-
 export const productMapper = {
   toDomain(row: DatabaseProductRow): RetailWholesaleProduct {
-    const meta = parseProductOriginMeta(row.origin);
     return {
       id: row.id,
       speciesId: row.species_id,
@@ -165,49 +63,36 @@ export const productMapper = {
       retailPackSize: row.retail_pack_size || undefined,
       sku: row.sku,
       imageUrl: row.image_url,
-      origin: meta.cleanOrigin,
+      origin: row.origin,
       isAvailableForRetail: Boolean(row.is_available_for_retail),
       isAvailableForWholesale: Boolean(row.is_available_for_wholesale),
-      linkedBatchId: row.linked_batch_id || meta.linkedBatchId || undefined,
-      storageZone: (row.storage_zone || meta.storageZone || undefined) as any,
-      minSafetyStockKg:
-        row.min_safety_stock_kg !== undefined && row.min_safety_stock_kg !== null
-          ? Number(row.min_safety_stock_kg)
-          : meta.minSafetyStockKg,
+      linkedBatchId: row.linked_batch_id || undefined,
+      storageZone: (row.storage_zone as any) || undefined,
     };
   },
 
   toDatabase(domain: RetailWholesaleProduct): Partial<DatabaseProductRow> {
-    const encodedOrigin = encodeProductOriginMeta(
-      domain.origin,
-      domain.linkedBatchId,
-      domain.storageZone,
-      domain.minSafetyStockKg
-    );
-    const validUnit =
-      domain.unit === 'kg' || domain.unit === 'lb' || domain.unit === 'piece' || domain.unit === 'pack'
-        ? domain.unit
-        : 'kg';
     return {
       id: domain.id,
       species_id: domain.speciesId,
       name: domain.name,
-      cut_type: normalizeRetailCutType(domain.cutType),
-      category: domain.category || 'Groundfish',
-      grade: domain.grade || 'Grade #1',
-      stock_kg: Math.max(0, Number(domain.stockKg) || 0),
-      unit: validUnit,
-      cost_price_per_unit: Math.max(0, Number(domain.costPricePerUnit) || 0),
-      wholesale_price_per_unit: Math.max(0, Number(domain.wholesalePricePerUnit) || 0),
-      retail_price_per_unit: Math.max(0, Number(domain.retailPricePerUnit) || 0),
-      wholesale_min_qty: Math.max(1, Number(domain.wholesaleMinQty) || 1),
+      cut_type: domain.cutType,
+      category: domain.category,
+      grade: domain.grade,
+      stock_kg: domain.stockKg,
+      unit: domain.unit,
+      cost_price_per_unit: domain.costPricePerUnit,
+      wholesale_price_per_unit: domain.wholesalePricePerUnit,
+      retail_price_per_unit: domain.retailPricePerUnit,
+      wholesale_min_qty: domain.wholesaleMinQty,
       retail_pack_size: domain.retailPackSize || null,
       sku: domain.sku,
-      image_url: domain.imageUrl?.trim() || '',
-      origin: encodedOrigin,
+      image_url: domain.imageUrl,
+      origin: domain.origin,
       is_available_for_retail: domain.isAvailableForRetail,
       is_available_for_wholesale: domain.isAvailableForWholesale,
-      is_active: true,
+      linked_batch_id: domain.linkedBatchId || null,
+      storage_zone: domain.storageZone || null,
     };
   },
 };
@@ -219,7 +104,7 @@ export const retailTransactionMapper = {
       ? rawItems.map((item: any) => ({
           productId: item.product_id || item.productId || '',
           productName: item.product_name || item.productName || 'Seafood Cut',
-          cutType: (item.cut_type || item.cutType || 'Skin-On Loin / Fillet') as SeafoodCutType,
+          cutType: (item.cut_type || item.cutType || 'Fillet / Portion') as SeafoodCutType,
           quantity: Number(item.quantity || 0),
           unit: (item.unit as any) || 'kg',
           unitPrice: Number(item.unit_price ?? item.unitPrice ?? 0),
@@ -248,21 +133,20 @@ export const retailTransactionMapper = {
   },
 
   toDatabase(domain: RetailTransaction): Partial<DatabaseRetailTransactionRow> {
-    const cleanStatus = domain.status === 'Refunded' ? 'Refunded' : 'Completed';
     return {
       id: domain.id,
-      receipt_number: domain.receiptNumber || domain.id,
-      customer_name: domain.customerName || 'Walk-in Customer',
+      receipt_number: domain.receiptNumber,
+      customer_name: domain.customerName,
       customer_phone: domain.customerPhone || null,
-      subtotal: Math.max(0, Number(domain.subtotal) || 0),
-      tax_amount: Math.max(0, Number(domain.taxAmount) || 0),
-      discount_amount: Math.max(0, Number(domain.discountAmount) || 0),
-      total_amount: Math.max(0, Number(domain.totalAmount) || 0),
-      cost_total: Math.max(0, Number(domain.costTotal) || 0),
-      gross_margin: Number(domain.grossMargin || 0),
-      payment_method: normalizeRetailPaymentMethod(domain.paymentMethod),
-      cashier_name: domain.cashierName || 'Amansocean POS',
-      status: cleanStatus,
+      subtotal: domain.subtotal,
+      tax_amount: domain.taxAmount,
+      discount_amount: domain.discountAmount,
+      total_amount: domain.totalAmount,
+      cost_total: domain.costTotal,
+      gross_margin: domain.grossMargin,
+      payment_method: domain.paymentMethod,
+      cashier_name: domain.cashierName,
+      status: domain.status,
     };
   },
 };

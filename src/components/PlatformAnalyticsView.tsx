@@ -15,6 +15,7 @@ import {
   BarChart3, 
   CheckCircle2, 
   RefreshCw,
+  Sparkles,
   ArrowRight,
   Filter,
   UserCheck,
@@ -29,13 +30,7 @@ import {
   ChevronRight,
   User as UserIcon,
   HelpCircle,
-  BarChart2,
-  ShoppingBag,
-  Heart,
-  Mail,
-  Star,
-  MessageSquare,
-  Globe
+  BarChart2
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -60,10 +55,6 @@ import {
   fetchUserLoginHistory, 
   fetchFeatureUsageAnalytics 
 } from '../services/activityTrackingService';
-import {
-  CreatorStorefrontAnalyticsData,
-  fetchCreatorStorefrontAnalytics,
-} from '../services/storefrontService';
 
 interface PlatformAnalyticsViewProps {
   organizations: PlatformOrganization[];
@@ -123,7 +114,7 @@ export const PlatformAnalyticsView: React.FC<PlatformAnalyticsViewProps> = ({
   isRefreshing = false,
 }) => {
   // Navigation sub-tabs inside Analytics
-  const [activeView, setActiveView] = useState<'overview' | 'logins' | 'features' | 'storefront'>('overview');
+  const [activeView, setActiveView] = useState<'overview' | 'logins' | 'features'>('overview');
   const [currency, setCurrency] = useState<'USD' | 'GHS'>('USD');
   const [timeRange, setTimeRange] = useState<'all' | '90d' | '30d'>('all');
 
@@ -133,8 +124,6 @@ export const PlatformAnalyticsView: React.FC<PlatformAnalyticsViewProps> = ({
   const [userBreakdown, setUserBreakdown] = useState<UserFeatureBreakdown[]>([]);
   const [totalFeatureEvents, setTotalFeatureEvents] = useState<number>(0);
   const [categoryDistribution, setCategoryDistribution] = useState<{ name: string; value: number }[]>([]);
-  const [storefrontData, setStorefrontData] = useState<CreatorStorefrontAnalyticsData | null>(null);
-  const [feedbackCategoryFilter, setFeedbackCategoryFilter] = useState<string>('all');
   const [loadingTelemetry, setLoadingTelemetry] = useState(true);
 
   // Search & Filter state for Logins
@@ -148,21 +137,16 @@ export const PlatformAnalyticsView: React.FC<PlatformAnalyticsViewProps> = ({
   // Fetch telemetry
   const loadTelemetry = async () => {
     setLoadingTelemetry(true);
-    const daysWindow = timeRange === '30d' ? 30 : timeRange === '90d' ? 90 : 365;
     try {
-      const [loginData, featureData, sfAnalytics] = await Promise.all([
+      const [loginData, featureData] = await Promise.all([
         fetchUserLoginHistory(),
-        fetchFeatureUsageAnalytics(daysWindow),
-        fetchCreatorStorefrontAnalytics(daysWindow).catch(() => null),
+        fetchFeatureUsageAnalytics(timeRange === '30d' ? 30 : timeRange === '90d' ? 90 : 365),
       ]);
       setLogins(loginData);
       setFeatureStats(featureData.features);
       setUserBreakdown(featureData.userBreakdown);
       setTotalFeatureEvents(featureData.totalActions);
       setCategoryDistribution(featureData.categoryDistribution);
-      if (sfAnalytics) {
-        setStorefrontData(sfAnalytics);
-      }
     } catch (err) {
       console.warn('Failed to load telemetry:', err);
     } finally {
@@ -372,25 +356,6 @@ export const PlatformAnalyticsView: React.FC<PlatformAnalyticsViewProps> = ({
         `"${f.last_used_at}"`,
       ]);
       downloadCSV('frostly_feature_usage_telemetry.csv', headers, rows);
-    } else if (activeView === 'storefront' && storefrontData) {
-      const headers = ['Metric', 'Value'];
-      const m = storefrontData.metrics;
-      const rows: (string | number)[][] = [
-        ['Unique Storefront Visitors', m.uniqueVisitors],
-        ['Page Views', m.pageViews],
-        ['Product Searches', m.searches],
-        ['Favorites Toggled', m.favoritesToggled],
-        ['Add to Cart Events', m.cartAdditions],
-        ['Checkouts Started', m.checkoutsStarted],
-        ['Completed Online Orders', m.ordersCompleted],
-        ['Online Storefront Revenue (USD)', m.onlineRevenue],
-        ['Add to Cart Rate (%)', `${m.addToCartRate}%`],
-        ['Purchase Conversion Rate (%)', `${m.purchaseConversionRate}%`],
-        ['Newsletter Subscribers', m.newsletterSubscribersCount],
-        ['Customer Feedback Submissions', m.feedbackCount],
-        ['Average Feedback Rating', m.averageRating],
-      ];
-      downloadCSV('amansocean_storefront_funnel_analytics.csv', headers, rows);
     } else {
       const headers = ['Organization Name', 'Company', 'Plan Tier', 'Subscription Status', 'Active Staff Seats', 'Max Seats Quota', 'Monthly Value', 'Created At'];
       const rows = organizations.map(org => [
@@ -551,7 +516,7 @@ export const PlatformAnalyticsView: React.FC<PlatformAnalyticsViewProps> = ({
           <button
             id="tab-analytics-features"
             onClick={() => setActiveView('features')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeView === 'features'
                 ? 'bg-slate-900 text-white shadow-2xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -559,22 +524,6 @@ export const PlatformAnalyticsView: React.FC<PlatformAnalyticsViewProps> = ({
           >
             <Flame className="w-3.5 h-3.5 text-amber-400" />
             <span>Features Used Most Often ({featureStats.length})</span>
-          </button>
-
-          <button
-            id="tab-analytics-storefront"
-            onClick={() => setActiveView('storefront')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-              activeView === 'storefront'
-                ? 'bg-slate-900 text-white shadow-2xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-          >
-            <ShoppingBag className="w-3.5 h-3.5 text-sky-500" />
-            <span>
-              Storefront &amp; Feedback
-              {storefrontData ? ` (${storefrontData.metrics.ordersCompleted})` : ''}
-            </span>
           </button>
         </div>
       </div>
@@ -798,86 +747,6 @@ export const PlatformAnalyticsView: React.FC<PlatformAnalyticsViewProps> = ({
               </div>
               <div className="mt-1 text-xs text-slate-500">
                 {categoryDistribution[0]?.value || 0} events in cold-chain dock
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeView === 'storefront' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs">
-            <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
-              <span>Storefront Visitors</span>
-              <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center">
-                <Globe className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="mt-3">
-              <div className="text-2xl sm:text-3xl font-heading font-black text-slate-900 font-mono tabular-nums tracking-tight">
-                {(storefrontData?.metrics.uniqueVisitors ?? 0).toLocaleString()}
-              </div>
-              <div className="mt-1 text-xs text-slate-500 font-mono tabular-nums">
-                {(storefrontData?.metrics.pageViews ?? 0).toLocaleString()} views ·{' '}
-                {(storefrontData?.metrics.searches ?? 0).toLocaleString()} searches
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs">
-            <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
-              <span>Cart &amp; Checkout Funnel</span>
-              <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                <ShoppingBag className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="mt-3">
-              <div className="text-2xl sm:text-3xl font-heading font-black text-slate-900 font-mono tabular-nums tracking-tight">
-                {storefrontData?.metrics.purchaseConversionRate ?? 0}%
-              </div>
-              <div className="mt-1 text-xs text-slate-500 font-mono tabular-nums">
-                {storefrontData?.metrics.cartAdditions ?? 0} cart adds ·{' '}
-                {storefrontData?.metrics.addToCartRate ?? 0}% cart rate
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs">
-            <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
-              <span>Online Storefront Revenue</span>
-              <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                <DollarSign className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="mt-3">
-              <div className="text-2xl sm:text-3xl font-heading font-black text-slate-900 font-mono tabular-nums tracking-tight">
-                ${(storefrontData?.metrics.onlineRevenue ?? 0).toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
-              </div>
-              <div className="mt-1 text-xs text-slate-500 font-mono tabular-nums">
-                {storefrontData?.metrics.ordersCompleted ?? 0} completed AO-XXXXX orders
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs">
-            <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
-              <span>Customer Sentiment &amp; Alerts</span>
-              <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-                <Star className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="mt-3">
-              <div className="text-2xl sm:text-3xl font-heading font-black text-slate-900 font-mono tabular-nums tracking-tight">
-                {storefrontData && storefrontData.metrics.feedbackCount > 0
-                  ? `${storefrontData.metrics.averageRating.toFixed(1)} / 5`
-                  : '—'}
-              </div>
-              <div className="mt-1 text-xs text-slate-500 font-mono tabular-nums">
-                {storefrontData?.metrics.feedbackCount ?? 0} feedbacks ·{' '}
-                {storefrontData?.metrics.newsletterSubscribersCount ?? 0} subscribers
               </div>
             </div>
           </div>
@@ -1421,353 +1290,6 @@ export const PlatformAnalyticsView: React.FC<PlatformAnalyticsViewProps> = ({
 
         </div>
       )}
-
-      {/* ========================================================================= */}
-      {/* VIEW 4: STOREFRONT FUNNEL, SUBSCRIBERS & CUSTOMER FEEDBACK                */}
-      {/* ========================================================================= */}
-      {activeView === 'storefront' && (() => {
-        const metrics = storefrontData?.metrics || {
-          uniqueVisitors: 0,
-          pageViews: 0,
-          searches: 0,
-          favoritesToggled: 0,
-          cartAdditions: 0,
-          checkoutsStarted: 0,
-          ordersCompleted: 0,
-          onlineRevenue: 0,
-          addToCartRate: 0,
-          purchaseConversionRate: 0,
-          newsletterSubscribersCount: 0,
-          feedbackCount: 0,
-          averageRating: 0,
-        };
-
-        const maxFunnelCount = Math.max(
-          1,
-          metrics.pageViews,
-          metrics.cartAdditions,
-          metrics.checkoutsStarted,
-          metrics.ordersCompleted
-        );
-
-        const funnelSteps = [
-          {
-            label: '01. Storefront Page Views',
-            count: metrics.pageViews,
-            subtext: `${metrics.uniqueVisitors} unique visitors`,
-            barColor: 'bg-sky-600',
-          },
-          {
-            label: '02. Catalog Searches & Saved Favorites',
-            count: metrics.searches + metrics.favoritesToggled,
-            subtext: `${metrics.searches} searches · ${metrics.favoritesToggled} favorites`,
-            barColor: 'bg-cyan-600',
-          },
-          {
-            label: '03. Added to Cold-Chain Cart',
-            count: metrics.cartAdditions,
-            subtext: `${metrics.addToCartRate}% of storefront views`,
-            barColor: 'bg-indigo-600',
-          },
-          {
-            label: '04. Checkouts Started',
-            count: metrics.checkoutsStarted,
-            subtext: 'Entered delivery & contact details',
-            barColor: 'bg-teal-600',
-          },
-          {
-            label: '05. Completed Online Orders',
-            count: metrics.ordersCompleted,
-            subtext: `${metrics.purchaseConversionRate}% overall conversion`,
-            barColor: 'bg-emerald-600',
-          },
-        ];
-
-        const filteredFeedbacks = (storefrontData?.feedbacks || []).filter((fb) =>
-          feedbackCategoryFilter === 'all'
-            ? true
-            : fb.category.toLowerCase() === feedbackCategoryFilter.toLowerCase()
-        );
-
-        return (
-          <div className="space-y-6">
-            {/* Funnel + Top Storefront Products */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs space-y-4">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      Amansocean D2C Conversion Funnel
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Live visitor progression from landing view to Supabase dual-ledger order completion ({storefrontData?.organizationName || 'Primary Coldstore'})
-                    </p>
-                  </div>
-                  <span className="text-xs text-slate-500 font-mono tabular-nums shrink-0">
-                    Window: {storefrontData?.days || 30}d
-                  </span>
-                </div>
-
-                <div className="space-y-3.5 pt-2">
-                  {funnelSteps.map((step) => {
-                    const widthPct = Math.max(
-                      step.count > 0 ? 4 : 0,
-                      Math.min(100, Math.round((step.count / maxFunnelCount) * 100))
-                    );
-                    return (
-                      <div key={step.label} className="space-y-1.5">
-                        <div className="flex items-baseline justify-between gap-2 text-xs">
-                          <span className="font-semibold text-slate-800">{step.label}</span>
-                          <div className="text-right font-mono tabular-nums">
-                            <span className="font-bold text-slate-900">
-                              {step.count.toLocaleString()}
-                            </span>
-                            <span className="text-slate-400 ml-2">{step.subtext}</span>
-                          </div>
-                        </div>
-                        <div className="w-full h-2.5 rounded-full bg-slate-100 overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-opacity duration-200 ${step.barColor}`}
-                            style={{ width: `${widthPct}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs flex flex-col justify-between space-y-4">
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Most Engaging Storefront Cuts
-                      </h3>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Ranked by cart additions and saved hearts
-                      </p>
-                    </div>
-                    <Heart className="w-4 h-4 text-rose-500 shrink-0" />
-                  </div>
-
-                  {!storefrontData || storefrontData.topProducts.length === 0 ? (
-                    <div className="py-10 text-center text-xs text-slate-400">
-                      Product engagement counts populate automatically as shoppers favorite or add seafood packs to their cart.
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-100">
-                      {storefrontData.topProducts.map((prod) => (
-                        <div
-                          key={prod.productId}
-                          className="py-2.5 flex items-center justify-between gap-3 text-xs"
-                        >
-                          <div className="min-w-0">
-                            <div className="font-semibold text-slate-900 truncate">
-                              {prod.productName}
-                            </div>
-                            <div className="text-[11px] text-slate-400 font-mono truncate">
-                              {prod.productId}
-                            </div>
-                          </div>
-                          <div className="text-right font-mono tabular-nums text-[11px] text-slate-600 shrink-0">
-                            <span className="font-bold text-slate-900">{prod.cartAdds}</span> cart ·{' '}
-                            <span className="font-bold text-rose-600">{prod.favorites}</span> saved
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Recent Storefront Orders + Fresh Catch Newsletter Subscribers */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-white rounded-3xl border border-slate-200 shadow-2xs overflow-hidden">
-                <div className="p-5 border-b border-slate-200 flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      Recent Online Storefront Orders
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Latest AO-XXXXX checkouts synced to Supabase
-                    </p>
-                  </div>
-                  <span className="text-xs text-slate-500 font-mono tabular-nums">
-                    {(storefrontData?.recentOrders || []).length} shown
-                  </span>
-                </div>
-
-                {!storefrontData || storefrontData.recentOrders.length === 0 ? (
-                  <div className="p-8 text-center text-xs text-slate-400">
-                    No storefront orders recorded in this window yet.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs text-slate-600">
-                      <thead className="bg-slate-50/80 text-[11px] font-bold text-slate-500 border-b border-slate-200">
-                        <tr>
-                          <th className="px-5 py-3">Order Code</th>
-                          <th className="px-5 py-3">Customer</th>
-                          <th className="px-5 py-3">ERP Stage</th>
-                          <th className="px-5 py-3 text-right">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {storefrontData.recentOrders.map((ord) => (
-                          <tr key={ord.orderNumber} className="hover:bg-slate-50/50">
-                            <td className="px-5 py-3 font-mono tabular-nums font-bold text-slate-900">
-                              {ord.orderNumber}
-                            </td>
-                            <td className="px-5 py-3">
-                              <div className="font-semibold text-slate-800">{ord.customerName}</div>
-                              <div className="text-[11px] text-slate-400 font-mono tabular-nums">
-                                {formatRelativeTime(ord.createdAt)}
-                              </div>
-                            </td>
-                            <td className="px-5 py-3 text-slate-700 font-medium">{ord.status}</td>
-                            <td className="px-5 py-3 text-right font-mono tabular-nums font-bold text-slate-900">
-                              ${ord.totalAmount.toFixed(2)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              <div className="bg-white rounded-3xl border border-slate-200 shadow-2xs overflow-hidden">
-                <div className="p-5 border-b border-slate-200 flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      Fresh Catch Alert Subscribers
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Verified emails captured from the storefront newsletter signup
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-xs text-slate-600 font-mono tabular-nums">
-                    <Mail className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{metrics.newsletterSubscribersCount} active</span>
-                  </div>
-                </div>
-
-                {!storefrontData || storefrontData.subscribers.length === 0 ? (
-                  <div className="p-8 text-center text-xs text-slate-400">
-                    No newsletter subscribers captured yet.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto max-h-80 overflow-y-auto">
-                    <table className="w-full text-left text-xs text-slate-600">
-                      <thead className="bg-slate-50/80 text-[11px] font-bold text-slate-500 border-b border-slate-200 sticky top-0">
-                        <tr>
-                          <th className="px-5 py-3">Subscriber Email</th>
-                          <th className="px-5 py-3 text-right">Subscribed</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {storefrontData.subscribers.map((sub) => (
-                          <tr key={sub.email} className="hover:bg-slate-50/50">
-                            <td className="px-5 py-3 font-mono text-slate-900 font-medium">
-                              {sub.email}
-                            </td>
-                            <td className="px-5 py-3 text-right font-mono tabular-nums text-slate-500">
-                              {formatRelativeTime(sub.subscribed_at)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Customer & Operator Feedback Ledger */}
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-2xs overflow-hidden">
-              <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">
-                    Customer &amp; Operator Feedback Ledger
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Ratings, bug reports, and feature requests persisted directly to Supabase
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500 font-medium">Category:</span>
-                  <select
-                    value={feedbackCategoryFilter}
-                    onChange={(e) => setFeedbackCategoryFilter(e.target.value)}
-                    className="px-2.5 py-1 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-slate-50 focus:bg-white cursor-pointer"
-                  >
-                    <option value="all">All Feedback ({storefrontData?.feedbacks.length || 0})</option>
-                    <option value="General">General</option>
-                    <option value="Product Quality">Product Quality</option>
-                    <option value="Delivery">Delivery</option>
-                    <option value="Feature Request">Feature Request</option>
-                    <option value="Bug Report">Bug Report</option>
-                  </select>
-                </div>
-              </div>
-
-              {filteredFeedbacks.length === 0 ? (
-                <div className="p-10 text-center space-y-1.5">
-                  <MessageSquare className="w-7 h-7 text-slate-300 mx-auto stroke-1" />
-                  <div className="text-xs font-bold text-slate-700">No Feedback Entries Found</div>
-                  <p className="text-xs text-slate-400">
-                    Submissions from the storefront Feedback dialog will appear here with star ratings and contact details.
-                  </p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs text-slate-600">
-                    <thead className="bg-slate-50/80 text-[11px] font-bold text-slate-500 border-b border-slate-200">
-                      <tr>
-                        <th className="px-5 py-3">Rating</th>
-                        <th className="px-5 py-3">Category</th>
-                        <th className="px-5 py-3">Message</th>
-                        <th className="px-5 py-3">Submitted By</th>
-                        <th className="px-5 py-3 text-right">Received</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {filteredFeedbacks.map((fb) => (
-                        <tr key={fb.id} className="hover:bg-slate-50/50">
-                          <td className="px-5 py-3.5 whitespace-nowrap">
-                            <span className="inline-flex items-center gap-1 font-mono tabular-nums font-bold text-slate-900">
-                              <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500 shrink-0" />
-                              <span>{fb.rating} / 5</span>
-                            </span>
-                          </td>
-                          <td className="px-5 py-3.5 text-slate-700 font-semibold whitespace-nowrap">
-                            {fb.category}
-                          </td>
-                          <td className="px-5 py-3.5 text-slate-800 max-w-md">{fb.message}</td>
-                          <td className="px-5 py-3.5">
-                            <div className="font-medium text-slate-800">
-                              {fb.name || 'Anonymous Visitor'}
-                            </div>
-                            {fb.email && (
-                              <div className="text-[11px] text-slate-400 font-mono">{fb.email}</div>
-                            )}
-                          </td>
-                          <td className="px-5 py-3.5 text-right font-mono tabular-nums text-slate-500 whitespace-nowrap">
-                            {formatRelativeTime(fb.created_at)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
 
     </div>
   );

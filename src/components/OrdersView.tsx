@@ -257,46 +257,20 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                       {order.items.map((item) => {
                         const hasWeighed = item.actualWeighedKg !== null;
                         const variance = getYieldVariance(item.requestedWeightKg, item.actualWeighedKg);
-                        const matchedLot = batches.find(b => b.id === item.lotId);
-                        const imgUrl = item.imageUrl || matchedLot?.imageUrl;
 
                         return (
                           <div
                             key={item.id}
                             className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
                           >
-                            <div className="flex items-center gap-3 min-w-0">
-                              {imgUrl ? (
-                                <div className="relative w-11 h-11 rounded-xl border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
-                                  <img
-                                    src={imgUrl}
-                                    alt={item.speciesName}
-                                    className="w-full h-full object-cover"
-                                    referrerPolicy="no-referrer"
-                                    onError={(e) => {
-                                      e.currentTarget.style.display = 'none';
-                                      const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
-                                      if (fb) (fb as HTMLElement).style.display = 'flex';
-                                    }}
-                                  />
-                                  <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
-                                    <Package className="w-5 h-5" />
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="w-11 h-11 rounded-xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
-                                  <Package className="w-5 h-5" />
-                                </div>
-                              )}
-                              <div>
-                                <div className="font-bold text-slate-900">
-                                  {item.speciesName} <span className="text-slate-400 font-normal">({item.grade})</span>
-                                </div>
-                                <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
-                                  <span>Lot: <strong className="font-mono-code text-indigo-600">{item.lotId}</strong></span>
-                                  <span>•</span>
-                                  <span>Rate: {formatCurrency(item.pricePerKg)}/kg</span>
-                                </div>
+                            <div>
+                              <div className="font-bold text-slate-900">
+                                {item.speciesName} <span className="text-slate-400 font-normal">({item.grade})</span>
+                              </div>
+                              <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                                <span>Lot: <strong className="font-mono-code text-indigo-600">{item.lotId}</strong></span>
+                                <span>•</span>
+                                <span>Rate: {formatCurrency(item.pricePerKg)}/kg</span>
                               </div>
                             </div>
 

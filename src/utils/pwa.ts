@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 
 // Service Worker Registration
 export function registerServiceWorker() {
-  if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+
+  if (import.meta.env.PROD) {
     window.addEventListener('load', () => {
       navigator.serviceWorker
         .register('/sw.js')
@@ -25,13 +27,29 @@ export function registerServiceWorker() {
           console.warn('[PWA] ServiceWorker registration failed:', error);
         });
     });
-  } else if ('serviceWorker' in navigator) {
-    // In dev mode, register anyway to enable offline dev test if desired
+  } else {
+    // In dev mode, proactively unregister any previously registered service worker
+    // to prevent caching Vite dev modules and chunk hash mismatches.
     window.addEventListener('load', () => {
-      navigator.serviceWorker
-        .register('/sw.js')
-        .then((reg) => console.log('[PWA-Dev] SW registered:', reg.scope))
-        .catch((err) => console.log('[PWA-Dev] SW notice:', err.message));
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        for (const registration of registrations) {
+          registration.unregister().then((success) => {
+            if (success) {
+              console.log('[PWA-Dev] Cleaned up service worker registration in dev mode');
+            }
+          });
+        }
+      }).catch(() => {});
+
+      if ('caches' in window) {
+        caches.keys().then((keys) => {
+          for (const key of keys) {
+            if (key.startsWith('frostly-')) {
+              caches.delete(key);
+            }
+          }
+        }).catch(() => {});
+      }
     });
   }
 }

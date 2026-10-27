@@ -12,12 +12,6 @@ import { isSupabaseConfigured } from '../utils/supabase';
 import { AuthGateScreen } from './AuthGateScreen';
 import { TenantOnboardingScreen } from './TenantOnboardingScreen';
 import { LandingPage } from './LandingPage';
-import { PosCustomerView } from './PosCustomerView';
-import {
-  preparePosSecurityExitToLogin,
-  isPosSecurityReauthActive,
-  clearPosSecurityReauth,
-} from '../services/posCustomerService';
 
 export interface AuthContextType {
   session: Session | null;
@@ -26,7 +20,6 @@ export interface AuthContextType {
   isCheckingSession: boolean;
   refreshProfile: () => Promise<StaffProfile | null>;
   signOut: () => Promise<void>;
-  exitCustomerViewToLogin: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -58,16 +51,14 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   const [isCheckingSession, setIsCheckingSession] = useState<boolean>(true);
 
   // Navigation state for unauthenticated visitors: defaults to the Landing Page
-  const [unauthView, setUnauthView] = useState<'landing' | 'login' | 'create_org' | 'accept_invite' | 'pos_customer'>(() => {
+  const [unauthView, setUnauthView] = useState<'landing' | 'login' | 'create_org' | 'accept_invite'>(() => {
     if (typeof window !== 'undefined') {
       const hash = window.location.hash.toLowerCase();
-      if (hash === '#pos-customer') return 'pos_customer';
-      if (hash === '#login' || isPosSecurityReauthActive()) return 'login';
+      if (hash === '#login') return 'login';
       if (hash === '#signup' || hash === '#register' || hash === '#create-org') return 'create_org';
       if (hash === '#accept-invite') return 'accept_invite';
       const params = new URLSearchParams(window.location.search);
       const viewParam = params.get('view') || params.get('auth');
-      if (viewParam === 'pos-customer') return 'pos_customer';
       if (viewParam === 'login') return 'login';
       if (viewParam === 'signup' || viewParam === 'create_org') return 'create_org';
       if (viewParam === 'accept_invite') return 'accept_invite';
@@ -78,8 +69,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash.toLowerCase();
-      if (hash === '#pos-customer') setUnauthView('pos_customer');
-      else if (hash === '#login') setUnauthView('login');
+      if (hash === '#login') setUnauthView('login');
       else if (hash === '#signup' || hash === '#register' || hash === '#create-org') setUnauthView('create_org');
       else if (hash === '#accept-invite') setUnauthView('accept_invite');
       else if (hash === '#landing' || hash === '' || hash === '#') setUnauthView('landing');
@@ -107,22 +97,19 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     }
   };
 
-  const exitCustomerViewToLogin = async (): Promise<void> => {
-    preparePosSecurityExitToLogin();
-    setUnauthView('login');
-    setSession(null);
-    setStaffProfile(null);
-    try {
-      await authSignOut();
-    } catch (err) {
-      console.warn('[AuthGate] Error signing out during Customer View exit:', err);
-    }
-  };
-
   useEffect(() => {
     let isMounted = true;
 
-    // 1. Initial session retrieval (handles both Supabase and offline/demo sessions)
+    // 1. Purge legacy mock demo sessions if present in browser localStorage
+    try {
+      const stored = localStorage.getItem('frostly_local_session');
+      if (stored && (stored.includes('local-token-') || stored.includes('demo-user-id-001') || stored.includes('Frostly Seafood Operations'))) {
+        localStorage.removeItem('frostly_local_session');
+        localStorage.removeItem('frostly_active_org_id');
+      }
+    } catch {}
+
+    // 2. Initial authoritative session retrieval
     getSession().then((initialSession) => {
       if (!isMounted) return;
       setSession(initialSession);
@@ -200,21 +187,8 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     );
   }
 
-  // State 2: No active session - render PosCustomerView (paired counter display), LandingPage, or AuthGateScreen
+  // State 2: No active session - render LandingPage or AuthGateScreen
   if (!session) {
-    if (unauthView === 'pos_customer') {
-      const regParam =
-        typeof window !== 'undefined'
-          ? new URLSearchParams(window.location.search).get('register') || 'REG-1'
-          : 'REG-1';
-      return (
-        <PosCustomerView
-          registerId={regParam}
-          onExitToCashier={exitCustomerViewToLogin}
-        />
-      );
-    }
-
     if (unauthView === 'landing') {
       return (
         <LandingPage
@@ -240,19 +214,11 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
           unauthView === 'create_org' ? 'create_org' : 
           unauthView === 'accept_invite' ? 'accept_invite' : 'login'
         }
-        requireStaffCredentials={isPosSecurityReauthActive()}
         onBackToLanding={() => {
-          clearPosSecurityReauth();
           window.location.hash = '';
           setUnauthView('landing');
         }}
         onAuthSuccess={async () => {
-          clearPosSecurityReauth();
-          try {
-            if (typeof window !== 'undefined' && window.location.hash.toLowerCase() === '#login') {
-              window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
-            }
-          } catch {}
           const s = await getSession();
           setSession(s);
           if (s) {
@@ -346,7 +312,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
         isCheckingSession,
         refreshProfile,
         signOut: handleSignOut,
-        exitCustomerViewToLogin,
       }}
     >
       {children}

@@ -1,8 +1,7 @@
 import { BaseRepository } from './base';
 import { ClientOrder } from '../types';
-import { orderMapper, DatabaseOrderRow, normalizeQualityGrade } from '../mappers/orderMapper';
+import { orderMapper, DatabaseOrderRow } from '../mappers/orderMapper';
 import { supabase } from '../utils/supabase';
-import { erpServerQuery, erpServerUpsert } from '../services/erpPersistenceClient';
 
 export class OrderRepository extends BaseRepository<ClientOrder, DatabaseOrderRow> {
   constructor() {
@@ -21,17 +20,6 @@ export class OrderRepository extends BaseRepository<ClientOrder, DatabaseOrderRo
     const canQuery = await this.canAccessSupabase();
     if (canQuery) {
       try {
-        const serverRes = await erpServerQuery<DatabaseOrderRow>({
-          tableName: 'client_orders',
-          organizationId: orgId,
-          includeChildren: true,
-        });
-        if (serverRes.handled && !serverRes.error && Array.isArray(serverRes.rows)) {
-          const domainItems = serverRes.rows.map((row) => this.toDomain(row));
-          this.setLocalCache(domainItems, orgId);
-          return domainItems;
-        }
-
         let query = supabase
           .from('client_orders')
           .select('*, order_line_items(*)')
@@ -56,65 +44,31 @@ export class OrderRepository extends BaseRepository<ClientOrder, DatabaseOrderRo
   }
 
   public async saveOrderWithItems(order: ClientOrder): Promise<ClientOrder> {
-    const orgId = await this.getOrganizationId();
-    const itemsPayload = (order.items || []).map((item) => ({
-      organization_id: orgId,
-      order_id: order.id,
-      species_id: item.speciesId || 'spec-tilapia',
-      species_name: item.speciesName || 'Seafood Catch',
-      grade: normalizeQualityGrade(item.grade),
-      lot_id: item.lotId || `LOT-ORD-${order.id}`,
-      requested_weight_kg: Math.max(0, Number(item.requestedWeightKg) || 0),
-      actual_weighed_kg:
-        item.actualWeighedKg !== undefined && item.actualWeighedKg !== null
-          ? Number(item.actualWeighedKg)
-          : null,
-      price_per_kg: Math.max(0, Number(item.pricePerKg) || 0),
-      notes: item.notes || null,
-    }));
-
+    const saved = await this.save(order);
+    
+    // Also attempt saving line items if online
     const canQuery = await this.canAccessSupabase();
-    if (canQuery) {
-      const serverRes = await erpServerUpsert({
-        tableName: 'client_orders',
-        payload: { ...this.toDatabase(order), organization_id: orgId },
-        onConflict: this.onConflict,
-        organizationId: orgId,
-        childItems: itemsPayload,
-      });
-
-      if (serverRes.handled) {
-        if (serverRes.error) {
-          throw new Error(`[OrderRepository] Save error: ${serverRes.error}`);
-        }
-        const current = this.getLocalCache([], orgId);
-        const idx = current.findIndex((o) => o.id === order.id);
-        const updated =
-          idx >= 0 ? current.map((o, i) => (i === idx ? order : o)) : [order, ...current];
-        this.setLocalCache(updated, orgId);
-        return order;
+    if (canQuery && order.items && order.items.length > 0) {
+      try {
+        const itemsPayload = order.items.map(item => ({
+          order_id: order.id,
+          species_id: item.speciesId,
+          species_name: item.speciesName,
+          grade: item.grade,
+          lot_id: item.lotId,
+          requested_weight_kg: item.requestedWeightKg,
+          actual_weighed_kg: item.actualWeighedKg,
+          price_per_kg: item.pricePerKg,
+          notes: item.notes || null,
+        }));
+        await supabase.from('order_line_items').delete().eq('order_id', order.id);
+        await supabase.from('order_line_items').insert(itemsPayload);
+      } catch (err) {
+        console.warn('[OrderRepository] line items sync note:', err);
       }
-
-      // Direct fallback only when server route is unhandled
-      const saved = await this.save(order);
-      if (itemsPayload.length > 0) {
-        const { error: delErr } = await supabase
-          .from('order_line_items')
-          .delete()
-          .eq('order_id', order.id)
-          .eq('organization_id', orgId);
-        if (delErr) {
-          throw new Error(`[OrderRepository] Failed to clear previous items: ${delErr.message}`);
-        }
-        const { error: insErr } = await supabase.from('order_line_items').insert(itemsPayload);
-        if (insErr) {
-          throw new Error(`[OrderRepository] Failed to insert line items: ${insErr.message}`);
-        }
-      }
-      return saved;
     }
 
-    return this.save(order);
+    return saved;
   }
 }
 

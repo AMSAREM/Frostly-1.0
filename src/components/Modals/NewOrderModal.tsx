@@ -105,7 +105,6 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
         speciesName: b.speciesName,
         grade: b.grade,
         lotId: b.id,
-        imageUrl: b.imageUrl,
         requestedWeightKg: Math.min(10, b.availableWeightKg),
         actualWeighedKg: null,
         pricePerKg: b.wholesalePricePerKg,
@@ -125,7 +124,6 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
         speciesName: defaultBatch.speciesName,
         grade: defaultBatch.grade,
         lotId: defaultBatch.id,
-        imageUrl: defaultBatch.imageUrl,
         requestedWeightKg: Math.min(10, defaultBatch.availableWeightKg),
         actualWeighedKg: null,
         pricePerKg: defaultBatch.wholesalePricePerKg,
@@ -148,7 +146,6 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
       speciesId: batch.speciesId,
       speciesName: batch.speciesName,
       grade: batch.grade,
-      imageUrl: batch.imageUrl,
       pricePerKg: batch.wholesalePricePerKg
     };
     setItems(updated);
@@ -600,52 +597,24 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
             </div>
 
             <div className="space-y-3">
-              {items.map((item, idx) => {
-                const matchedBatch = batches.find(b => b.id === item.lotId);
-                const itemImg = item.imageUrl || matchedBatch?.imageUrl;
-
-                return (
-                  <div key={item.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
-                    <div className="sm:col-span-6">
-                      <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                        Select Inventory Lot
-                      </label>
-                      <div className="flex items-center gap-2">
-                        {itemImg ? (
-                          <div className="relative w-9 h-9 rounded-xl border border-slate-200 shrink-0 bg-slate-100 overflow-hidden">
-                            <img
-                              src={itemImg}
-                              alt={item.speciesName}
-                              className="w-full h-full object-cover"
-                              referrerPolicy="no-referrer"
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none';
-                                const fb = e.currentTarget.parentElement?.querySelector('.img-fallback');
-                                if (fb) (fb as HTMLElement).style.display = 'flex';
-                              }}
-                            />
-                            <div className="w-full h-full hidden items-center justify-center text-slate-400 img-fallback">
-                              <Package className="w-4 h-4" />
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="w-9 h-9 rounded-xl border border-slate-200 shrink-0 bg-slate-100 flex items-center justify-center text-slate-400">
-                            <Package className="w-4 h-4" />
-                          </div>
-                        )}
-                        <select
-                          value={item.lotId}
-                          onChange={(e) => handleItemLotChange(idx, e.target.value)}
-                          className="flex-1 min-w-0 bg-white border border-slate-200 rounded-xl p-2 text-xs font-semibold text-slate-900"
-                        >
-                          {batches.map((b) => (
-                            <option key={b.id} value={b.id}>
-                              {b.speciesName} ({b.grade}) — {b.id} [{formatWeight(b.availableWeightKg, useImperial)} avail]
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
+              {items.map((item, idx) => (
+                <div key={item.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+                  <div className="sm:col-span-6">
+                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                      Select Inventory Lot
+                    </label>
+                    <select
+                      value={item.lotId}
+                      onChange={(e) => handleItemLotChange(idx, e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-semibold text-slate-900"
+                    >
+                      {batches.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.speciesName} ({b.grade}) — {b.id} [{formatWeight(b.availableWeightKg, useImperial)} avail]
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
                   <div className="sm:col-span-3">
                     <label className="block text-[11px] font-semibold text-slate-500 mb-1">
@@ -683,8 +652,7 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
                     )}
                   </div>
                 </div>
-              );
-            })}
+              ))}
             </div>
           </div>
 

@@ -2,7 +2,6 @@ import { BaseRepository } from './base';
 import { HaccpAuditRecord } from '../types';
 import { haccpMapper, DatabaseHaccpRow } from '../mappers/haccpMapper';
 import { supabase } from '../utils/supabase';
-import { erpServerUpsert } from '../services/erpPersistenceClient';
 
 export class HaccpRepository extends BaseRepository<HaccpAuditRecord, DatabaseHaccpRow> {
   constructor() {
@@ -32,20 +31,6 @@ export class HaccpRepository extends BaseRepository<HaccpAuditRecord, DatabaseHa
         if (orgId) {
           payload.organization_id = orgId;
         }
-
-        const serverRes = await erpServerUpsert<DatabaseHaccpRow>({
-          tableName: this.tableName,
-          payload,
-          organizationId: orgId,
-        });
-
-        if (serverRes.handled && !serverRes.error) {
-          const created = serverRes.row ? this.toDomain(serverRes.row) : this.toDomain(payload);
-          const current = this.getLocalCache([], orgId);
-          this.setLocalCache([created, ...current.filter((item) => item.id !== created.id)], orgId);
-          return created;
-        }
-
         const { data, error } = await supabase
           .from(this.tableName)
           .insert(payload)
@@ -55,7 +40,7 @@ export class HaccpRepository extends BaseRepository<HaccpAuditRecord, DatabaseHa
         if (!error && data) {
           const created = this.toDomain(data);
           const current = this.getLocalCache([], orgId);
-          this.setLocalCache([created, ...current.filter((item) => item.id !== created.id)], orgId);
+          this.setLocalCache([created, ...current], orgId);
           return created;
         } else if (error) {
           console.warn('[HaccpRepository] Insert error:', error.message);
@@ -65,7 +50,7 @@ export class HaccpRepository extends BaseRepository<HaccpAuditRecord, DatabaseHa
       }
     }
 
-    return this.save(record, true);
+    return this.save(record);
   }
 }
 

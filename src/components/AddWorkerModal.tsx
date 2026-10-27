@@ -21,9 +21,7 @@ import {
 } from 'lucide-react';
 import { addWorkerToWorkspace, WorkspaceWorker, WorkspacePendingInvite } from '../data/auth';
 import { validateEmail } from '../utils/emailValidation';
-import { validatePassword, generateSecurePassword } from '../utils/passwordValidation';
 import { EmailValidationFeedback } from './EmailValidationFeedback';
-import { PasswordValidationFeedback } from './PasswordValidationFeedback';
 
 interface AddWorkerModalProps {
   isOpen: boolean;
@@ -74,7 +72,12 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
   const isSeatLimitReached = seatsAvailable <= 0;
 
   const handleGeneratePassword = () => {
-    setPassword(generateSecurePassword(12));
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+    let generated = '';
+    for (let i = 0; i < 10; i++) {
+      generated += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setPassword(generated);
   };
 
   const handleCopy = (text: string, key: string) => {
@@ -93,12 +96,9 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
       return;
     }
 
-    if (mode === 'direct_password') {
-      const passCheck = validatePassword(password);
-      if (!passCheck.isValid) {
-        setError(passCheck.errorMessage || 'Worker password does not satisfy security criteria.');
-        return;
-      }
+    if (mode === 'direct_password' && (!password || password.length < 6)) {
+      setError('Please assign an initial password of at least 6 characters for direct account creation.');
+      return;
     }
 
     setLoading(true);
@@ -585,10 +585,9 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full px-3.5 py-2 text-xs font-mono bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-slate-900"
                 />
-                <PasswordValidationFeedback
-                  password={password}
-                  onSuggestPassword={(gen) => setPassword(gen)}
-                />
+                <p className="text-[11px] text-slate-500">
+                  Minimum 6 characters. The worker can immediately sign in with this password.
+                </p>
               </div>
             )}
 
