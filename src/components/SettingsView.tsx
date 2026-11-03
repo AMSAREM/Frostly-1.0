@@ -722,6 +722,66 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     />
                   </div>
 
+                  {/* Customer Volume / Bulk Weight Discount Rule */}
+                  <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80 sm:col-span-2 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1.5 bg-emerald-200 text-emerald-800 rounded-xl">
+                          <Sparkles className="w-4 h-4" />
+                        </span>
+                        <div>
+                          <div className="text-xs font-bold text-emerald-950">
+                            Customer Bulk Volume Discount (&gt;10kg)
+                          </div>
+                          <div className="text-[11px] text-emerald-800/80">
+                            Automatically apply promotional customer discounts when seafood purchases exceed the weight threshold.
+                          </div>
+                        </div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={formData.enableBulkDiscount !== false}
+                        onChange={(e) => handleChange('enableBulkDiscount', e.target.checked)}
+                        className="w-5 h-5 accent-emerald-600 rounded cursor-pointer"
+                      />
+                    </div>
+
+                    {formData.enableBulkDiscount !== false && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-emerald-200/60">
+                        <div>
+                          <label className="text-[11px] font-bold text-emerald-900">
+                            Volume Discount Threshold Weight (kg)
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            step="0.5"
+                            value={formData.bulkDiscountThresholdKg ?? 10}
+                            onChange={(e) => handleChange('bulkDiscountThresholdKg', parseFloat(e.target.value) || 10)}
+                            className="w-full mt-1 px-3 py-2 rounded-xl bg-white border border-emerald-300 text-xs font-bold text-slate-900"
+                          />
+                          <p className="text-[10px] text-emerald-700 mt-0.5">Purchases above this weight unlock the customer discount.</p>
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] font-bold text-emerald-900">
+                            Customer Discount Rate (%)
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="50"
+                            step="1"
+                            value={formData.bulkDiscountPct ?? 10}
+                            onChange={(e) => handleChange('bulkDiscountPct', parseFloat(e.target.value) || 10)}
+                            className="w-full mt-1 px-3 py-2 rounded-xl bg-white border border-emerald-300 text-xs font-bold text-slate-900"
+                          />
+                          <p className="text-[10px] text-emerald-700 mt-0.5">Percentage discount granted to qualifying product purchases.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="space-y-1 sm:col-span-2 pt-2 border-t border-slate-100">
                     <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
                       <span>Default Inventory Adjustment Account (Supabase)</span>

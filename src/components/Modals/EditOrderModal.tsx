@@ -12,15 +12,17 @@ import {
   Check, 
   AlertCircle,
   FileText,
-  Calculator
+  Calculator,
+  Sparkles
 } from 'lucide-react';
-import { ClientOrder, OrderLineItem, InventoryBatch, Customer, OrderStatus, PaymentStatus } from '../../types';
+import { ClientOrder, OrderLineItem, InventoryBatch, Customer, OrderStatus, PaymentStatus, AppSettings } from '../../types';
 import { formatCurrency, formatWeight } from '../../utils/formatters';
 
 interface EditOrderModalProps {
   order: ClientOrder;
   batches: InventoryBatch[];
   customers?: Customer[];
+  settings?: AppSettings;
   onClose: () => void;
   onSaveOrder: (updatedOrder: ClientOrder) => Promise<void> | void;
   useImperial: boolean;
@@ -30,6 +32,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
   order,
   batches = [],
   customers = [],
+  settings,
   onClose,
   onSaveOrder,
   useImperial
@@ -140,6 +143,24 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
     updated[index] = {
       ...updated[index],
       notes: val
+    };
+    setItems(updated);
+  };
+
+  const bulkThresholdKg = settings?.bulkDiscountThresholdKg ?? 10;
+  const bulkDiscountPct = settings?.bulkDiscountPct ?? 10;
+  const isBulkDiscountEnabled = settings?.enableBulkDiscount ?? true;
+
+  const applyBulkDiscountToItem = (index: number) => {
+    const item = items[index];
+    const batch = batches.find(b => b.id === item.lotId);
+    const basePrice = batch ? batch.wholesalePricePerKg : item.pricePerKg;
+    const discounted = parseFloat((basePrice * (1 - bulkDiscountPct / 100)).toFixed(2));
+    const updated = [...items];
+    updated[index] = {
+      ...updated[index],
+      pricePerKg: discounted,
+      notes: (updated[index].notes ? `${updated[index].notes} | ` : '') + `>${bulkThresholdKg}kg Bulk Rate (-${bulkDiscountPct}%)`
     };
     setItems(updated);
   };
@@ -518,6 +539,13 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                             onChange={(e) => handleItemWeightChange(index, e.target.value)}
                             className="w-full h-8 bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-right"
                           />
+                          {isBulkDiscountEnabled && item.requestedWeightKg >= bulkThresholdKg && (
+                            <div className="mt-1 flex items-center justify-end gap-1">
+                              <span className="px-1 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[9px] font-bold">
+                                &gt;{bulkThresholdKg}kg Bulk
+                              </span>
+                            </div>
+                          )}
                         </td>
 
                         {/* Price per Kg */}
@@ -530,6 +558,19 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                             onChange={(e) => handleItemPriceChange(index, e.target.value)}
                             className="w-full h-8 bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-right"
                           />
+                          {isBulkDiscountEnabled && item.requestedWeightKg >= bulkThresholdKg && (
+                            <div className="mt-1 flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => applyBulkDiscountToItem(index)}
+                                className="text-[9px] text-emerald-700 hover:text-emerald-900 font-bold underline cursor-pointer flex items-center gap-0.5"
+                                title="Calculate and apply bulk discount"
+                              >
+                                <Sparkles className="w-2.5 h-2.5" />
+                                Apply -{bulkDiscountPct}%
+                              </button>
+                            </div>
+                          )}
                         </td>
 
                         {/* Calculated Subtotal */}

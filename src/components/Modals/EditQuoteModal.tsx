@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { X, Plus, Trash2, Calculator, Check, AlertCircle } from 'lucide-react';
-import { ClientOrder, OrderLineItem, InventoryBatch } from '../../types';
+import { X, Plus, Trash2, Calculator, Check, AlertCircle, Sparkles } from 'lucide-react';
+import { ClientOrder, OrderLineItem, InventoryBatch, AppSettings } from '../../types';
 import { formatCurrency, formatWeight } from '../../utils/formatters';
 
 interface EditQuoteModalProps {
   order: ClientOrder;
   batches?: InventoryBatch[];
+  settings?: AppSettings;
   onClose: () => void;
   onSaveQuote: (orderId: string, updatedItems: OrderLineItem[], newQuotedTotal: number) => Promise<void> | void;
   useImperial: boolean;
@@ -14,6 +15,7 @@ interface EditQuoteModalProps {
 export const EditQuoteModal: React.FC<EditQuoteModalProps> = ({
   order,
   batches = [],
+  settings,
   onClose,
   onSaveQuote,
   useImperial
@@ -45,12 +47,30 @@ export const EditQuoteModal: React.FC<EditQuoteModalProps> = ({
     setItems(updated);
   };
 
+  const bulkThresholdKg = settings?.bulkDiscountThresholdKg ?? 10;
+  const bulkDiscountPct = settings?.bulkDiscountPct ?? 10;
+  const isBulkDiscountEnabled = settings?.enableBulkDiscount ?? true;
+
   const handlePriceChange = (index: number, val: string) => {
     const num = parseFloat(val);
     const updated = [...items];
     updated[index] = {
       ...updated[index],
       pricePerKg: isNaN(num) ? 0 : Math.max(0, num)
+    };
+    setItems(updated);
+  };
+
+  const applyBulkDiscountToItem = (index: number) => {
+    const item = items[index];
+    const batch = batches.find(b => b.id === item.lotId);
+    const basePrice = batch ? batch.wholesalePricePerKg : item.pricePerKg;
+    const discounted = parseFloat((basePrice * (1 - bulkDiscountPct / 100)).toFixed(2));
+    const updated = [...items];
+    updated[index] = {
+      ...updated[index],
+      pricePerKg: discounted,
+      notes: (updated[index].notes ? `${updated[index].notes} | ` : '') + `>${bulkThresholdKg}kg Bulk Rate (-${bulkDiscountPct}%)`
     };
     setItems(updated);
   };
@@ -207,6 +227,13 @@ export const EditQuoteModal: React.FC<EditQuoteModalProps> = ({
                           onChange={(e) => handleWeightChange(index, e.target.value)}
                           className="w-full h-8 bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-right"
                         />
+                        {isBulkDiscountEnabled && item.requestedWeightKg >= bulkThresholdKg && (
+                          <div className="mt-1 flex items-center justify-end gap-1">
+                            <span className="px-1 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[9px] font-bold">
+                              &gt;{bulkThresholdKg}kg Bulk
+                            </span>
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-2.5 px-2">
@@ -218,6 +245,19 @@ export const EditQuoteModal: React.FC<EditQuoteModalProps> = ({
                           onChange={(e) => handlePriceChange(index, e.target.value)}
                           className="w-full h-8 bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-right"
                         />
+                        {isBulkDiscountEnabled && item.requestedWeightKg >= bulkThresholdKg && (
+                          <div className="mt-1 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => applyBulkDiscountToItem(index)}
+                              className="text-[9px] text-emerald-700 hover:text-emerald-900 font-bold underline cursor-pointer flex items-center gap-0.5"
+                              title="Calculate and apply bulk volume discount"
+                            >
+                              <Sparkles className="w-2.5 h-2.5" />
+                              Apply -{bulkDiscountPct}%
+                            </button>
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 text-xs">

@@ -67,7 +67,8 @@ export type OrderStatus =
   | 'Cryo-Packed & Iced'
   | 'In Reefer Transit'
   | 'Delivered'
-  | 'Cancelled';
+  | 'Cancelled'
+  | 'Voided';
 
 export interface OrderLineItem {
   id: string;
@@ -110,9 +111,12 @@ export interface ClientOrder {
   packagingRequirement: 'Dry Ice & Insulated Wax Carton' | 'Slush Ice Gel Packed' | 'Live Oxygenated Tank Container' | 'Standard Cryo-Box';
   specialInstructions?: string;
   packingSlipGenerated: boolean;
+  voidReason?: string;
+  voidedAt?: string;
+  voidedBy?: string;
 }
 
-export type PaymentStatus = 'Paid' | 'Paid in Full' | 'Pending Net-30' | 'Pending Net-15' | 'Pending Net-60' | 'Invoiced' | 'Overdue';
+export type PaymentStatus = 'Paid' | 'Paid in Full' | 'Pending Net-30' | 'Pending Net-15' | 'Pending Net-60' | 'Invoiced' | 'Overdue' | 'Cancelled' | 'Voided';
 
 export interface ReeferSensorData {
   timestamp: string;
@@ -347,6 +351,8 @@ export interface RetailSaleItem {
   costPrice: number;
   lineTotal: number;
   imageUrl?: string;
+  isBulkDiscountApplied?: boolean;
+  discountRatePct?: number;
 }
 
 export interface RetailTransaction {
@@ -370,6 +376,69 @@ export interface RetailTransaction {
   paymentMethod: 'Cash' | 'Credit Card' | 'Apple Pay / Contactless' | 'Store Credit' | 'Customer Credit Account';
   cashierName: string;
   status: 'Completed' | 'Refunded';
+  bulkDiscountApplied?: boolean;
+  bulkDiscountSavings?: number;
+}
+
+// -------------------------------------------------------------
+// PRODUCT LEDGER & STOCK MOVEMENT TYPES
+// -------------------------------------------------------------
+
+export type ProductLedgerMovementType = 
+  | 'Opening Stock / Intake'
+  | 'Vessel Catch Intake'
+  | 'Retail POS Sale'
+  | 'Wholesale Order Fulfillment'
+  | 'Stock Calibration Loss'
+  | 'Stock Calibration Recovery'
+  | 'Return / Restock'
+  | 'Cold Vault Transfer';
+
+export interface ProductLedgerEntry {
+  id: string;
+  productId: string;
+  productName: string;
+  productSku: string;
+  date: string;
+  movementType: ProductLedgerMovementType;
+  referenceId: string; // e.g. POS-2026-4421, ORD-9421, PO-8821, LOT-2026-TUNA-094
+  description: string;
+  channel: 'Retail POS' | 'Wholesale B2B' | 'Catch Landings' | 'Cold Vault Audit';
+  quantityIn: number; // Inflow (e.g. +100 kg)
+  quantityOut: number; // Outflow (e.g. -15 kg)
+  netChange: number; // quantityIn - quantityOut
+  runningBalance: number; // Perpetual stock on hand after this movement
+  unit: 'kg' | 'lb' | 'piece' | 'pack';
+  unitCost: number;
+  unitPrice?: number;
+  totalValuationUSD: number; // Valuation of movement
+  revenueUSD?: number; // Revenue realized if sale
+  performedBy?: string; // Cashier, Fleet Master, Inspector, Auditor
+  batchLotId?: string; // Cold-vault lot reference
+  notes?: string;
+  createdAt?: string;
+}
+
+export interface ProductLedgerSummary {
+  productId: string;
+  productName: string;
+  productSku: string;
+  unit: string;
+  currentStock: number;
+  currentValuation: number;
+  totalInwardStock: number;
+  totalOutwardStock: number;
+  retailSalesQty: number;
+  retailSalesRevenue: number;
+  wholesaleSalesQty: number;
+  wholesaleSalesRevenue: number;
+  totalRevenue: number;
+  totalCogs: number;
+  grossMarginUSD: number;
+  grossMarginPct: number;
+  netAdjustmentQty: number;
+  movementsCount: number;
+  lastMovementDate?: string;
 }
 
 export interface PurchaseOrderLanding {
@@ -493,6 +562,11 @@ export interface AppSettings {
   icePackagingFeePerKg: number;
   minOrderValueWholesale: number;
   
+  // Customer Volume / Bulk Weight Discount Configuration
+  enableBulkDiscount?: boolean;
+  bulkDiscountThresholdKg?: number; // e.g. 10 kg
+  bulkDiscountPct?: number; // e.g. 10%
+  
   // Notification Preferences
   notifyHaccpExcursion: boolean;
   notifyLowInventory: boolean;
@@ -530,6 +604,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoGenerateQRTraceability: true,
   icePackagingFeePerKg: 0.45,
   minOrderValueWholesale: 300,
+  enableBulkDiscount: true,
+  bulkDiscountThresholdKg: 10,
+  bulkDiscountPct: 10,
   notifyHaccpExcursion: true,
   notifyLowInventory: true,
   notifyOverdueInvoices: true,

@@ -1075,6 +1075,109 @@ export default function App() {
     }
   };
 
+  // Order Void / Cancellation Handler (Customer Section)
+  const handleVoidOrder = async (orderId: string, reason: string, voidedBy: string) => {
+    const existingOrder = orders.find(o => o.id === orderId);
+    if (!existingOrder) return;
+
+    const orderAmount = existingOrder.adjustedTotalUSD || existingOrder.quotedTotalUSD || 0;
+    const isPaid = existingOrder.paymentStatus === 'Paid' || existingOrder.paymentStatus === 'Paid in Full';
+    const nowIso = new Date().toISOString();
+
+    // 1. Update Order State
+    const updatedOrder: ClientOrder = {
+      ...existingOrder,
+      status: 'Voided',
+      paymentStatus: 'Cancelled',
+      voidReason: reason,
+      voidedAt: nowIso,
+      voidedBy: voidedBy
+    };
+
+    setOrders(prev => prev.map(o => o.id === orderId ? updatedOrder : o));
+    try {
+      await orderRepository.saveOrderWithItems(updatedOrder);
+    } catch (err) {
+      console.warn('[App] Error saving voided order:', err);
+    }
+
+    // 2. Restore Allocated Inventory Lot Weights back to batch storage
+    if (existingOrder.items && existingOrder.items.length > 0) {
+      setBatches(prev => {
+        return prev.map(batch => {
+          const matchingItem = existingOrder.items.find(i => i.lotId === batch.id);
+          if (matchingItem) {
+            const weightToRestore = matchingItem.actualWeighedKg ?? matchingItem.requestedWeightKg ?? 0;
+            if (weightToRestore > 0) {
+              const newAvailable = Number((batch.availableWeightKg + weightToRestore).toFixed(2));
+              const newAllocated = Math.max(0, Number(((batch.allocatedWeightKg || 0) - weightToRestore).toFixed(2)));
+              const updatedBatch = {
+                ...batch,
+                availableWeightKg: newAvailable,
+                allocatedWeightKg: newAllocated
+              };
+              batchRepository.save(updatedBatch, false).catch(err => console.warn('[App] batchRepository restore error:', err));
+              return updatedBatch;
+            }
+          }
+          return batch;
+        });
+      });
+    }
+
+    // 3. Reverse Customer Outstanding Balance (if order was unpaid/on credit)
+    if (!isPaid && orderAmount > 0) {
+      setCustomers(prev => {
+        return prev.map(c => {
+          const isMatchingCust = (existingOrder.customerId && c.id === existingOrder.customerId) ||
+            c.name.toLowerCase() === existingOrder.clientName.toLowerCase() ||
+            c.companyName.toLowerCase() === existingOrder.clientName.toLowerCase();
+
+          if (isMatchingCust) {
+            const newBal = Math.max(0, Number((c.outstandingBalanceUSD - orderAmount).toFixed(2)));
+            const updatedCust = {
+              ...c,
+              outstandingBalanceUSD: newBal
+            };
+            customerRepository.save(updatedCust, false).catch(err => console.warn('[App] customerRepository update error:', err));
+            return updatedCust;
+          }
+          return c;
+        });
+      });
+
+      // 4. Record Counter Ledger Entry in Financials
+      const financialEntry: FinancialLedgerEntry = {
+        id: `FIN-VOID-${Date.now()}`,
+        date: nowIso.split('T')[0],
+        type: 'Income',
+        category: 'Revenue (Wholesale)',
+        description: `Void Order #${existingOrder.id}: ${reason} (Authorized by ${voidedBy})`,
+        entityName: existingOrder.clientName,
+        amount: -orderAmount,
+        paymentMethod: existingOrder.paymentTerms ? `Credit Reversal (${existingOrder.paymentTerms})` : 'Order Void',
+        status: 'Settled',
+        referenceId: existingOrder.id,
+        customerId: existingOrder.customerId,
+        notes: `Void authorized by ${voidedBy}: ${reason}`
+      };
+      setFinancialEntries(prev => [financialEntry, ...prev]);
+      try {
+        await financialRepository.save(financialEntry, true);
+      } catch (err) {
+        console.warn('[App] financialRepository void entry error:', err);
+      }
+    }
+
+    // 5. Notify Operations
+    addNotification({
+      type: 'order_update',
+      title: `Order #${orderId} Voided`,
+      message: `Order marked as voided by ${voidedBy}. Reason: ${reason}. Lot allocations restored & customer receivables adjusted.`,
+      urgency: 'medium'
+    });
+  };
+
   // Customer Management Handlers
   const handleAddCustomer = (newCust: Customer) => {
     setCustomers(prev => [newCust, ...prev]);
@@ -1962,6 +2065,9 @@ export default function App() {
             onNavigateToInventory={() => setActiveTab('inventory')}
             formatCurrency={formatAppCurrency}
             useImperial={useImperial}
+            settings={settings}
+            stockAdjustments={stockAdjustments}
+            purchaseOrders={purchaseOrders}
           />
         )}
 
@@ -1976,6 +2082,7 @@ export default function App() {
             onRecordPayment={handleRecordPayment}
             onReversePayment={handleReversePayment}
             onOpenInvoice={(o) => setInvoiceOrder(o)}
+            onVoidOrder={handleVoidOrder}
             formatCurrency={formatAppCurrency}
           />
         )}
@@ -2126,6 +2233,7 @@ export default function App() {
           order={editingOrder}
           batches={batches}
           customers={customers}
+          settings={settings}
           onClose={() => setEditingOrder(null)}
           onSaveOrder={handleSaveOrder}
           useImperial={useImperial}
@@ -2136,6 +2244,7 @@ export default function App() {
         <EditQuoteModal
           order={editingQuoteOrder}
           batches={batches}
+          settings={settings}
           onClose={() => setEditingQuoteOrder(null)}
           onSaveQuote={handleSaveQuote}
           useImperial={useImperial}
@@ -2162,6 +2271,7 @@ export default function App() {
         <NewOrderModal
           batches={batches}
           customers={customers}
+          settings={settings}
           preselectedCustomerId={preselectedCustomerId}
           onClose={() => {
             setIsNewOrderModalOpen(false);

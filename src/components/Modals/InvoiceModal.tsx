@@ -62,6 +62,7 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
 
   const totalDue = order.adjustedTotalUSD || order.quotedTotalUSD;
   const isPaid = order.paymentStatus === 'Paid' || order.paymentStatus === 'Paid in Full';
+  const isVoided = order.status === 'Voided' || order.status === 'Cancelled' || order.paymentStatus === 'Cancelled' || order.paymentStatus === 'Voided';
 
   const handleCopySummary = () => {
     const text = `${companyName || 'AMANS OCEAN SEAFOODS'} INVOICE\nOrder ID: ${order.id}\nClient: ${order.clientName}\nDestination: ${order.deliveryAddress}\nTotal Amount Due: ${formatCurrency(totalDue)}\nStatus: ${order.paymentStatus}\nTerms: ${order.paymentTerms || matchedCustomer?.paymentTerms || 'Net-30'}`;
@@ -168,9 +169,14 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
                 </div>
               )}
               
-              {/* PAID OR UNPAID BADGE BANNER */}
+              {/* PAID OR UNPAID OR VOIDED BADGE BANNER */}
               <div className="pt-1">
-                {isPaid ? (
+                {isVoided ? (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-300">
+                    <AlertCircle className="w-4 h-4 text-rose-600" />
+                    <span>VOIDED / CANCELLED</span>
+                  </div>
+                ) : isPaid ? (
                   <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300">
                     <Check className="w-4 h-4 text-emerald-600" />
                     <span>PAID IN FULL</span>
@@ -182,6 +188,12 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
                   </div>
                 )}
               </div>
+              {isVoided && order.voidReason && (
+                <div className="text-[11px] text-rose-800 bg-rose-50 p-2 rounded-xl border border-rose-200 mt-2 sm:text-left">
+                  <strong>Void Reason:</strong> {order.voidReason}
+                  {order.voidedBy && ` • Authorized by ${order.voidedBy}`}
+                </div>
+              )}
             </div>
           </div>
 
@@ -258,7 +270,14 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
                   return (
                     <tr key={item.id || idx}>
                       <td className="py-3 px-2">
-                        <div className="font-bold text-slate-900">{item.speciesName}</div>
+                        <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                          <span>{item.speciesName}</span>
+                          {actualKg >= 10 && (
+                            <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded text-[9px] font-bold border border-emerald-300">
+                              &gt;10kg Volume Rate
+                            </span>
+                          )}
+                        </div>
                         <div className="text-slate-400 text-[10px]">Grade: {item.grade}</div>
                       </td>
                       <td className="py-3 px-2 font-mono-code text-slate-600">
@@ -300,14 +319,16 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
               <div className="pt-2 flex flex-wrap items-center gap-2.5">
                 <span className="text-slate-600 font-semibold">Payment Status:</span>
                 <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                  isPaid 
-                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                    : 'bg-amber-100 text-amber-800 border border-amber-200'
+                  isVoided
+                    ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                    : isPaid 
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                      : 'bg-amber-100 text-amber-800 border border-amber-200'
                 }`}>
-                  {order.paymentStatus}
+                  {isVoided ? 'Cancelled / Voided' : order.paymentStatus}
                 </span>
 
-                {!isPaid ? (
+                {!isVoided && (!isPaid ? (
                   <button
                     onClick={handleSettlePayment}
                     className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer shadow-xs flex items-center gap-1"
@@ -322,7 +343,7 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
                   >
                     Mark as Unpaid / Pending
                   </button>
-                )}
+                ))}
               </div>
             </div>
 

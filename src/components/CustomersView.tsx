@@ -27,12 +27,14 @@ import {
   ArrowUpRight,
   Eye,
   Download,
-  Printer
+  Printer,
+  FileX
 } from 'lucide-react';
 import { Customer, ClientOrder, FinancialLedgerEntry, CustomerType, PricingTier, PaymentTerms, CustomerStatus } from '../types';
 import { CustomerLedgerTab } from './CustomerLedgerTab';
 import { RecordPaymentModal } from './Modals/RecordPaymentModal';
 import { PaymentReceiptModal } from './Modals/PaymentReceiptModal';
+import { VoidOrderModal } from './Modals/VoidOrderModal';
 
 interface CustomersViewProps {
   customers: Customer[];
@@ -52,6 +54,7 @@ interface CustomersViewProps {
   ) => void;
   onReversePayment?: (paymentEntryId: string, customerId: string, amount: number, reason: string) => void;
   onOpenInvoice?: (order: ClientOrder) => void;
+  onVoidOrder?: (orderId: string, reason: string, voidedBy: string) => Promise<void> | void;
   formatCurrency: (amount: number) => string;
 }
 
@@ -65,6 +68,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   onRecordPayment,
   onReversePayment,
   onOpenInvoice,
+  onVoidOrder,
   formatCurrency
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -79,6 +83,27 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   const [preselectedOrderId, setPreselectedOrderId] = useState<string | undefined>(undefined);
   const [suggestedPaymentAmount, setSuggestedPaymentAmount] = useState<number | undefined>(undefined);
   const [lastCreatedReceipt, setLastCreatedReceipt] = useState<any | null>(null);
+
+  // Void Order State
+  const [orderToVoid, setOrderToVoid] = useState<ClientOrder | null>(null);
+
+  const handleConfirmVoid = async (orderId: string, reason: string, voidedBy: string) => {
+    if (onVoidOrder) {
+      await onVoidOrder(orderId, reason, voidedBy);
+    }
+    // Update local selected customer outstanding balance if applicable
+    if (selectedCustomer) {
+      const order = orders.find(o => o.id === orderId);
+      if (order && order.paymentStatus !== 'Paid' && order.paymentStatus !== 'Paid in Full') {
+        const orderAmount = order.adjustedTotalUSD || order.quotedTotalUSD || 0;
+        setSelectedCustomer(prev => prev ? {
+          ...prev,
+          outstandingBalanceUSD: Math.max(0, prev.outstandingBalanceUSD - orderAmount)
+        } : null);
+      }
+    }
+    setOrderToVoid(null);
+  };
 
   // Credit Facility Quick Adjustment State
   const [isEditingCreditFacility, setIsEditingCreditFacility] = useState(false);
@@ -620,65 +645,97 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
 
                 {customerOrders.length > 0 ? (
                   <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 text-xs">
-                    {customerOrders.map(order => (
-                      <div key={order.id} className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-900 font-mono-code text-sm">#{order.id}</span>
-                            <span className="text-slate-500">{order.orderDate}</span>
-                            <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md font-medium">
-                              {order.saleType || (order.paymentTerms ? 'Credit Sale' : 'Direct')}
-                            </span>
-                            {order.status && (
-                              <span className="text-[10px] px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-md font-bold">
-                                {order.status}
+                    {customerOrders.map(order => {
+                      const isVoided = order.status === 'Voided' || order.status === 'Cancelled' || order.paymentStatus === 'Cancelled' || order.paymentStatus === 'Voided';
+                      const isPaid = order.paymentStatus === 'Paid' || order.paymentStatus === 'Paid in Full';
+                      const orderTotal = order.adjustedTotalUSD || order.quotedTotalUSD;
+
+                      return (
+                        <div key={order.id} className={`p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
+                          isVoided ? 'bg-slate-50/80 opacity-85' : 'hover:bg-slate-50'
+                        }`}>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`font-bold font-mono-code text-sm ${isVoided ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
+                                #{order.id}
                               </span>
-                            )}
-                          </div>
-                          <div className="text-xs text-slate-600 mt-1">
-                            {order.items?.map(i => `${i.speciesName} (${i.requestedWeightKg}kg)`).join(', ') || 'No item breakdown'}
-                          </div>
-                          {order.creditAuthorizedBy && (
-                            <div className="text-[10px] text-amber-800 mt-0.5">
-                              Credit override authorized by {order.creditAuthorizedBy}
+                              <span className="text-slate-500">{order.orderDate}</span>
+                              <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md font-medium">
+                                {order.saleType || (order.paymentTerms ? 'Credit Sale' : 'Direct')}
+                              </span>
+                              {order.status && (
+                                <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold ${
+                                  isVoided 
+                                    ? 'bg-rose-100 text-rose-800' 
+                                    : 'bg-indigo-50 text-indigo-700'
+                                }`}>
+                                  {order.status}
+                                </span>
+                              )}
                             </div>
-                          )}
-                        </div>
-
-                        <div className="sm:text-right flex sm:flex-col items-center sm:items-end justify-between gap-2">
-                          <div className="font-mono-code font-black text-slate-900 text-sm">
-                            {formatCurrency(order.adjustedTotalUSD || order.quotedTotalUSD)}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold ${
-                              order.paymentStatus === 'Paid' 
-                                ? 'bg-emerald-100 text-emerald-800' 
-                                : 'bg-amber-100 text-amber-800'
-                            }`}>
-                              {order.paymentStatus === 'Paid' ? 'Paid' : `Credit: ${order.paymentTerms || 'Net-30'}`}
-                            </span>
-
-                            {onOpenInvoice && (
-                              <button
-                                onClick={() => onOpenInvoice(order)}
-                                className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg text-[11px] cursor-pointer"
-                              >
-                                View Invoice
-                              </button>
+                            <div className={`text-xs mt-1 ${isVoided ? 'text-slate-400 line-through' : 'text-slate-600'}`}>
+                              {order.items?.map(i => `${i.speciesName} (${i.requestedWeightKg}kg)`).join(', ') || 'No item breakdown'}
+                            </div>
+                            {order.creditAuthorizedBy && !isVoided && (
+                              <div className="text-[10px] text-amber-800 mt-0.5">
+                                Credit override authorized by {order.creditAuthorizedBy}
+                              </div>
                             )}
-
-                            {order.paymentStatus !== 'Paid' && (
-                              <button
-                                onClick={() => handleOpenRecordPayment(selectedCustomer, order.id, order.adjustedTotalUSD || order.quotedTotalUSD)}
-                                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] cursor-pointer"
-                              >
-                                Pay
-                              </button>
+                            {isVoided && order.voidReason && (
+                              <div className="text-[10px] text-rose-800 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 mt-1 inline-block">
+                                Voided: {order.voidReason} {order.voidedBy ? `• By ${order.voidedBy}` : ''}
+                              </div>
                             )}
                           </div>
+
+                          <div className="sm:text-right flex sm:flex-col items-center sm:items-end justify-between gap-2">
+                            <div className={`font-mono-code font-black text-sm ${isVoided ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
+                              {formatCurrency(orderTotal)}
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold ${
+                                isVoided 
+                                  ? 'bg-rose-100 text-rose-800'
+                                  : isPaid 
+                                    ? 'bg-emerald-100 text-emerald-800' 
+                                    : 'bg-amber-100 text-amber-800'
+                              }`}>
+                                {isVoided ? 'Voided' : isPaid ? 'Paid' : `Credit: ${order.paymentTerms || 'Net-30'}`}
+                              </span>
+
+                              {onOpenInvoice && (
+                                <button
+                                  onClick={() => onOpenInvoice(order)}
+                                  className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg text-[11px] cursor-pointer"
+                                >
+                                  View Invoice
+                                </button>
+                              )}
+
+                              {!isVoided && !isPaid && (
+                                <button
+                                  onClick={() => handleOpenRecordPayment(selectedCustomer, order.id, orderTotal)}
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] cursor-pointer"
+                                >
+                                  Pay
+                                </button>
+                              )}
+
+                              {!isVoided && onVoidOrder && (
+                                <button
+                                  onClick={() => setOrderToVoid(order)}
+                                  className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-lg text-[11px] cursor-pointer flex items-center gap-1 border border-rose-200"
+                                  title="Void or Cancel Order"
+                                >
+                                  <FileX className="w-3.5 h-3.5" />
+                                  <span>Void</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="p-8 text-center text-xs text-slate-400 bg-slate-50 rounded-2xl">
@@ -1105,6 +1162,16 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
           onReversePayment={onReversePayment}
         />
       )}
+
+      {/* Void Order Modal */}
+      <VoidOrderModal
+        isOpen={Boolean(orderToVoid)}
+        onClose={() => setOrderToVoid(null)}
+        order={orderToVoid}
+        customer={selectedCustomer}
+        formatCurrency={formatCurrency}
+        onConfirmVoid={handleConfirmVoid}
+      />
 
     </div>
   );

@@ -38,9 +38,14 @@ import {
   Customer, 
   RetailSaleItem, 
   QualityGrade,
-  InventoryBatch 
+  InventoryBatch,
+  AppSettings,
+  InventoryStockAdjustment,
+  PurchaseOrderLanding
 } from '../types';
 import { ProductModal } from './Modals/ProductModal';
+import { ProductLedgerTab } from './ProductLedgerTab';
+import { ProductLedgerModal } from './Modals/ProductLedgerModal';
 
 interface RetailWholesaleViewProps {
   products: RetailWholesaleProduct[];
@@ -48,6 +53,9 @@ interface RetailWholesaleViewProps {
   wholesaleOrders: ClientOrder[];
   customers: Customer[];
   batches?: InventoryBatch[];
+  stockAdjustments?: InventoryStockAdjustment[];
+  purchaseOrders?: PurchaseOrderLanding[];
+  settings?: AppSettings;
   onCompleteRetailSale: (sale: RetailTransaction) => void;
   onOpenNewWholesaleOrder: () => void;
   onOpenWeigher: (order: ClientOrder) => void;
@@ -70,6 +78,9 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   wholesaleOrders = [],
   customers = [],
   batches = [],
+  stockAdjustments = [],
+  purchaseOrders = [],
+  settings,
   onCompleteRetailSale,
   onOpenNewWholesaleOrder,
   onOpenWeigher,
@@ -85,7 +96,8 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   formatCurrency,
   useImperial = false
 }) => {
-  const [activeChannelTab, setActiveChannelTab] = useState<'retail_pos' | 'wholesale_orders' | 'price_matrix'>('retail_pos');
+  const [activeChannelTab, setActiveChannelTab] = useState<'retail_pos' | 'wholesale_orders' | 'price_matrix' | 'product_ledgers'>('retail_pos');
+  const [viewingLedgerProduct, setViewingLedgerProduct] = useState<RetailWholesaleProduct | null>(null);
   
   // Product & Image Management Modal State
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
@@ -115,9 +127,24 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   const [editWholesalePrice, setEditWholesalePrice] = useState<string>('');
   const [editRetailPrice, setEditRetailPrice] = useState<string>('');
 
+  const bulkThresholdKg = settings?.bulkDiscountThresholdKg ?? 10;
+  const bulkDiscountRate = settings?.bulkDiscountPct ?? 10;
+  const isBulkDiscountEnabled = settings?.enableBulkDiscount ?? true;
+
   // POS Cart Calculations
   const cartSubtotal = posCart.reduce((sum, item) => sum + (item.product.retailPricePerUnit * item.quantity), 0);
-  const discountAmount = (cartSubtotal * posDiscountPct) / 100;
+  
+  // Customer volume discount evaluation (product purchases >= 10kg)
+  const itemsWithBulkWeight = posCart.filter(item => 
+    isBulkDiscountEnabled && item.product.unit === 'kg' && item.quantity >= bulkThresholdKg
+  );
+  const totalCartWeightKg = posCart
+    .filter(item => item.product.unit === 'kg')
+    .reduce((sum, item) => sum + item.quantity, 0);
+
+  const qualifiesForBulkDiscount = isBulkDiscountEnabled && (itemsWithBulkWeight.length > 0 || totalCartWeightKg >= bulkThresholdKg);
+  const effectiveDiscountPct = qualifiesForBulkDiscount ? Math.max(posDiscountPct, bulkDiscountRate) : posDiscountPct;
+  const discountAmount = (cartSubtotal * effectiveDiscountPct) / 100;
   const taxableAmount = cartSubtotal - discountAmount;
   const taxAmount = taxableAmount * 0.0875; // 8.75% local sales tax
   const cartGrandTotal = taxableAmount + taxAmount;
@@ -182,7 +209,9 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
       unit: item.product.unit,
       unitPrice: item.product.retailPricePerUnit,
       costPrice: item.product.costPricePerUnit,
-      lineTotal: parseFloat((item.product.retailPricePerUnit * item.quantity).toFixed(2))
+      lineTotal: parseFloat((item.product.retailPricePerUnit * item.quantity).toFixed(2)),
+      isBulkDiscountApplied: isBulkDiscountEnabled && item.product.unit === 'kg' && item.quantity >= bulkThresholdKg,
+      discountRatePct: effectiveDiscountPct
     }));
 
     const finalCustName = isCreditAccountSale && selectedCreditCustomer 
@@ -208,7 +237,9 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
       grossMargin: cartGrandTotal - cartCostTotal,
       paymentMethod: posPaymentMethod,
       cashierName: 'Anna Vance (Lead Fishmonger)',
-      status: 'Completed'
+      status: 'Completed',
+      bulkDiscountApplied: qualifiesForBulkDiscount,
+      bulkDiscountSavings: qualifiesForBulkDiscount ? discountAmount : 0
     };
 
     onCompleteRetailSale(newSale);
@@ -288,6 +319,19 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
             <Tag className="w-4 h-4" />
             <span>Dual Price Book</span>
           </button>
+
+          <button
+            id="tab-product-ledgers"
+            onClick={() => setActiveChannelTab('product_ledgers')}
+            className={`px-3.5 sm:px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0 ${
+              activeChannelTab === 'product_ledgers'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            <span>Product Ledgers ({products.length})</span>
+          </button>
         </div>
       </div>
 
@@ -351,9 +395,17 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                         {prod.name}
                       </div>
                       <div className="text-[11px] text-slate-500 mt-0.5">{prod.cutType}</div>
-                      <span className="inline-block mt-1 px-2 py-0.5 bg-emerald-50 text-emerald-800 text-[10px] font-bold rounded-md">
-                        {prod.grade}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                        <span className="inline-block px-2 py-0.5 bg-emerald-50 text-emerald-800 text-[10px] font-bold rounded-md">
+                          {prod.grade}
+                        </span>
+                        {prod.unit === 'kg' && isBulkDiscountEnabled && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-200/80 text-[10px] font-bold rounded-md">
+                            <Tag className="w-2.5 h-2.5 text-amber-600" />
+                            &gt;{bulkThresholdKg}kg: {bulkDiscountRate}% OFF
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -366,9 +418,22 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                       </div>
                     </div>
 
-                    <div className="text-right">
-                      <div className="text-[10px] text-slate-400 font-bold uppercase">In Stock</div>
-                      <div className="text-xs font-bold text-slate-700 font-mono-code">{prod.stockKg} kg</div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-right">
+                        <div className="text-[10px] text-slate-400 font-bold uppercase">In Stock</div>
+                        <div className="text-xs font-bold text-slate-700 font-mono-code">{prod.stockKg} kg</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setViewingLedgerProduct(prod);
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors cursor-pointer border border-slate-200/60 hover:border-indigo-200"
+                        title={`Inspect Stock Movement Ledger for ${prod.name}`}
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -400,7 +465,7 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
             </div>
 
             {/* Customer Type / VIP Selector */}
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <label className="block text-[11px] font-bold text-slate-500 uppercase">Customer Name / VIP Club</label>
               <div className="flex gap-2">
                 <input
@@ -411,16 +476,68 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                   className="flex-1 px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium"
                 />
                 <select
-                  value={posDiscountPct}
+                  value={effectiveDiscountPct}
                   onChange={(e) => setPosDiscountPct(Number(e.target.value))}
                   className="px-2.5 py-1.5 text-xs bg-indigo-50 text-indigo-900 border border-indigo-200 rounded-xl font-bold cursor-pointer"
                 >
                   <option value={0}>0% Disc</option>
+                  {qualifiesForBulkDiscount && (
+                    <option value={bulkDiscountRate}>🎉 Bulk &gt;{bulkThresholdKg}kg ({bulkDiscountRate}%)</option>
+                  )}
                   <option value={5}>VIP 5%</option>
                   <option value={10}>VIP 10%</option>
                   <option value={15}>Chef 15%</option>
                 </select>
               </div>
+
+              {/* Volume Discount Notification Banner or Upsell Alert */}
+              {qualifiesForBulkDiscount ? (
+                <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-950 flex items-center justify-between gap-2 animate-in fade-in">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="p-1 bg-emerald-200/80 text-emerald-800 rounded-lg shrink-0">
+                      <Sparkles className="w-3.5 h-3.5" />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="font-bold text-emerald-900 text-[11px] truncate">
+                        🎉 Customer Bulk Discount Active (&gt;{bulkThresholdKg}kg)
+                      </div>
+                      <div className="text-[10px] text-emerald-700">
+                        {effectiveDiscountPct}% volume discount applied (You save {formatCurrency(discountAmount)})
+                      </div>
+                    </div>
+                  </div>
+                  <span className="px-2 py-0.5 bg-emerald-600 text-white font-mono font-bold text-[11px] rounded-md shrink-0">
+                    -{effectiveDiscountPct}%
+                  </span>
+                </div>
+              ) : (
+                posCart.map(item => {
+                  if (isBulkDiscountEnabled && item.product.unit === 'kg' && item.quantity >= 5 && item.quantity < bulkThresholdKg) {
+                    const diff = parseFloat((bulkThresholdKg - item.quantity).toFixed(2));
+                    return (
+                      <div 
+                        key={`upsell-${item.product.id}`}
+                        className="p-2 bg-amber-50/90 border border-amber-200 rounded-xl text-[11px] text-amber-900 flex items-center justify-between gap-1.5 animate-in fade-in"
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Tag className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span className="truncate">
+                            Add <strong>{diff} kg</strong> more of <strong>{item.product.name}</strong> to unlock <strong>{bulkDiscountRate}% customer discount</strong>!
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateCartQty(item.product.id, bulkThresholdKg)}
+                          className="px-2 py-0.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-[10px] shrink-0 cursor-pointer shadow-2xs"
+                        >
+                          +{diff}kg ({bulkDiscountRate}% OFF)
+                        </button>
+                      </div>
+                    );
+                  }
+                  return null;
+                })
+              )}
             </div>
 
             {/* Cart Items List */}
@@ -431,50 +548,67 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                   Cart is empty. Click any seafood item on the left to add.
                 </div>
               ) : (
-                posCart.map(item => (
-                  <div 
-                    key={item.product.id}
-                    className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-2 text-xs"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="font-bold text-slate-900 truncate">{item.product.name}</div>
-                      <div className="text-[11px] text-slate-500">
-                        {formatCurrency(item.product.retailPricePerUnit)}/{item.product.unit}
+                posCart.map(item => {
+                  const isItemBulkQualified = isBulkDiscountEnabled && item.product.unit === 'kg' && item.quantity >= bulkThresholdKg;
+                  const itemRawTotal = item.product.retailPricePerUnit * item.quantity;
+
+                  return (
+                    <div 
+                      key={item.product.id}
+                      className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-2 text-xs ${
+                        isItemBulkQualified ? 'bg-emerald-50/40 border-emerald-200' : 'bg-slate-50 border-slate-200/80'
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-slate-900 truncate">{item.product.name}</span>
+                          {isItemBulkQualified && (
+                            <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold border border-emerald-300 shrink-0 flex items-center gap-0.5">
+                              <Sparkles className="w-2.5 h-2.5 text-emerald-600" />
+                              &gt;{bulkThresholdKg}kg Bulk Rate
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          {formatCurrency(item.product.retailPricePerUnit)}/{item.product.unit}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center bg-white border border-slate-200 rounded-xl p-0.5">
+                          <button
+                            onClick={() => handleUpdateCartQty(item.product.id, parseFloat((item.quantity - (item.product.unit === 'pack' ? 1 : 0.25)).toFixed(2)))}
+                            className="w-6 h-6 flex items-center justify-center text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                          >
+                            <Minus className="w-3 h-3" />
+                          </button>
+                          <span className={`w-14 text-center font-mono-code font-bold text-xs ${
+                            isItemBulkQualified ? 'text-emerald-700' : 'text-slate-900'
+                          }`}>
+                            {item.quantity} {item.product.unit}
+                          </span>
+                          <button
+                            onClick={() => handleUpdateCartQty(item.product.id, parseFloat((item.quantity + (item.product.unit === 'pack' ? 1 : 0.25)).toFixed(2)))}
+                            className="w-6 h-6 flex items-center justify-center text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                          >
+                            <Plus className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        <div className="font-mono-code font-black text-slate-900 w-16 text-right">
+                          {formatCurrency(itemRawTotal)}
+                        </div>
+
+                        <button
+                          onClick={() => handleRemoveFromCart(item.product.id)}
+                          className="text-slate-400 hover:text-rose-600 cursor-pointer p-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center bg-white border border-slate-200 rounded-xl p-0.5">
-                        <button
-                          onClick={() => handleUpdateCartQty(item.product.id, parseFloat((item.quantity - (item.product.unit === 'pack' ? 1 : 0.25)).toFixed(2)))}
-                          className="w-6 h-6 flex items-center justify-center text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <span className="w-12 text-center font-mono-code font-bold text-slate-900 text-xs">
-                          {item.quantity} {item.product.unit}
-                        </span>
-                        <button
-                          onClick={() => handleUpdateCartQty(item.product.id, parseFloat((item.quantity + (item.product.unit === 'pack' ? 1 : 0.25)).toFixed(2)))}
-                          className="w-6 h-6 flex items-center justify-center text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-                      </div>
-
-                      <div className="font-mono-code font-black text-slate-900 w-16 text-right">
-                        {formatCurrency(item.product.retailPricePerUnit * item.quantity)}
-                      </div>
-
-                      <button
-                        onClick={() => handleRemoveFromCart(item.product.id)}
-                        className="text-slate-400 hover:text-rose-600 cursor-pointer p-1"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 
@@ -486,10 +620,19 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                   <span className="font-mono-code text-slate-800 font-bold">{formatCurrency(cartSubtotal)}</span>
                 </div>
 
-                {posDiscountPct > 0 && (
+                {discountAmount > 0 && (
                   <div className="flex justify-between text-indigo-600 font-bold">
-                    <span>VIP Member Discount ({posDiscountPct}%):</span>
-                    <span className="font-mono-code">-{formatCurrency(discountAmount)}</span>
+                    <span className="flex items-center gap-1">
+                      {qualifiesForBulkDiscount ? (
+                        <>
+                          <Sparkles className="w-3 h-3 text-emerald-600" />
+                          <span>Customer Bulk Discount (&gt;{bulkThresholdKg}kg, {effectiveDiscountPct}%):</span>
+                        </>
+                      ) : (
+                        <span>VIP Member Discount ({effectiveDiscountPct}%):</span>
+                      )}
+                    </span>
+                    <span className="font-mono-code text-emerald-700">-{formatCurrency(discountAmount)}</span>
                   </div>
                 )}
 
@@ -1377,6 +1520,14 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                           ) : (
                             <>
                               <button
+                                onClick={() => setViewingLedgerProduct(prod)}
+                                className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-bold text-xs cursor-pointer flex items-center gap-1 border border-indigo-200"
+                                title="Inspect Perpetual Product Stock Movement Ledger"
+                              >
+                                <Layers className="w-3.5 h-3.5" />
+                                <span>Ledger</span>
+                              </button>
+                              <button
                                 onClick={() => {
                                   setEditingPriceId(prod.id);
                                   setEditWholesalePrice(prod.wholesalePricePerUnit.toString());
@@ -1409,6 +1560,20 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
         </div>
       )}
 
+      {/* 4. PRODUCT MOVEMENT & COST LEDGERS VIEW */}
+      {activeChannelTab === 'product_ledgers' && (
+        <ProductLedgerTab
+          products={products}
+          batches={batches}
+          retailSales={retailSales}
+          wholesaleOrders={wholesaleOrders}
+          stockAdjustments={stockAdjustments}
+          purchaseOrders={purchaseOrders}
+          formatCurrency={formatCurrency}
+          useImperial={useImperial}
+        />
+      )}
+
       {/* POS Receipt Modal on successful checkout */}
       {completedReceiptModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -1427,8 +1592,17 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
               {completedReceiptModal.items.map(item => (
                 <div key={item.productId} className="pt-2 flex justify-between">
                   <div>
-                    <div className="font-bold text-slate-900">{item.productName}</div>
-                    <div className="text-[11px] text-slate-400">{item.quantity} {item.unit} @ {formatCurrency(item.unitPrice)}</div>
+                    <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                      <span>{item.productName}</span>
+                      {item.isBulkDiscountApplied && (
+                        <span className="text-[9px] px-1 py-0.2 bg-emerald-100 text-emerald-800 rounded font-bold">
+                          &gt;{bulkThresholdKg}kg Rate
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      {item.quantity} {item.unit} @ {formatCurrency(item.unitPrice)}
+                    </div>
                   </div>
                   <div className="font-mono-code font-bold text-slate-900">{formatCurrency(item.lineTotal)}</div>
                 </div>
@@ -1442,8 +1616,12 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                 <span className="font-mono-code">{formatCurrency(completedReceiptModal.subtotal)}</span>
               </div>
               {completedReceiptModal.discountAmount > 0 && (
-                <div className="flex justify-between text-indigo-600 font-bold">
-                  <span>Discount:</span>
+                <div className="flex justify-between text-emerald-700 font-bold">
+                  <span>
+                    {completedReceiptModal.bulkDiscountApplied
+                      ? `Customer Bulk Discount (>10kg):`
+                      : `Discount:`}
+                  </span>
                   <span className="font-mono-code">-{formatCurrency(completedReceiptModal.discountAmount)}</span>
                 </div>
               )}
@@ -1505,6 +1683,20 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
         }}
         productToEdit={editingProduct}
         inventoryBatches={batches}
+      />
+
+      {/* Product Ledger Modal */}
+      <ProductLedgerModal
+        isOpen={!!viewingLedgerProduct}
+        onClose={() => setViewingLedgerProduct(null)}
+        product={viewingLedgerProduct}
+        products={products}
+        batches={batches}
+        sales={retailSales}
+        orders={wholesaleOrders}
+        stockAdjustments={stockAdjustments}
+        purchaseOrders={purchaseOrders}
+        onSelectProduct={(prod) => setViewingLedgerProduct(prod)}
       />
     </div>
   );

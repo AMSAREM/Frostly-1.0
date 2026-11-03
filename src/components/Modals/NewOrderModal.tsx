@@ -17,13 +17,14 @@ import {
   Building2,
   Info
 } from 'lucide-react';
-import { ClientOrder, OrderLineItem, InventoryBatch, Customer, PaymentTerms } from '../../types';
+import { ClientOrder, OrderLineItem, InventoryBatch, Customer, PaymentTerms, AppSettings } from '../../types';
 import { formatCurrency, formatWeight } from '../../utils/formatters';
 
 interface NewOrderModalProps {
   batches: InventoryBatch[];
   customers?: Customer[];
   preselectedCustomerId?: string | null;
+  settings?: AppSettings;
   onClose: () => void;
   onAddOrder: (order: ClientOrder) => void;
   useImperial: boolean;
@@ -33,6 +34,7 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
   batches,
   customers = [],
   preselectedCustomerId,
+  settings,
   onClose,
   onAddOrder,
   useImperial
@@ -151,11 +153,29 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
     setItems(updated);
   };
 
+  const bulkThresholdKg = settings?.bulkDiscountThresholdKg ?? 10;
+  const bulkDiscountPct = settings?.bulkDiscountPct ?? 10;
+  const isBulkDiscountEnabled = settings?.enableBulkDiscount ?? true;
+
   const handleItemWeightChange = (index: number, weight: number) => {
     const updated = [...items];
     updated[index] = {
       ...updated[index],
       requestedWeightKg: Math.max(0.5, weight)
+    };
+    setItems(updated);
+  };
+
+  const applyBulkDiscountToItem = (index: number) => {
+    const item = items[index];
+    const batch = batches.find(b => b.id === item.lotId);
+    const basePrice = batch ? batch.wholesalePricePerKg : item.pricePerKg;
+    const discounted = parseFloat((basePrice * (1 - bulkDiscountPct / 100)).toFixed(2));
+    const updated = [...items];
+    updated[index] = {
+      ...updated[index],
+      pricePerKg: discounted,
+      notes: (updated[index].notes ? `${updated[index].notes} | ` : '') + `>${bulkThresholdKg}kg Bulk Rate (-${bulkDiscountPct}%)`
     };
     setItems(updated);
   };
@@ -651,9 +671,43 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
                       </button>
                     )}
                   </div>
+
+                  {isBulkDiscountEnabled && item.requestedWeightKg >= bulkThresholdKg && (
+                    <div className="sm:col-span-12 -mt-1 pt-2 border-t border-dashed border-emerald-200 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-emerald-800 font-semibold text-[11px]">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>&gt;{bulkThresholdKg}kg Bulk Volume: Eligible for {bulkDiscountPct}% Customer Discount</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => applyBulkDiscountToItem(idx)}
+                        className="px-2.5 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 rounded-lg font-bold text-[10px] transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                      >
+                        <Sparkles className="w-3 h-3 text-emerald-700" />
+                        <span>Apply {bulkDiscountPct}% Bulk Discount</span>
+                        <span className="font-mono text-emerald-700">({formatCurrency(item.pricePerKg * (1 - bulkDiscountPct / 100))}/kg)</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
+
+            {isBulkDiscountEnabled && items.some(i => i.requestedWeightKg >= bulkThresholdKg) && (
+              <div className="mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-950 flex items-center gap-2.5 animate-in fade-in">
+                <div className="p-1.5 bg-emerald-200/80 text-emerald-800 rounded-xl">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="font-bold text-emerald-900">
+                    🎉 Customer Volume Discount Active (&gt;{bulkThresholdKg}kg)
+                  </div>
+                  <div className="text-[11px] text-emerald-700">
+                    Product purchases above {bulkThresholdKg}kg qualify for commercial volume discounts.
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Packaging & Special Logistics */}
