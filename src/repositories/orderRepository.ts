@@ -45,6 +45,7 @@ export class OrderRepository extends BaseRepository<ClientOrder, DatabaseOrderRo
 
   public async saveOrderWithItems(order: ClientOrder): Promise<ClientOrder> {
     const saved = await this.save(order);
+    const orgId = await this.getOrganizationId();
     
     // Also attempt saving line items if online
     const canQuery = await this.canAccessSupabase();
@@ -52,6 +53,7 @@ export class OrderRepository extends BaseRepository<ClientOrder, DatabaseOrderRo
       try {
         const itemsPayload = order.items.map(item => ({
           order_id: order.id,
+          organization_id: orgId || undefined,
           species_id: item.speciesId,
           species_name: item.speciesName,
           grade: item.grade,
@@ -61,7 +63,11 @@ export class OrderRepository extends BaseRepository<ClientOrder, DatabaseOrderRo
           price_per_kg: item.pricePerKg,
           notes: item.notes || null,
         }));
-        await supabase.from('order_line_items').delete().eq('order_id', order.id);
+        let deleteQuery = supabase.from('order_line_items').delete().eq('order_id', order.id);
+        if (orgId) {
+          deleteQuery = deleteQuery.eq('organization_id', orgId);
+        }
+        await deleteQuery;
         await supabase.from('order_line_items').insert(itemsPayload);
       } catch (err) {
         console.warn('[OrderRepository] line items sync note:', err);

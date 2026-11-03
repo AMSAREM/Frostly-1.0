@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Header, ActiveTab } from './components/Header';
 import { DashboardView } from './components/DashboardView';
+import { OrdersView } from './components/OrdersView';
 import { RetailWholesaleView } from './components/RetailWholesaleView';
 import { CustomersView } from './components/CustomersView';
 import { SuppliersView } from './components/SuppliersView';
@@ -14,6 +15,9 @@ import { CatchWeightWeigherModal } from './components/Modals/CatchWeightWeigherM
 import { InvoiceModal } from './components/Modals/InvoiceModal';
 import { NewBatchModal } from './components/Modals/NewBatchModal';
 import { NewOrderModal } from './components/Modals/NewOrderModal';
+import { EditOrderModal } from './components/Modals/EditOrderModal';
+import { EditQuoteModal } from './components/Modals/EditQuoteModal';
+import { DeleteOrderModal } from './components/Modals/DeleteOrderModal';
 import { TenantOnboardingScreen } from './components/TenantOnboardingScreen';
 
 import { PWAInstallModal } from './components/PWAInstallModal';
@@ -51,6 +55,8 @@ import {
   FinancialLedgerEntry,
   SystemNotification,
   OrderStatus,
+  OrderLineItem,
+  PaymentStatus,
   AppSettings,
   DEFAULT_SETTINGS,
   StorageZone,
@@ -279,6 +285,9 @@ export default function App() {
   const [passportBatch, setPassportBatch] = useState<InventoryBatch | null>(null);
   const [weigherOrder, setWeigherOrder] = useState<ClientOrder | null>(null);
   const [invoiceOrder, setInvoiceOrder] = useState<ClientOrder | null>(null);
+  const [editingOrder, setEditingOrder] = useState<ClientOrder | null>(null);
+  const [editingQuoteOrder, setEditingQuoteOrder] = useState<ClientOrder | null>(null);
+  const [deletingOrder, setDeletingOrder] = useState<ClientOrder | null>(null);
   const [isNewBatchModalOpen, setIsNewBatchModalOpen] = useState(false);
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState(false);
@@ -960,7 +969,10 @@ export default function App() {
     }));
 
     // If marked Paid and previously had a pending credit balance, adjust customer's balance
-    if (status === 'Paid' && orderToUpdate && orderToUpdate.paymentStatus !== 'Paid') {
+    const isNowPaid = status === 'Paid' || status === 'Paid in Full';
+    const wasPaid = orderToUpdate?.paymentStatus === 'Paid' || orderToUpdate?.paymentStatus === 'Paid in Full';
+
+    if (isNowPaid && orderToUpdate && !wasPaid) {
       const orderAmount = orderToUpdate.adjustedTotalUSD || orderToUpdate.quotedTotalUSD;
       const targetClientId = orderToUpdate.customerId;
       const targetClientName = orderToUpdate.clientName;
@@ -998,6 +1010,69 @@ export default function App() {
       message: `Account status updated to ${status}.`,
       urgency: 'low'
     });
+  };
+
+  // Order Modification / Edit Handler
+  const handleSaveOrder = async (updatedOrder: ClientOrder) => {
+    setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
+    try {
+      await orderRepository.saveOrderWithItems(updatedOrder);
+      addNotification({
+        type: 'order_update',
+        title: `Order ${updatedOrder.id} Updated`,
+        message: `Order specifications and quote updated for ${updatedOrder.clientName}.`,
+        urgency: 'low'
+      });
+    } catch (err: any) {
+      console.warn('[App] orderRepository saveOrder error:', err);
+    }
+  };
+
+  // Estimated Quote Editing Handler (with real-time recalculation)
+  const handleSaveQuote = async (orderId: string, updatedItems: OrderLineItem[], newQuotedTotal: number) => {
+    let targetOrder: ClientOrder | undefined;
+    setOrders(prev => prev.map(o => {
+      if (o.id !== orderId) return o;
+      const isWeighed = o.items.some(i => i.actualWeighedKg !== null && i.actualWeighedKg !== undefined);
+      const updated: ClientOrder = {
+        ...o,
+        items: updatedItems,
+        quotedTotalUSD: newQuotedTotal,
+        adjustedTotalUSD: isWeighed ? o.adjustedTotalUSD : newQuotedTotal
+      };
+      targetOrder = updated;
+      return updated;
+    }));
+
+    if (targetOrder) {
+      try {
+        await orderRepository.saveOrderWithItems(targetOrder);
+        addNotification({
+          type: 'order_update',
+          title: `Estimated Quote Updated: ${orderId}`,
+          message: `Quoted total recalculated to ${formatAppCurrency(newQuotedTotal)}.`,
+          urgency: 'low'
+        });
+      } catch (err) {
+        console.warn('[App] Error saving updated quote:', err);
+      }
+    }
+  };
+
+  // Order Deletion Handler
+  const handleDeleteOrder = async (orderId: string) => {
+    setOrders(prev => prev.filter(o => o.id !== orderId));
+    try {
+      await orderRepository.delete(orderId);
+      addNotification({
+        type: 'order_update',
+        title: `Order Deleted`,
+        message: `Order ${orderId} has been successfully deleted.`,
+        urgency: 'low'
+      });
+    } catch (err) {
+      console.warn('[App] Error deleting order:', err);
+    }
   };
 
   // Customer Management Handlers
@@ -1845,6 +1920,27 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'orders' && (
+          <OrdersView
+            orders={orders}
+            batches={batches}
+            customers={customers}
+            onOpenNewOrder={() => setIsNewOrderModalOpen(true)}
+            onOpenWeigher={(o) => setWeigherOrder(o)}
+            onOpenInvoice={(o) => setInvoiceOrder(o)}
+            onAdvanceOrderStatus={handleAdvanceOrderStatus}
+            onEditOrder={(o) => setEditingOrder(o)}
+            onEditQuote={(o) => setEditingQuoteOrder(o)}
+            onDeleteOrder={(o) => setDeletingOrder(o)}
+            onUpdatePaymentStatus={handleUpdatePaymentStatus}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            useImperial={useImperial}
+            companyName={companyName}
+            formatCurrency={formatAppCurrency}
+          />
+        )}
+
         {activeTab === 'retail_wholesale' && (
           <RetailWholesaleView
             products={products}
@@ -1856,11 +1952,16 @@ export default function App() {
             onOpenNewWholesaleOrder={() => setIsNewOrderModalOpen(true)}
             onOpenWeigher={(o) => setWeigherOrder(o)}
             onOpenInvoice={(o) => setInvoiceOrder(o)}
+            onEditOrder={(o) => setEditingOrder(o)}
+            onEditQuote={(o) => setEditingQuoteOrder(o)}
+            onDeleteOrder={(o) => setDeletingOrder(o)}
+            onUpdatePaymentStatus={handleUpdatePaymentStatus}
             onUpdateProductPricing={handleUpdateProductPricing}
             onSaveProduct={handleSaveProduct}
             onDeleteProduct={handleDeleteProduct}
             onNavigateToInventory={() => setActiveTab('inventory')}
             formatCurrency={formatAppCurrency}
+            useImperial={useImperial}
           />
         )}
 
@@ -2012,10 +2113,40 @@ export default function App() {
         <InvoiceModal
           order={invoiceOrder}
           customers={customers}
+          companyName={companyName}
           onClose={() => setInvoiceOrder(null)}
           useImperial={useImperial}
           onUpdatePaymentStatus={handleUpdatePaymentStatus}
           onRecordPayment={handleRecordPayment}
+        />
+      )}
+
+      {editingOrder && (
+        <EditOrderModal
+          order={editingOrder}
+          batches={batches}
+          customers={customers}
+          onClose={() => setEditingOrder(null)}
+          onSaveOrder={handleSaveOrder}
+          useImperial={useImperial}
+        />
+      )}
+
+      {editingQuoteOrder && (
+        <EditQuoteModal
+          order={editingQuoteOrder}
+          batches={batches}
+          onClose={() => setEditingQuoteOrder(null)}
+          onSaveQuote={handleSaveQuote}
+          useImperial={useImperial}
+        />
+      )}
+
+      {deletingOrder && (
+        <DeleteOrderModal
+          order={deletingOrder}
+          onClose={() => setDeletingOrder(null)}
+          onConfirmDelete={handleDeleteOrder}
         />
       )}
 

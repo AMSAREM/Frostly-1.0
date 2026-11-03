@@ -26,7 +26,10 @@ import {
   ShieldAlert,
   Clock,
   AlertTriangle,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Calculator,
+  FileText,
+  Check
 } from 'lucide-react';
 import { 
   RetailWholesaleProduct, 
@@ -49,11 +52,16 @@ interface RetailWholesaleViewProps {
   onOpenNewWholesaleOrder: () => void;
   onOpenWeigher: (order: ClientOrder) => void;
   onOpenInvoice: (order: ClientOrder) => void;
+  onEditOrder?: (order: ClientOrder) => void;
+  onEditQuote?: (order: ClientOrder) => void;
+  onDeleteOrder?: (order: ClientOrder) => void;
+  onUpdatePaymentStatus?: (orderId: string, status: ClientOrder['paymentStatus']) => void;
   onUpdateProductPricing: (productId: string, wholesalePrice: number, retailPrice: number) => void;
   onSaveProduct?: (product: RetailWholesaleProduct) => Promise<void> | void;
   onDeleteProduct?: (productId: string) => Promise<void> | void;
   onNavigateToInventory?: () => void;
   formatCurrency: (amount: number) => string;
+  useImperial?: boolean;
 }
 
 export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
@@ -66,11 +74,16 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   onOpenNewWholesaleOrder,
   onOpenWeigher,
   onOpenInvoice,
+  onEditOrder,
+  onEditQuote,
+  onDeleteOrder,
+  onUpdatePaymentStatus,
   onUpdateProductPricing,
   onSaveProduct,
   onDeleteProduct,
   onNavigateToInventory,
-  formatCurrency
+  formatCurrency,
+  useImperial = false
 }) => {
   const [activeChannelTab, setActiveChannelTab] = useState<'retail_pos' | 'wholesale_orders' | 'price_matrix'>('retail_pos');
   
@@ -839,21 +852,55 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 pt-1">
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <button
+                          onClick={() => onOpenInvoice(order)}
+                          className="flex-1 py-1.5 px-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold text-center cursor-pointer flex items-center justify-center gap-1"
+                        >
+                          <FileText className="w-3.5 h-3.5 text-indigo-300" />
+                          <span>Invoice</span>
+                        </button>
+
+                        {onEditOrder && (
+                          <button
+                            onClick={() => onEditOrder(order)}
+                            className="py-1.5 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1"
+                            title="Edit Order"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                            <span>Edit</span>
+                          </button>
+                        )}
+
+                        {onEditQuote && (
+                          <button
+                            onClick={() => onEditQuote(order)}
+                            className="py-1.5 px-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold cursor-pointer flex items-center gap-1"
+                            title="Edit Estimated Quote"
+                          >
+                            <Calculator className="w-3.5 h-3.5" />
+                            <span>Quote</span>
+                          </button>
+                        )}
+
                         {order.status === 'Weighing & Grading' && (
                           <button
                             onClick={() => onOpenWeigher(order)}
-                            className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold text-center cursor-pointer"
+                            className="py-1.5 px-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold cursor-pointer"
                           >
-                            Weigh Scale
+                            Weigh
                           </button>
                         )}
-                        <button
-                          onClick={() => onOpenInvoice(order)}
-                          className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold text-center cursor-pointer"
-                        >
-                          Invoice & Pay
-                        </button>
+
+                        {onDeleteOrder && (
+                          <button
+                            onClick={() => onDeleteOrder(order)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors"
+                            title="Delete Order"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -941,21 +988,57 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                             </span>
                           </td>
 
-                          <td className="py-4 px-4 text-right space-x-2">
-                            {order.status === 'Weighing & Grading' && (
+                          <td className="py-4 px-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
                               <button
-                                onClick={() => onOpenWeigher(order)}
-                                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                                onClick={() => onOpenInvoice(order)}
+                                className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold cursor-pointer flex items-center gap-1 shadow-2xs"
+                                title="View / Print Invoice"
                               >
-                                Weigh Scale
+                                <FileText className="w-3.5 h-3.5 text-indigo-300" />
+                                <span>Invoice</span>
                               </button>
-                            )}
-                            <button
-                              onClick={() => onOpenInvoice(order)}
-                              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold cursor-pointer"
-                            >
-                              Invoice & Pay
-                            </button>
+
+                              {onEditOrder && (
+                                <button
+                                  onClick={() => onEditOrder(order)}
+                                  className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+                                  title="Edit Order"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+
+                              {onEditQuote && (
+                                <button
+                                  onClick={() => onEditQuote(order)}
+                                  className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold cursor-pointer transition-colors"
+                                  title="Edit Estimated Quote"
+                                >
+                                  <Calculator className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+
+                              {order.status === 'Weighing & Grading' && (
+                                <button
+                                  onClick={() => onOpenWeigher(order)}
+                                  className="p-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold cursor-pointer"
+                                  title="Weigh Dock Catch on Scale"
+                                >
+                                  <Scale className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+
+                              {onDeleteOrder && (
+                                <button
+                                  onClick={() => onDeleteOrder(order)}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors"
+                                  title="Delete Order"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );

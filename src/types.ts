@@ -106,11 +106,13 @@ export interface ClientOrder {
   paymentDueDate?: string;
   creditAuthorizedBy?: string;
   creditOverrideNote?: string;
-  paymentStatus: 'Paid' | 'Pending Net-30' | 'Pending Net-15' | 'Pending Net-60' | 'Invoiced' | 'Overdue';
+  paymentStatus: PaymentStatus;
   packagingRequirement: 'Dry Ice & Insulated Wax Carton' | 'Slush Ice Gel Packed' | 'Live Oxygenated Tank Container' | 'Standard Cryo-Box';
   specialInstructions?: string;
   packingSlipGenerated: boolean;
 }
+
+export type PaymentStatus = 'Paid' | 'Paid in Full' | 'Pending Net-30' | 'Pending Net-15' | 'Pending Net-60' | 'Invoiced' | 'Overdue';
 
 export interface ReeferSensorData {
   timestamp: string;

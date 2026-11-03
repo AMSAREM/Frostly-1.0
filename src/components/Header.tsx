@@ -23,13 +23,14 @@ import {
   KeyRound,
   RefreshCw,
   LogOut,
-  Building2
+  Building2,
+  FileText
 } from 'lucide-react';
 import { SystemNotification } from '../types';
 import { syncManager, SyncState } from '../sync/syncManager';
 import { FrostlyLogo } from './FrostlyLogo';
 
-export type ActiveTab = 'dashboard' | 'retail_wholesale' | 'customers' | 'suppliers' | 'financials' | 'inventory' | 'settings' | 'platform';
+export type ActiveTab = 'dashboard' | 'orders' | 'retail_wholesale' | 'customers' | 'suppliers' | 'financials' | 'inventory' | 'settings' | 'platform';
 
 interface HeaderProps {
   activeTab: ActiveTab;
@@ -153,6 +154,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   const navItems: { id: ActiveTab; label: string; shortLabel?: string; icon: React.ReactNode }[] = [
     { id: 'dashboard', label: 'Overview', shortLabel: 'Overview', icon: <Anchor className="w-4 h-4 shrink-0" /> },
+    { id: 'orders', label: 'Orders & Invoices', shortLabel: 'Orders', icon: <FileText className="w-4 h-4 shrink-0" /> },
     { id: 'retail_wholesale', label: 'Retail & Wholesale', shortLabel: 'Sales & POS', icon: <ShoppingBag className="w-4 h-4 shrink-0" /> },
     { id: 'customers', label: 'Customers', shortLabel: 'Customers', icon: <Users className="w-4 h-4 shrink-0" /> },
     { id: 'suppliers', label: 'Suppliers & POs', shortLabel: 'Suppliers', icon: <Ship className="w-4 h-4 shrink-0" /> },

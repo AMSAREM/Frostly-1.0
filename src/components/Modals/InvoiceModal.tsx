@@ -21,6 +21,7 @@ import { formatCurrency, formatWeight } from '../../utils/formatters';
 interface InvoiceModalProps {
   order: ClientOrder | null;
   customers?: Customer[];
+  companyName?: string;
   onClose: () => void;
   useImperial: boolean;
   onUpdatePaymentStatus: (orderId: string, status: ClientOrder['paymentStatus']) => void;
@@ -30,6 +31,7 @@ interface InvoiceModalProps {
 interface InvoiceModalContentProps {
   order: ClientOrder;
   customers?: Customer[];
+  companyName?: string;
   onClose: () => void;
   useImperial: boolean;
   onUpdatePaymentStatus: (orderId: string, status: ClientOrder['paymentStatus']) => void;
@@ -39,6 +41,7 @@ interface InvoiceModalContentProps {
 const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
   order,
   customers = [],
+  companyName,
   onClose,
   useImperial,
   onUpdatePaymentStatus,
@@ -58,9 +61,10 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
   };
 
   const totalDue = order.adjustedTotalUSD || order.quotedTotalUSD;
+  const isPaid = order.paymentStatus === 'Paid' || order.paymentStatus === 'Paid in Full';
 
   const handleCopySummary = () => {
-    const text = `FROSTLY SEAFOOD CATCH-WEIGHT INVOICE\nOrder ID: ${order.id}\nClient: ${order.clientName}\nDestination: ${order.deliveryAddress}\nTotal Amount Due: ${formatCurrency(totalDue)}\nStatus: ${order.paymentStatus}\nTerms: ${order.paymentTerms || matchedCustomer?.paymentTerms || 'Net-30'}`;
+    const text = `${companyName || 'AMANS OCEAN SEAFOODS'} INVOICE\nOrder ID: ${order.id}\nClient: ${order.clientName}\nDestination: ${order.deliveryAddress}\nTotal Amount Due: ${formatCurrency(totalDue)}\nStatus: ${order.paymentStatus}\nTerms: ${order.paymentTerms || matchedCustomer?.paymentTerms || 'Net-30'}`;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -69,15 +73,19 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
   const handleSettlePayment = () => {
     if (onRecordPayment && matchedCustomer) {
       onRecordPayment('AR', matchedCustomer.id, totalDue, order.id);
-    } else {
-      onUpdatePaymentStatus(order.id, 'Paid');
     }
+    onUpdatePaymentStatus(order.id, 'Paid in Full');
+  };
+
+  const handleMarkAsUnpaid = () => {
+    onUpdatePaymentStatus(order.id, 'Invoiced');
   };
 
   const subtotal = order.adjustedTotalUSD || order.quotedTotalUSD;
   const isCreditSale = order.saleType === 'Credit Sale (On Account)' || order.paymentStatus.startsWith('Pending');
   const terms = order.paymentTerms || matchedCustomer?.paymentTerms || 'Net-30';
-  const dueDate = order.paymentDueDate || 'Net terms apply';
+  const dueDate = order.paymentDueDate || order.requiredDeliveryDate || 'Net terms apply';
+  const activeCompanyName = companyName || 'Amans Ocean Seafoods and Coldstore';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto print:p-0 print:bg-white">
@@ -85,14 +93,16 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
         {/* Actions Bar (hidden on print) */}
         <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between print:hidden">
           <div className="flex items-center gap-2 text-xs">
-            <span className="font-mono-code font-bold text-indigo-400">INVOICE PREVIEW</span>
+            <span className="font-mono-code font-bold text-indigo-400">COMMERCIAL INVOICE</span>
             <span className="text-slate-400">•</span>
             <span className="text-slate-300 font-mono-code">{order.id}</span>
-            {isCreditSale && (
-              <span className="px-2 py-0.5 rounded-full bg-indigo-500/30 border border-indigo-400/40 text-indigo-200 text-[10px] font-bold">
-                Credit Facility: {terms}
-              </span>
-            )}
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+              isPaid
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30'
+                : 'bg-amber-500/20 text-amber-300 border border-amber-400/30'
+            }`}>
+              {isPaid ? 'PAID' : 'UNPAID'}
+            </span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -125,17 +135,19 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
           <div className="flex flex-col sm:flex-row justify-between items-start gap-4 pb-6 border-b-2 border-slate-900">
             <div>
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black">
-                  <ThermometerSnowflake className="w-4 h-4" />
+                <div className="w-9 h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black">
+                  <ThermometerSnowflake className="w-5 h-5 text-indigo-400" />
                 </div>
-                <h1 className="font-heading font-extrabold text-2xl tracking-tight text-slate-900">
-                  Frostly Logistics Inc.
-                </h1>
+                <div>
+                  <h1 className="font-heading font-extrabold text-2xl tracking-tight text-slate-900">
+                    {activeCompanyName}
+                  </h1>
+                </div>
               </div>
-              <p className="text-xs text-slate-500 mt-1">
-                Deep-Sea Catch Intake & Super-Cryo Cold Chain Hub<br />
-                Pier 38 Seafood Terminal, San Francisco, CA 94107<br />
-                FDA Reg #19948210 • USDC Quality Verified
+              <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                Wholesale Cold Storage, Seafood Processing & Logistics Hub<br />
+                Abrepo, Barekese Rd, Kumasi, Ashanti Region, Ghana<br />
+                Tel: +233 55 118 7045 • FDA / Fisheries Commission Registered
               </p>
             </div>
 
@@ -144,7 +156,7 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
                 INVOICE #{order.id}
               </div>
               <div className="text-xs text-slate-500">
-                Issued: {order.orderDate}
+                Issued Date: {order.orderDate}
               </div>
               <div className="text-xs text-slate-500">
                 Required Delivery: <strong className="text-slate-800">{order.requiredDeliveryDate}</strong>
@@ -155,9 +167,20 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
                   <span>Payment Due: {order.paymentDueDate}</span>
                 </div>
               )}
-              <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">
-                <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
-                HACCP Monitored Dispatch
+              
+              {/* PAID OR UNPAID BADGE BANNER */}
+              <div className="pt-1">
+                {isPaid ? (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    <Check className="w-4 h-4 text-emerald-600" />
+                    <span>PAID IN FULL</span>
+                  </div>
+                ) : (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-300">
+                    <AlertCircle className="w-4 h-4 text-amber-600" />
+                    <span>UNPAID • PAYMENT DUE</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -277,19 +300,27 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
               <div className="pt-2 flex flex-wrap items-center gap-2.5">
                 <span className="text-slate-600 font-semibold">Payment Status:</span>
                 <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                  order.paymentStatus === 'Paid' 
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : 'bg-amber-100 text-amber-800'
+                  isPaid 
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                    : 'bg-amber-100 text-amber-800 border border-amber-200'
                 }`}>
                   {order.paymentStatus}
                 </span>
 
-                {order.paymentStatus !== 'Paid' && (
+                {!isPaid ? (
                   <button
                     onClick={handleSettlePayment}
-                    className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer shadow-xs"
+                    className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer shadow-xs flex items-center gap-1"
                   >
-                    Record Payment Received ({formatCurrency(totalDue)})
+                    <Check className="w-3 h-3" />
+                    <span>Mark as Paid ({formatCurrency(totalDue)})</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleMarkAsUnpaid}
+                    className="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] transition-colors cursor-pointer border border-slate-300"
+                  >
+                    Mark as Unpaid / Pending
                   </button>
                 )}
               </div>
