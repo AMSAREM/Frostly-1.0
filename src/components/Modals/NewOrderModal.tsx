@@ -15,10 +15,20 @@ import {
   UserCheck,
   ShieldAlert,
   Building2,
-  Info
+  Info,
+  Clock,
+  TrendingUp,
+  TrendingDown,
+  ShieldCheck
 } from 'lucide-react';
 import { ClientOrder, OrderLineItem, InventoryBatch, Customer, PaymentTerms, AppSettings } from '../../types';
 import { formatCurrency, formatWeight } from '../../utils/formatters';
+import { 
+  evaluateMarginHealth, 
+  calculateDynamicWholesalePrice, 
+  calculateGrossMarginPct, 
+  formatQuoteExpiry 
+} from '../../utils/pricingEngine';
 
 interface NewOrderModalProps {
   batches: InventoryBatch[];
@@ -166,6 +176,21 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
     setItems(updated);
   };
 
+  const handleItemPriceChange = (index: number, price: number) => {
+    const updated = [...items];
+    updated[index] = {
+      ...updated[index],
+      pricePerKg: Math.max(0, price)
+    };
+    setItems(updated);
+  };
+
+  const handleApplyTargetMargin = (index: number, batchCost: number) => {
+    const targetMargin = settings?.targetMarginPct ?? 30;
+    const suggested = calculateDynamicWholesalePrice(batchCost, targetMargin);
+    handleItemPriceChange(index, suggested);
+  };
+
   const applyBulkDiscountToItem = (index: number) => {
     const item = items[index];
     const batch = batches.find(b => b.id === item.lotId);
@@ -181,6 +206,28 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
   };
 
   const totalQuoted = items.reduce((sum, item) => sum + item.requestedWeightKg * item.pricePerKg, 0);
+
+  const totalCost = items.reduce((sum, item) => {
+    const batch = batches.find(b => b.id === item.lotId);
+    const unitCost = batch?.costPerKg ?? 0;
+    return sum + (item.requestedWeightKg * unitCost);
+  }, 0);
+
+  const overallGrossMarginPct = totalQuoted > 0 
+    ? parseFloat((((totalQuoted - totalCost) / totalQuoted) * 100).toFixed(1))
+    : 0;
+
+  const minFloorPct = settings?.minimumMarginFloorPct ?? 18;
+  const targetMarginPct = settings?.targetMarginPct ?? 30;
+  const quoteValidityHours = settings?.quoteValidityHours ?? 48;
+  const enableAlerts = settings?.enableMarginProtectionAlerts ?? true;
+
+  const hasItemsBelowFloor = items.some(item => {
+    const batch = batches.find(b => b.id === item.lotId);
+    if (!batch || batch.costPerKg <= 0) return false;
+    const margin = calculateGrossMarginPct(batch.costPerKg, item.pricePerKg);
+    return margin < minFloorPct;
+  });
 
   // Credit Calculations
   const creditLimit = selectedCustomer?.creditLimitUSD || 0;
@@ -671,81 +718,154 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
             </div>
 
             <div className="space-y-3">
-              {items.map((item, idx) => (
-                <div key={item.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
-                  <div className="sm:col-span-6">
-                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                      Select Inventory Lot
-                    </label>
-                    <select
-                      value={item.lotId}
-                      onChange={(e) => handleItemLotChange(idx, e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-semibold text-slate-900"
-                    >
-                      {batches.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.speciesName} ({b.grade}) — {b.id} [{formatWeight(b.availableWeightKg, useImperial)} avail]
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+              {items.map((item, idx) => {
+                const batch = batches.find(b => b.id === item.lotId);
+                const batchCost = batch?.costPerKg ?? 0;
+                const marginEval = evaluateMarginHealth(
+                  batchCost, 
+                  item.pricePerKg, 
+                  minFloorPct, 
+                  targetMarginPct
+                );
 
-                  <div className="sm:col-span-3">
-                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                      Target Weight ({useImperial ? 'lbs' : 'kg'})
-                    </label>
-                    <input
-                      type="number"
-                      min={0.5}
-                      step={0.5}
-                      value={item.requestedWeightKg}
-                      onChange={(e) => handleItemWeightChange(idx, parseFloat(e.target.value) || 0)}
-                      className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-bold text-slate-900 font-mono-code"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                      Est. Quoted
-                    </label>
-                    <div className="p-2 bg-white rounded-xl border border-slate-200 text-xs font-bold text-indigo-700 font-mono-code">
-                      {formatCurrency(item.requestedWeightKg * item.pricePerKg)}
-                    </div>
-                  </div>
-
-                  <div className="sm:col-span-1 flex justify-end">
-                    {items.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveItem(idx)}
-                        className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
-                        title="Remove line item"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-
-                  {isBulkDiscountEnabled && item.requestedWeightKg >= bulkThresholdKg && (
-                    <div className="sm:col-span-12 -mt-1 pt-2 border-t border-dashed border-emerald-200 flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5 text-emerald-800 font-semibold text-[11px]">
-                        <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                        <span>&gt;{bulkThresholdKg}kg Bulk Volume: Eligible for {bulkDiscountPct}% Customer Discount</span>
+                return (
+                  <div key={item.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+                      <div className="sm:col-span-5">
+                        <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                          Select Inventory Lot
+                        </label>
+                        <select
+                          value={item.lotId}
+                          onChange={(e) => handleItemLotChange(idx, e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-semibold text-slate-900"
+                        >
+                          {batches.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.speciesName} ({b.grade}) — {b.id} [{formatWeight(b.availableWeightKg, useImperial)} avail]
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => applyBulkDiscountToItem(idx)}
-                        className="px-2.5 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 rounded-lg font-bold text-[10px] transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
-                      >
-                        <Sparkles className="w-3 h-3 text-emerald-700" />
-                        <span>Apply {bulkDiscountPct}% Bulk Discount</span>
-                        <span className="font-mono text-emerald-700">({formatCurrency(item.pricePerKg * (1 - bulkDiscountPct / 100))}/kg)</span>
-                      </button>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                          Weight ({useImperial ? 'lbs' : 'kg'})
+                        </label>
+                        <input
+                          type="number"
+                          min={0.5}
+                          step={0.5}
+                          value={item.requestedWeightKg}
+                          onChange={(e) => handleItemWeightChange(idx, parseFloat(e.target.value) || 0)}
+                          className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-bold text-slate-900 font-mono-code"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                          Unit Rate ($/{useImperial ? 'lb' : 'kg'})
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.1}
+                          value={item.pricePerKg}
+                          onChange={(e) => handleItemPriceChange(idx, parseFloat(e.target.value) || 0)}
+                          className={`w-full bg-white border rounded-xl p-2 text-xs font-bold font-mono-code ${
+                            marginEval.isBelowFloor ? 'border-amber-400 text-amber-900' : 'border-slate-200 text-slate-900'
+                          }`}
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                          Est. Quoted
+                        </label>
+                        <div className="p-2 bg-white rounded-xl border border-slate-200 text-xs font-bold text-indigo-700 font-mono-code">
+                          {formatCurrency(item.requestedWeightKg * item.pricePerKg)}
+                        </div>
+                      </div>
+
+                      <div className="sm:col-span-1 flex justify-end">
+                        {items.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveItem(idx)}
+                            className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                            title="Remove line item"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  )}
-                </div>
-              ))}
+
+                    {/* Dynamic Margin Protection Bar for this item */}
+                    <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-slate-500">
+                          Batch Landed Cost: <strong className="font-mono text-slate-700">{formatCurrency(batchCost)}/kg</strong>
+                        </span>
+                        <span className="text-slate-300">•</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-slate-500">Margin:</span>
+                          <span className={`px-2 py-0.5 rounded-md font-mono text-[11px] font-bold ${
+                            marginEval.status === 'healthy' 
+                              ? 'bg-emerald-100 text-emerald-800' 
+                              : marginEval.status === 'warning' 
+                                ? 'bg-amber-100 text-amber-900 flex items-center gap-1' 
+                                : 'bg-rose-100 text-rose-900 flex items-center gap-1'
+                          }`}>
+                            {marginEval.status !== 'healthy' && <AlertTriangle className="w-3 h-3 text-amber-700 shrink-0" />}
+                            {marginEval.grossMarginPct > 0 ? `${marginEval.grossMarginPct}%` : 'Negative / Loss'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {marginEval.isBelowFloor && (
+                          <button
+                            type="button"
+                            onClick={() => handleApplyTargetMargin(idx, batchCost)}
+                            className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-bold text-[11px] transition-colors cursor-pointer flex items-center gap-1"
+                            title={`Reset selling rate to target ${targetMarginPct}% gross margin`}
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Apply Target {targetMarginPct}% ({formatCurrency(marginEval.suggestedPrice)}/kg)</span>
+                          </button>
+                        )}
+
+                        {isBulkDiscountEnabled && item.requestedWeightKg >= bulkThresholdKg && (
+                          <button
+                            type="button"
+                            onClick={() => applyBulkDiscountToItem(idx)}
+                            className="px-2.5 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 rounded-lg font-bold text-[10px] transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                          >
+                            <Sparkles className="w-3 h-3 text-emerald-700" />
+                            <span>Apply {bulkDiscountPct}% Bulk Discount</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
+
+            {hasItemsBelowFloor && enableAlerts && (
+              <div className="mt-3 p-3 bg-amber-50 border border-amber-300 rounded-2xl text-xs text-amber-950 flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold text-amber-900">
+                    ⚠️ Price Fluctuation & Margin Safeguard Alert
+                  </div>
+                  <div className="text-[11px] text-amber-800">
+                    One or more quoted species are priced below your minimum profit margin floor ({minFloorPct}%). You can use "Apply Target Rate" to automatically recalibrate selling rates against current landed batch costs.
+                  </div>
+                </div>
+              </div>
+            )}
 
             {isBulkDiscountEnabled && items.some(i => i.requestedWeightKg >= bulkThresholdKg) && (
               <div className="mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-950 flex items-center gap-2.5 animate-in fade-in">
@@ -794,7 +914,7 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
 
           {/* Total Quoted & Credit Order Summary Banner */}
           <div className="p-4 rounded-2xl bg-indigo-50/80 border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="space-y-0.5 text-xs text-indigo-950">
+            <div className="space-y-1.5 text-xs text-indigo-950">
               <div className="font-bold flex items-center gap-1.5">
                 <CreditCard className="w-4 h-4 text-indigo-600" />
                 <span>
@@ -803,9 +923,21 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
                     : 'Immediate Settlement / Cash on Delivery'}
                 </span>
               </div>
-              <p className="text-[11px] text-indigo-700">
-                Final commercial invoice will reflect certified scale catch-weight upon dispatch.
-              </p>
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-indigo-800">
+                <span className="flex items-center gap-1 font-semibold">
+                  <TrendingUp className="w-3.5 h-3.5 text-indigo-600" />
+                  Order Margin: 
+                  <strong className={`font-mono ${overallGrossMarginPct >= minFloorPct ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    {overallGrossMarginPct}%
+                  </strong>
+                  <span className="text-indigo-500">(Target: {targetMarginPct}%)</span>
+                </span>
+                <span className="text-indigo-300">•</span>
+                <span className="flex items-center gap-1 text-slate-600">
+                  <Clock className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Spot Validity: {quoteValidityHours}h (Expires {formatQuoteExpiry(quoteValidityHours)})</span>
+                </span>
+              </div>
             </div>
             <div className="text-right">
               <div className="text-[10px] uppercase font-bold text-indigo-700">Total Order Quoted</div>

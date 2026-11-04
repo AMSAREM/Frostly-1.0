@@ -140,21 +140,82 @@ export class BaseRepository<TDomain, TDatabaseRow> {
 
   /**
    * Strips bloated base64 data URLs from objects before saving to localStorage
-   * to prevent QuotaExceededError while retaining all business data.
+   * to prevent QuotaExceededError while retaining all essential business data.
    */
   private sanitizeForCache(items: TDomain[]): TDomain[] {
     return items.map((item: any) => {
       if (!item || typeof item !== 'object') return item;
       let modified = false;
       const clone = { ...item };
-      for (const prop of ['imageUrl', 'image', 'photoUrl', 'receiptUrl', 'mediaUrl']) {
-        if (typeof clone[prop] === 'string' && clone[prop].startsWith('data:image/') && clone[prop].length > 1024) {
-          clone[prop] = ''; // Omit large data URLs from localStorage cache
-          modified = true;
+      for (const [key, val] of Object.entries(clone)) {
+        if (typeof val === 'string') {
+          // Detect any data URI (data:*/*;base64,*) or oversized string (> 2048 chars)
+          if (val.startsWith('data:') || (val.length > 2048 && /^[A-Za-z0-9+/=]{100,}/.test(val.slice(0, 100)))) {
+            clone[key] = '';
+            modified = true;
+          }
         }
       }
       return modified ? clone : item;
     });
+  }
+
+  /**
+   * Frees storage space by purging obsolete cache keys and trimming unbounded logs.
+   */
+  private freeStorageSpace(currentKey: string): void {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const keysToRemove: string[] = [];
+      const keysToTrim: string[] = [];
+
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || k === currentKey) continue;
+
+        // 1. Stale or transient telemetry, audit, and debug logs
+        if (
+          k.startsWith('frostly_telemetry') ||
+          k.startsWith('frostly_logs_') ||
+          k.includes('demo') ||
+          k.includes('test') ||
+          k.includes('preview')
+        ) {
+          keysToRemove.push(k);
+        }
+        // 2. Legacy / obsolete versioned keys that don't match the active key namespace
+        else if (
+          k.startsWith('frostly_products_v1') ||
+          k.startsWith('frostly_products_v2') ||
+          k.startsWith('frostly_products_v4') ||
+          k.includes('v4_ghs') ||
+          k.startsWith('frostly_batches_v1') ||
+          k.startsWith('frostly_batches_v2')
+        ) {
+          keysToRemove.push(k);
+        }
+        // 3. Activity tracking logs that can grow unbounded
+        else if (k.includes('activity_logins') || k.includes('activity_features') || k.includes('audit_logs')) {
+          keysToTrim.push(k);
+        }
+      }
+
+      for (const k of keysToRemove) {
+        localStorage.removeItem(k);
+      }
+
+      for (const k of keysToTrim) {
+        try {
+          const raw = localStorage.getItem(k);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed) && parsed.length > 20) {
+              localStorage.setItem(k, JSON.stringify(parsed.slice(0, 20)));
+            }
+          }
+        } catch {}
+      }
+    } catch {}
   }
 
   /**
@@ -167,26 +228,28 @@ export class BaseRepository<TDomain, TDatabaseRow> {
       console.warn(`[BaseRepository:${this.tableName}] setLocalCache rejected: organization could not be resolved.`);
       return;
     }
+
+    if (typeof localStorage === 'undefined') return;
+
+    // Sanitize heavy base64 data URLs before writing to localStorage to prevent QuotaExceededError
+    const sanitized = this.sanitizeForCache(items);
+
     try {
-      localStorage.setItem(key, JSON.stringify(items));
+      localStorage.setItem(key, JSON.stringify(sanitized));
     } catch (e: any) {
-      // If quota exceeded or write failed, sanitize large data URLs and retry
+      // Storage quota exceeded: free up space and retry
       try {
-        const sanitized = this.sanitizeForCache(items);
+        this.freeStorageSpace(key);
         localStorage.setItem(key, JSON.stringify(sanitized));
       } catch (innerErr) {
-        // Clear any old/orphaned preview keys if localStorage is saturated
+        // If still full, store a compact slice (e.g. latest 50 items)
         try {
-          for (let i = localStorage.length - 1; i >= 0; i--) {
-            const k = localStorage.key(i);
-            if (k && (k.startsWith('frostly_telemetry') || k.startsWith('frostly_logs_') || k.includes('demo'))) {
-              localStorage.removeItem(k);
-            }
+          if (Array.isArray(sanitized) && sanitized.length > 50) {
+            const compact = sanitized.slice(0, 50);
+            localStorage.setItem(key, JSON.stringify(compact));
           }
-          const sanitized = this.sanitizeForCache(items);
-          localStorage.setItem(key, JSON.stringify(sanitized));
         } catch {
-          // Gracefully suppress repeated quota errors
+          // Gracefully suppress quota errors — in-memory React state retains full data
         }
       }
     }

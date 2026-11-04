@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Plus, Trash2, Calculator, Check, AlertCircle, Sparkles } from 'lucide-react';
 import { ClientOrder, OrderLineItem, InventoryBatch, AppSettings } from '../../types';
 import { formatCurrency, formatWeight } from '../../utils/formatters';
+import { evaluateMarginHealth, calculateDynamicWholesalePrice } from '../../utils/pricingEngine';
 
 interface EditQuoteModalProps {
   order: ClientOrder;
@@ -237,27 +238,63 @@ export const EditQuoteModal: React.FC<EditQuoteModalProps> = ({
                       </td>
 
                       <td className="py-2.5 px-2">
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={item.pricePerKg}
-                          onChange={(e) => handlePriceChange(index, e.target.value)}
-                          className="w-full h-8 bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-right"
-                        />
-                        {isBulkDiscountEnabled && item.requestedWeightKg >= bulkThresholdKg && (
-                          <div className="mt-1 flex justify-end">
-                            <button
-                              type="button"
-                              onClick={() => applyBulkDiscountToItem(index)}
-                              className="text-[9px] text-emerald-700 hover:text-emerald-900 font-bold underline cursor-pointer flex items-center gap-0.5"
-                              title="Calculate and apply bulk volume discount"
-                            >
-                              <Sparkles className="w-2.5 h-2.5" />
-                              Apply -{bulkDiscountPct}%
-                            </button>
-                          </div>
-                        )}
+                        {(() => {
+                          const batch = batches.find(b => b.id === item.lotId);
+                          const batchCost = batch?.costPerKg ?? 0;
+                          const targetMargin = settings?.targetMarginPct ?? 30;
+                          const minFloor = settings?.minimumMarginFloorPct ?? 18;
+                          const marginEval = evaluateMarginHealth(batchCost, item.pricePerKg, minFloor, targetMargin);
+
+                          return (
+                            <div>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={item.pricePerKg}
+                                onChange={(e) => handlePriceChange(index, e.target.value)}
+                                className={`w-full h-8 bg-slate-50 border rounded-lg px-2 text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500 text-right ${
+                                  marginEval.isBelowFloor ? 'border-amber-400 text-amber-900 bg-amber-50/50' : 'border-slate-200 text-slate-800'
+                                }`}
+                              />
+                              <div className="mt-1 flex flex-wrap items-center justify-end gap-1 text-[9px]">
+                                {batchCost > 0 && (
+                                  <span className={`px-1 py-0.2 rounded font-mono font-bold ${
+                                    marginEval.status === 'healthy' 
+                                      ? 'bg-emerald-100 text-emerald-800' 
+                                      : 'bg-amber-100 text-amber-800'
+                                  }`}>
+                                    {marginEval.grossMarginPct}% Mgn
+                                  </span>
+                                )}
+                                {marginEval.isBelowFloor && batchCost > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const suggested = calculateDynamicWholesalePrice(batchCost, targetMargin);
+                                      handlePriceChange(index, String(suggested));
+                                    }}
+                                    className="text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
+                                    title={`Reset to target ${targetMargin}% margin (${formatCurrency(marginEval.suggestedPrice)}/kg)`}
+                                  >
+                                    Recalibrate
+                                  </button>
+                                )}
+                                {isBulkDiscountEnabled && item.requestedWeightKg >= bulkThresholdKg && (
+                                  <button
+                                    type="button"
+                                    onClick={() => applyBulkDiscountToItem(index)}
+                                    className="text-emerald-700 hover:text-emerald-900 font-bold underline cursor-pointer flex items-center gap-0.5"
+                                    title="Calculate and apply bulk volume discount"
+                                  >
+                                    <Sparkles className="w-2.5 h-2.5" />
+                                    -{bulkDiscountPct}%
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 text-xs">

@@ -52,7 +52,7 @@ interface SettingsViewProps {
   onRefreshProfile?: () => Promise<void>;
   showPlatformConsole?: boolean;
   onOpenOnboardingWizard?: () => void;
-  initialCategory?: 'profile' | 'workers' | 'subscription' | 'platform' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data';
+  initialCategory?: 'profile' | 'workers' | 'subscription' | 'platform' | 'coldchain' | 'units' | 'fulfillment' | 'pricing' | 'alerts' | 'data';
   onRestoreAllData: (importedData: {
     batches?: InventoryBatch[];
     orders?: ClientOrder[];
@@ -86,7 +86,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onRestoreAllData,
   onResetToDefaults
 }) => {
-  const [activeCategory, setActiveCategory] = useState<'profile' | 'workers' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data' | 'subscription' | 'platform'>(
+  const [activeCategory, setActiveCategory] = useState<'profile' | 'workers' | 'coldchain' | 'units' | 'fulfillment' | 'pricing' | 'alerts' | 'data' | 'subscription' | 'platform'>(
     initialCategory || 'profile'
   );
 
@@ -223,6 +223,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     { id: 'coldchain', label: 'Cold-Chain & HACCP', icon: ThermometerSnowflake, desc: 'Temperature alerts & critical limits' },
     { id: 'units', label: 'Units & Display', icon: Sliders, desc: 'Weight, temperatures & date formats' },
     { id: 'fulfillment', label: 'POS & Fulfillment', icon: ShoppingBag, desc: 'Terms, ice surcharges & QR presets' },
+    { id: 'pricing', label: 'Pricing & Margins', icon: DollarSign, desc: 'Dynamic margin floors & spot rate rules' },
     { id: 'alerts', label: 'Alerts & Auditing', icon: Bell, desc: 'Stock thresholds & sensor alarms' },
     { id: 'data', label: 'Data & Offline Backup', icon: Database, desc: 'JSON exports and restores' },
   ];
@@ -814,6 +815,159 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       onChange={(e) => handleChange('autoPostAdjustmentToLedger', e.target.checked)}
                       className="w-5 h-5 accent-indigo-600 rounded cursor-pointer"
                     />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Category: Dynamic Pricing & Margin Protection */}
+            {activeCategory === 'pricing' && (
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-6 animate-in fade-in">
+                <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-900 font-heading flex items-center gap-2">
+                      <DollarSign className="w-4 h-4 text-emerald-600" />
+                      Dynamic Pricing &amp; Profit Margin Safeguards
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      Manage price fluctuation policies across harvester intakes, inventory lots, and wholesale orders.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                  {/* Target Margin % */}
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-900">Target Gross Margin</label>
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-mono text-xs font-bold">
+                        {formData.targetMarginPct ?? 30}%
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Base target margin applied when automatically calculating recommended wholesale prices from landed catch costs.
+                    </p>
+                    <input
+                      type="range"
+                      min={10}
+                      max={60}
+                      step={1}
+                      value={formData.targetMarginPct ?? 30}
+                      onChange={(e) => handleChange('targetMarginPct', parseInt(e.target.value, 10))}
+                      className="w-full accent-emerald-600 cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                      <span>10% (Volume)</span>
+                      <span>30% (Standard)</span>
+                      <span>60% (Premium)</span>
+                    </div>
+                  </div>
+
+                  {/* Minimum Margin Floor % */}
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-900">Minimum Margin Floor</label>
+                      <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 font-mono text-xs font-bold">
+                        {formData.minimumMarginFloorPct ?? 18}%
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Safety floor threshold. Sales orders and quote prices dipping below this rate trigger low-margin warnings.
+                    </p>
+                    <input
+                      type="range"
+                      min={5}
+                      max={40}
+                      step={1}
+                      value={formData.minimumMarginFloorPct ?? 18}
+                      onChange={(e) => handleChange('minimumMarginFloorPct', parseInt(e.target.value, 10))}
+                      className="w-full accent-amber-600 cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                      <span>5% (Floor)</span>
+                      <span>18% (Safety)</span>
+                      <span>40% (Strict)</span>
+                    </div>
+                  </div>
+
+                  {/* Spot Quote Validity Window */}
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
+                    <label className="block text-xs font-bold text-slate-900">Spot Quote Validity Window</label>
+                    <p className="text-[11px] text-slate-500">
+                      Duration in hours that wholesale customer price quotes remain locked before expiring due to market fluctuations.
+                    </p>
+                    <select
+                      value={formData.quoteValidityHours ?? 48}
+                      onChange={(e) => handleChange('quoteValidityHours', parseInt(e.target.value, 10))}
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900"
+                    >
+                      <option value={12}>12 Hours (High Volatility / Fast Dockside)</option>
+                      <option value={24}>24 Hours (Daily Spot Market)</option>
+                      <option value={48}>48 Hours (Standard 2-Day Lock)</option>
+                      <option value={72}>72 Hours (3-Day Wholesale Window)</option>
+                      <option value={168}>7 Days (Weekly Fixed Contract)</option>
+                    </select>
+                  </div>
+
+                  {/* Margin Protection Toggle */}
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-slate-900">Real-Time Margin Alerts</div>
+                      <div className="text-[11px] text-slate-500">
+                        Warn sales reps when client order prices fall below the minimum margin floor.
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={formData.enableMarginProtectionAlerts !== false}
+                      onChange={(e) => handleChange('enableMarginProtectionAlerts', e.target.checked)}
+                      className="w-5 h-5 accent-emerald-600 rounded cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {/* Live Interactive Pricing & Margin Simulator */}
+                <div className="p-5 rounded-2xl bg-emerald-50/60 border border-emerald-200/80 space-y-3">
+                  <div className="flex items-center gap-2 text-emerald-900 font-bold text-xs">
+                    <Sparkles className="w-4 h-4 text-emerald-700" />
+                    <span>Dynamic Margin Simulator (Interactive Test)</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-800">
+                    Test how market intake cost changes automatically recalculate suggested wholesale prices and margin safety floors:
+                  </p>
+                  
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                    <div className="p-3 bg-white rounded-xl border border-emerald-200">
+                      <div className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Landed Cost</div>
+                      <div className="text-base font-black text-slate-900 font-mono">
+                        {formData.currency || 'GHS'} 10.00/kg
+                      </div>
+                      <div className="text-[10px] text-slate-400">Baseline Catch Intake</div>
+                    </div>
+
+                    <div className="p-3 bg-white rounded-xl border border-emerald-200">
+                      <div className="text-[10px] text-emerald-700 uppercase tracking-wider font-semibold">Target Price</div>
+                      <div className="text-base font-black text-emerald-700 font-mono">
+                        {formData.currency || 'GHS'} {((10 / (1 - (formData.targetMarginPct ?? 30) / 100))).toFixed(2)}/kg
+                      </div>
+                      <div className="text-[10px] text-emerald-600">at {formData.targetMarginPct ?? 30}% Gross Margin</div>
+                    </div>
+
+                    <div className="p-3 bg-white rounded-xl border border-emerald-200">
+                      <div className="text-[10px] text-amber-700 uppercase tracking-wider font-semibold">Safety Floor</div>
+                      <div className="text-base font-black text-amber-700 font-mono">
+                        {formData.currency || 'GHS'} {((10 / (1 - (formData.minimumMarginFloorPct ?? 18) / 100))).toFixed(2)}/kg
+                      </div>
+                      <div className="text-[10px] text-amber-600">at {formData.minimumMarginFloorPct ?? 18}% Margin Floor</div>
+                    </div>
+
+                    <div className="p-3 bg-white rounded-xl border border-emerald-200">
+                      <div className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Unit Profit</div>
+                      <div className="text-base font-black text-slate-800 font-mono">
+                        +{formData.currency || 'GHS'} {((10 / (1 - (formData.targetMarginPct ?? 30) / 100)) - 10).toFixed(2)}/kg
+                      </div>
+                      <div className="text-[10px] text-slate-400">Net Gross Contribution</div>
+                    </div>
                   </div>
                 </div>
               </div>

@@ -13,22 +13,36 @@ import {
   Upload,
   Image as ImageIcon,
   Trash2,
-  Loader2
+  Loader2,
+  TrendingUp,
+  TrendingDown,
+  AlertCircle
 } from 'lucide-react';
-import { InventoryBatch, Species, QualityGrade, StorageZone } from '../../types';
+import { InventoryBatch, Species, QualityGrade, StorageZone, AppSettings } from '../../types';
 import { SPECIES_CATALOG } from '../../data/mockData';
 import { processImageFile } from '../../utils/imageUpload';
+import { 
+  calculateDynamicWholesalePrice, 
+  calculateGrossMarginPct, 
+  evaluateMarginHealth, 
+  getHistoricalSpeciesCostAverage, 
+  calculateCostVariance 
+} from '../../utils/pricingEngine';
 
 interface NewBatchModalProps {
   onClose: () => void;
   onAddBatch: (batch: InventoryBatch) => void;
   useImperial: boolean;
+  existingBatches?: InventoryBatch[];
+  settings?: AppSettings;
 }
 
 export const NewBatchModal: React.FC<NewBatchModalProps> = ({
   onClose,
   onAddBatch,
-  useImperial
+  useImperial,
+  existingBatches = [],
+  settings
 }) => {
   const defaultSpecies = SPECIES_CATALOG[0] || {
     id: 'spec-general',
@@ -71,6 +85,12 @@ export const NewBatchModal: React.FC<NewBatchModalProps> = ({
   const [isProcessingImg, setIsProcessingImg] = useState<boolean>(false);
   const [imgError, setImgError] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const targetMarginPct = settings?.targetMarginPct ?? 30;
+  const minMarginFloorPct = settings?.minimumMarginFloorPct ?? 18;
+  const historicalCost = getHistoricalSpeciesCostAverage(existingBatches, selectedSpecies.name);
+  const costVariance = calculateCostVariance(costPerKg, historicalCost.avgCostPerKg);
+  const marginEval = evaluateMarginHealth(costPerKg, wholesalePrice, minMarginFloorPct, targetMarginPct);
 
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -347,6 +367,59 @@ export const NewBatchModal: React.FC<NewBatchModalProps> = ({
                 onChange={(e) => setWholesalePrice(parseFloat(e.target.value) || 0)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-indigo-700 focus:bg-white focus:outline-none focus:border-indigo-500"
               />
+            </div>
+          </div>
+
+          {/* Dynamic Margin Protection & Cost Variance Feedback */}
+          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <span>Margin Protection &amp; Cost Fluctuation Engine</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold font-mono ${
+                    marginEval.status === 'healthy'
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                      : marginEval.status === 'warning'
+                      ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                      : 'bg-rose-100 text-rose-800 border border-rose-200'
+                  }`}
+                >
+                  {marginEval.marginPct > 0 ? `+${marginEval.marginPct}% Margin` : `${marginEval.marginPct}% Margin`}
+                </span>
+                <span className="text-[11px] text-slate-400 font-mono">({marginEval.markupPct}% markup)</span>
+              </div>
+            </div>
+
+            {/* Historical variance indicator if past landings exist */}
+            {historicalCost.sampleCount > 0 && costVariance.direction !== 'flat' && (
+              <div className="flex items-center gap-1.5 text-[11px]">
+                {costVariance.direction === 'up' ? (
+                  <TrendingUp className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                ) : (
+                  <TrendingDown className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                )}
+                <span className={costVariance.direction === 'up' ? 'text-rose-700 font-semibold' : 'text-emerald-700 font-semibold'}>
+                  Landed cost is {costVariance.direction === 'up' ? `+${costVariance.variancePct}% above` : `-${costVariance.variancePct}% below`} historical average (${historicalCost.avgCostPerKg.toFixed(2)}/kg across {historicalCost.sampleCount} batches)
+                </span>
+              </div>
+            )}
+
+            {/* Margin health message and 1-click suggested price button */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200/60 text-xs">
+              <div className="text-[11px] text-slate-600">
+                Target {targetMarginPct}% Margin Price: <strong className="font-mono text-indigo-700">${marginEval.suggestedPrice.toFixed(2)}/kg</strong>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWholesalePrice(marginEval.suggestedPrice)}
+                className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
+              >
+                <Sparkles className="w-3 h-3" />
+                <span>Apply Target ({targetMarginPct}%) Rate: ${marginEval.suggestedPrice.toFixed(2)}/kg</span>
+              </button>
             </div>
           </div>
 

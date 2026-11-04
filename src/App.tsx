@@ -18,6 +18,7 @@ import { NewOrderModal } from './components/Modals/NewOrderModal';
 import { EditOrderModal } from './components/Modals/EditOrderModal';
 import { EditQuoteModal } from './components/Modals/EditQuoteModal';
 import { DeleteOrderModal } from './components/Modals/DeleteOrderModal';
+import { RecordExpenseModal } from './components/Modals/RecordExpenseModal';
 import { TenantOnboardingScreen } from './components/TenantOnboardingScreen';
 
 import { PWAInstallModal } from './components/PWAInstallModal';
@@ -292,9 +293,10 @@ export default function App() {
   const [deletingOrder, setDeletingOrder] = useState<ClientOrder | null>(null);
   const [isNewBatchModalOpen, setIsNewBatchModalOpen] = useState(false);
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
+  const [isRecordExpenseModalOpen, setIsRecordExpenseModalOpen] = useState(false);
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState(false);
   const [preselectedCustomerId, setPreselectedCustomerId] = useState<string | null>(null);
-  const [settingsCategory, setSettingsCategory] = useState<'profile' | 'workers' | 'subscription' | 'platform' | 'coldchain' | 'units' | 'fulfillment' | 'alerts' | 'data'>('profile');
+  const [settingsCategory, setSettingsCategory] = useState<'profile' | 'workers' | 'subscription' | 'platform' | 'coldchain' | 'units' | 'fulfillment' | 'pricing' | 'alerts' | 'data'>('profile');
 
   const handleNavigateToSettingsCategory = (category: any) => {
     setSettingsCategory(category);
@@ -2035,6 +2037,7 @@ export default function App() {
         markNotificationRead={markNotificationRead}
         onOpenNewBatchModal={() => setIsNewBatchModalOpen(true)}
         onOpenNewOrderModal={() => setIsNewOrderModalOpen(true)}
+        onOpenRecordExpenseModal={() => setIsRecordExpenseModalOpen(true)}
         activeAlertCount={0}
         onOpenInstallModal={() => setIsInstallModalOpen(true)}
         isInstallable={isInstallable}
@@ -2120,6 +2123,7 @@ export default function App() {
             onOpenPassport={(b) => setPassportBatch(b)}
             onOpenNewBatch={() => setIsNewBatchModalOpen(true)}
             onOpenNewOrderModal={() => setIsNewOrderModalOpen(true)}
+            onOpenRecordExpense={() => setIsRecordExpenseModalOpen(true)}
             useImperial={useImperial}
             companyName={companyName}
           />
@@ -2195,6 +2199,8 @@ export default function App() {
           <SuppliersView
             suppliers={suppliers}
             purchaseOrders={purchaseOrders}
+            batches={batches}
+            settings={settings}
             financialEntries={financialEntries}
             onAddSupplier={handleAddSupplier}
             onAddPurchaseOrder={handleAddPurchaseOrder}
@@ -2370,6 +2376,8 @@ export default function App() {
           onClose={() => setIsNewBatchModalOpen(false)}
           onAddBatch={handleAddBatch}
           useImperial={useImperial}
+          existingBatches={batches}
+          settings={settings}
         />
       )}
 
@@ -2385,6 +2393,15 @@ export default function App() {
           }}
           onAddOrder={handleAddOrder}
           useImperial={useImperial}
+        />
+      )}
+
+      {isRecordExpenseModalOpen && (
+        <RecordExpenseModal
+          isOpen={isRecordExpenseModalOpen}
+          onClose={() => setIsRecordExpenseModalOpen(false)}
+          onAddExpense={handleAddExpense}
+          currency={settings.currency}
         />
       )}
 

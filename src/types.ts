@@ -583,6 +583,12 @@ export interface AppSettings {
   // Inventory Adjustment & Financial Integration
   defaultAdjustmentAccountCode?: string;
   autoPostAdjustmentToLedger?: boolean;
+
+  // Dynamic Pricing & Margin Protection Engine
+  targetMarginPct?: number;
+  minimumMarginFloorPct?: number;
+  quoteValidityHours?: number;
+  enableMarginProtectionAlerts?: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -613,6 +619,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableBulkDiscount: true,
   bulkDiscountThresholdKg: 10,
   bulkDiscountPct: 10,
+  targetMarginPct: 30,
+  minimumMarginFloorPct: 18,
+  quoteValidityHours: 48,
+  enableMarginProtectionAlerts: true,
   notifyHaccpExcursion: true,
   notifyLowInventory: true,
   notifyOverdueInvoices: true,

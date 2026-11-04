@@ -15,6 +15,7 @@ import {
   Clock, 
   AlertCircle,
   TrendingDown,
+  TrendingUp,
   Building2,
   FileText,
   Receipt,
@@ -32,7 +33,22 @@ import {
   Ban,
   ShieldAlert
 } from 'lucide-react';
-import { Supplier, PurchaseOrderLanding, FinancialLedgerEntry, SupplierType, SupplierStatus, QualityGrade, StorageZone } from '../types';
+import { 
+  Supplier, 
+  PurchaseOrderLanding, 
+  FinancialLedgerEntry, 
+  SupplierType, 
+  SupplierStatus, 
+  QualityGrade, 
+  StorageZone,
+  InventoryBatch,
+  AppSettings
+} from '../types';
+import { 
+  getHistoricalSpeciesCostAverage, 
+  calculateCostVariance, 
+  calculateDynamicWholesalePrice 
+} from '../utils/pricingEngine';
 import { SupplierLedgerTab } from './SupplierLedgerTab';
 import { RecordSupplierPaymentModal } from './Modals/RecordSupplierPaymentModal';
 import { SupplierPaymentVoucherModal } from './Modals/SupplierPaymentVoucherModal';
@@ -42,6 +58,8 @@ import { AccountStatusModal } from './Modals/AccountStatusModal';
 interface SuppliersViewProps {
   suppliers: Supplier[];
   purchaseOrders: PurchaseOrderLanding[];
+  batches?: InventoryBatch[];
+  settings?: AppSettings;
   financialEntries?: FinancialLedgerEntry[];
   onAddSupplier: (supplier: Supplier) => void;
   onAddPurchaseOrder: (po: PurchaseOrderLanding) => void;
@@ -63,6 +81,8 @@ interface SuppliersViewProps {
 export const SuppliersView: React.FC<SuppliersViewProps> = ({
   suppliers = [],
   purchaseOrders = [],
+  batches = [],
+  settings,
   financialEntries = [],
   onAddSupplier,
   onAddPurchaseOrder,
@@ -1372,6 +1392,60 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                   </select>
                 </div>
               </div>
+
+              {/* Dynamic Cost Fluctuation & Dynamic Margin Intelligence */}
+              {(() => {
+                const landingUnitCost = parseFloat(poCostPerKg) || 0;
+                const historicalSpeciesCost = getHistoricalSpeciesCostAverage(batches, poSpeciesName);
+                const costVariance = calculateCostVariance(landingUnitCost, historicalSpeciesCost);
+                const targetMargin = settings?.targetMarginPct ?? 30;
+                const suggestedWholesale = calculateDynamicWholesalePrice(landingUnitCost, targetMargin);
+                const estSpread = suggestedWholesale - landingUnitCost;
+
+                return landingUnitCost > 0 ? (
+                  <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-slate-700 flex items-center gap-1.5">
+                        <TrendingUp className="w-3.5 h-3.5 text-indigo-600" />
+                        Dockside Landing Cost Intelligence
+                      </span>
+                      {historicalSpeciesCost > 0 ? (
+                        <span className={`px-2 py-0.5 rounded-full font-mono text-[11px] font-bold ${
+                          costVariance.isHigher
+                            ? 'bg-amber-100 text-amber-800'
+                            : costVariance.isLower
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-slate-100 text-slate-700'
+                        }`}>
+                          {costVariance.isHigher 
+                            ? `+${costVariance.variancePct}% vs Dock Avg` 
+                            : costVariance.isLower 
+                              ? `-${costVariance.variancePct}% vs Dock Avg` 
+                              : 'In line with dock avg'}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-500">First recorded batch for this species</span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                      <div className="bg-white p-2 rounded-xl border border-slate-200">
+                        <div className="text-[10px] text-slate-500 font-medium">Historical Baseline Cost</div>
+                        <div className="text-sm font-bold text-slate-800 font-mono-code">
+                          {historicalSpeciesCost > 0 ? `${formatCurrency(historicalSpeciesCost)}/kg` : 'No prior intake'}
+                        </div>
+                      </div>
+                      <div className="bg-indigo-50/70 p-2 rounded-xl border border-indigo-100">
+                        <div className="text-[10px] text-indigo-700 font-medium">Dynamic Wholesale Rec ({targetMargin}% Target)</div>
+                        <div className="text-sm font-bold text-indigo-900 font-mono-code">
+                          {formatCurrency(suggestedWholesale)}/kg
+                          <span className="text-[10px] text-indigo-600 ml-1 font-sans font-normal">(+{formatCurrency(estSpread)})</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : null;
+              })()}
 
               {/* Total Calculation Preview */}
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between">
