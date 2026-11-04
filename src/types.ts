@@ -216,7 +216,7 @@ export interface SystemNotification {
 export type CustomerType = 'Wholesale Restaurant' | 'Hotel & Resort' | 'Supermarket / Retailer' | 'Fishmonger / Distributor' | 'Direct Retail VIP';
 export type PricingTier = 'Tier 1 (VIP Wholesale -15%)' | 'Tier 2 (Standard Wholesale)' | 'Retail Standard' | 'Contract Custom';
 export type PaymentTerms = 'Net-30' | 'Net-15' | 'Cash on Delivery (COD)' | 'Prepaid / Due on Receipt' | 'Instant Card/Cash' | 'Net-7' | 'Net-60' | 'Due on Receipt';
-export type CustomerStatus = 'Active' | 'Credit Hold' | 'Pending Review' | 'Inactive';
+export type CustomerStatus = 'Active' | 'Credit Hold' | 'Pending Review' | 'Inactive' | 'Closed' | 'Blacklisted';
 
 export interface Customer {
   id: string; // e.g. "CUST-101"
@@ -235,6 +235,8 @@ export interface Customer {
   totalOrdersCount: number;
   totalSpendUSD: number;
   status: CustomerStatus;
+  statusReason?: string;
+  statusUpdatedAt?: string;
   taxId?: string;
   notes?: string;
   joinedDate: string;
@@ -287,6 +289,8 @@ export interface SupplierLedgerEntry {
 
 export type SupplierType = 'Fishermen Co-op' | 'Vessel / Fleet Captain' | 'Aquaculture Farm' | 'Fish Auction / Wholesaler' | 'Direct Marine Import';
 
+export type SupplierStatus = 'Preferred Partner' | 'Active' | 'Under Audit' | 'Closed' | 'Blacklisted';
+
 export interface Supplier {
   id: string; // e.g. "SUP-201"
   name: string;
@@ -303,7 +307,9 @@ export interface Supplier {
   totalPurchasedUSD: number;
   totalWeightSuppliedKg: number;
   rating: number; // 1 to 5
-  status: 'Preferred Partner' | 'Active' | 'Under Audit';
+  status: SupplierStatus;
+  statusReason?: string;
+  statusUpdatedAt?: string;
   bankAccountRef?: string;
   notes?: string;
 }

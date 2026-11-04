@@ -100,7 +100,7 @@ function getOrCreateSessionChannel() {
   try {
     const channel = supabase.channel('frostly_live_sessions', {
       config: {
-        broadcast: { ack: true },
+        broadcast: { ack: false },
         presence: { key: currentPresencePayload?.userId || 'anonymous-' + Math.random().toString(36).substring(2, 7) },
       },
     });
@@ -482,6 +482,9 @@ function getDeviceType(): 'desktop' | 'mobile' | 'tablet' {
   return 'desktop';
 }
 
+// In-memory throttling map to prevent duplicate login log inserts and broadcasts within 5 minutes
+const lastLoginLogByUser = new Map<string, number>();
+
 /**
  * Record a user login event
  */
@@ -490,8 +493,17 @@ export async function recordUserLogin(
   profile?: StaffProfile | null,
   organization?: TenantOrganization | null
 ): Promise<void> {
+  const now = Date.now();
+  const lastRecorded = lastLoginLogByUser.get(user.id);
+  // Avoid duplicate login events within 5 minutes for the same user
+  if (lastRecorded && now - lastRecorded < 300_000) {
+    return;
+  }
+  lastLoginLogByUser.set(user.id, now);
+
   const device = getDeviceType();
-  const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'Browser Client';
+  const rawUserAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'Browser Client';
+  const userAgent = rawUserAgent.slice(0, 120);
   const orgName = organization?.name || profile?.organization_name || 'Frostly Operations';
   const orgId = organization?.id || profile?.organization_id || '00000000-0000-0000-0000-000000000001';
 
@@ -649,8 +661,8 @@ export async function trackFeatureAction(
     localStorage.setItem(STORAGE_KEY_FEATURES, JSON.stringify(updated));
   } catch {}
 
-  // 2. Persist to Supabase if configured
-  if (isSupabaseConfigured) {
+  // 2. Persist to Supabase if configured (only audit actions: create, update, delete, export; views are cached locally)
+  if (isSupabaseConfigured && actionType !== 'view') {
     try {
       await supabase.from('user_feature_usage_logs').insert({
         user_id: userId,

@@ -17,6 +17,10 @@ export class SupplierRepository extends BaseRepository<Supplier, DatabaseSupplie
   public async getSuppliers(fallback: Supplier[] = []): Promise<Supplier[]> {
     return this.getAll(fallback);
   }
+
+  public async deleteSupplier(id: string): Promise<void> {
+    return this.delete(id);
+  }
 }
 
 export const supplierRepository = new SupplierRepository();

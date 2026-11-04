@@ -61,22 +61,32 @@ export async function processImageFile(file: File, maxWidth = 1200, maxHeight = 
   });
 }
 
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+
 /**
  * Upload an image file directly to Supabase Storage ('product-species-media')
+ * Compresses the image first and sets long-lived cache headers to reduce bandwidth egress.
  * Falls back to optimized data URL if Supabase Storage is not connected.
  */
 export async function uploadImageToStorage(file: File, pathPrefix = 'catalog'): Promise<string> {
-  // Always validate & optimize through processImageFile first (rejecting SVGs)
+  // Always validate & optimize through processImageFile first (rejecting SVGs, scaling dimensions)
   const processedDataUrl = await processImageFile(file);
 
   if (isSupabaseConfigured) {
     try {
-      const cleanFileName = `${pathPrefix}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+      const compressedBlob = await dataUrlToBlob(processedDataUrl);
+      const baseName = file.name.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const cleanFileName = `${pathPrefix}/${Date.now()}-${baseName}.jpg`;
+
       const { data, error } = await supabase.storage
         .from('product-species-media')
-        .upload(cleanFileName, file, {
-          contentType: file.type,
+        .upload(cleanFileName, compressedBlob, {
+          contentType: 'image/jpeg',
           upsert: true,
+          cacheControl: '31536000, immutable',
         });
 
       if (!error && data?.path) {

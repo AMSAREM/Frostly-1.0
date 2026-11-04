@@ -1,4 +1,4 @@
-import { Customer, CustomerType, PricingTier, PaymentTerms } from '../types';
+import { Customer, CustomerType, PricingTier, PaymentTerms, CustomerStatus } from '../types';
 
 export interface DatabaseCustomerRow {
   id: string;
@@ -47,7 +47,7 @@ export const customerMapper = {
       paymentTerms: (row.payment_terms as PaymentTerms) || 'Net-30',
       totalOrdersCount: Number(row.total_orders_count ?? 0),
       totalSpendUSD: Number(row.total_spend_usd ?? 0),
-      status: (row.status as 'Active' | 'Credit Hold' | 'Pending Review') || 'Active',
+      status: (row.status as CustomerStatus) || 'Active',
       taxId: row.tax_id ?? undefined,
       notes: row.notes ?? undefined,
       joinedDate: row.joined_date ? row.joined_date.split('T')[0] : new Date().toISOString().split('T')[0],

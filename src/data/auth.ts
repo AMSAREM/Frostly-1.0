@@ -82,7 +82,15 @@ export function notifyAuthSubscribers(sess: Session | null): void {
 export function getLocalCachedSession(): Session | null {
   try {
     const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LOCAL_SESSION_KEY) : null;
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!isSupabaseConfigured || parsed?.access_token?.startsWith('local-token-') || parsed?.user?.id === 'attacker' || parsed?.user?.id === 'demo-user-id-001') {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(LOCAL_SESSION_KEY);
+      }
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -133,9 +141,15 @@ export const DEFAULT_CREATOR_USER = {
  * Get the current Supabase auth session, caching it locally
  */
 export async function getSession(): Promise<Session | null> {
+  if (!isSupabaseConfigured) {
+    cachedSession = null;
+    setLocalCachedSession(null);
+    return null;
+  }
+
   // Invalidate any legacy demo sessions from local storage when Supabase is configured
   if (cachedSession) {
-    if (isSupabaseConfigured && (cachedSession.access_token?.startsWith('local-token-') || cachedSession.user?.id === 'demo-user-id-001')) {
+    if (cachedSession.access_token?.startsWith('local-token-') || cachedSession.user?.id === 'demo-user-id-001' || cachedSession.user?.id === 'attacker') {
       cachedSession = null;
       setLocalCachedSession(null);
     } else {
@@ -145,16 +159,8 @@ export async function getSession(): Promise<Session | null> {
 
   const local = getLocalCachedSession();
   if (local) {
-    if (isSupabaseConfigured && (local.access_token?.startsWith('local-token-') || local.user?.id === 'demo-user-id-001')) {
-      setLocalCachedSession(null);
-    } else {
-      cachedSession = local;
-      return cachedSession;
-    }
-  }
-
-  if (!isSupabaseConfigured) {
-    return null;
+    cachedSession = local;
+    return cachedSession;
   }
 
   try {
@@ -249,7 +255,7 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
         try {
           const { data: sessionData } = await supabase.auth.getSession();
           const token = sessionData?.session?.access_token;
-          if (token) {
+          if (token && typeof window !== 'undefined') {
             const resp = await fetch('/api/auth/profile', {
               headers: { Authorization: `Bearer ${token}` }
             });
@@ -267,30 +273,51 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       }
     }
 
-    const isCreator = 
-      (DEFAULT_CREATOR_EMAIL && user.email?.toLowerCase() === DEFAULT_CREATOR_EMAIL.toLowerCase()) || 
-      user.email?.toLowerCase() === 'amoakoimml@gmail.com' ||
-      user.user_metadata?.role === 'platform_creator' || 
+    // Query platform_admins table and app_metadata for authorized platform operators.
+    // user_metadata is user-editable and must NEVER grant operator access.
+    let isPlatformAdmin = false;
+    if (isSupabaseConfigured) {
+      try {
+        const { data: paData } = await supabase
+          .from('platform_admins')
+          .select('user_id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (paData?.user_id) {
+          isPlatformAdmin = true;
+        }
+      } catch {}
+    }
+
+    const isPlatformOperator =
+      isPlatformAdmin ||
       user.app_metadata?.role === 'platform_creator' ||
-      user.user_metadata?.platform_owner === true ||
-      profileData?.role === 'platform_creator';
+      user.app_metadata?.role === 'creator';
 
-    const fallbackRole = isCreator ? 'admin' : (profileData?.role || user.user_metadata?.role || 'admin');
+    // Tenant and organization resolution:
+    let resolvedOrgId = profileData?.organization_id || '';
+    let resolvedOrgName = orgData?.name || '';
+    let isUnprovisioned = false;
 
-    // Resolve tenant organization ID:
-    const resolvedOrgId = 
-      profileData?.organization_id || 
-      user.user_metadata?.organization_id || 
-      '';
+    if (isPlatformOperator) {
+      resolvedOrgId = '00000000-0000-0000-0000-000000000001';
+      resolvedOrgName = 'Frostly Platform HQ';
+      isUnprovisioned = false;
+    } else {
+      if (resolvedOrgId === '00000000-0000-0000-0000-000000000001' || resolvedOrgId === 'org-frostly-hq') {
+        resolvedOrgId = '';
+        resolvedOrgName = '';
+        isUnprovisioned = true;
+      } else if (!profileData || !resolvedOrgId) {
+        resolvedOrgId = '';
+        resolvedOrgName = '';
+        isUnprovisioned = true;
+      }
+    }
 
-    // Resolve tenant organization Name:
-    const resolvedOrgName = 
-      orgData?.name || 
-      user.user_metadata?.organization_name || 
-      user.user_metadata?.org_name || 
-      (isCreator ? 'Frostly Platform HQ' : (resolvedOrgId ? 'Tenant Workspace' : ''));
-
-    const isUnprovisioned = !profileData && !resolvedOrgId && !isCreator && isSupabaseConfigured;
+    const isAccountActive = profileData ? (profileData.is_active ?? true) : true;
+    const needsOnboarding = isAccountActive ? isUnprovisioned : false;
+    const fallbackRole = isPlatformOperator ? 'admin' : (profileData?.role || 'viewer');
 
     const defaultOrg: TenantOrganization = {
       id: resolvedOrgId,
@@ -310,9 +337,9 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
       email: profileData?.email || user.email || '',
       full_name: profileData?.full_name || user.user_metadata?.full_name || (user.email?.split('@')[0] ?? 'Staff User'),
       role: (profileData?.role as any) || fallbackRole,
-      department: profileData?.department || user.user_metadata?.department || 'Executive',
-      is_active: profileData?.is_active ?? true,
-      needs_onboarding: isUnprovisioned,
+      department: profileData?.department || user.user_metadata?.department || 'Operations',
+      is_active: isAccountActive,
+      needs_onboarding: needsOnboarding,
     };
 
     if (resolvedOrgId && resolvedOrgId !== 'org-frostly-hq' && resolvedOrgId !== '00000000-0000-0000-0000-000000000000' && !isUnprovisioned) {
@@ -320,18 +347,6 @@ export async function getStaffProfile(forceRefresh = false): Promise<StaffProfil
         localStorage.setItem('frostly_active_org_id', resolvedOrgId);
       } catch {}
     }
-
-    // Record login activity telemetry (non-blocking)
-    if (user && user.email) {
-      import('../services/activityTrackingService').then(({ recordUserLogin }) => {
-        recordUserLogin(
-          { id: user.id, email: user.email || '' },
-          cachedStaffProfile,
-          cachedStaffProfile?.organization
-        ).catch(() => {});
-      }).catch(() => {});
-    }
-
     return cachedStaffProfile;
   } catch (e) {
     console.warn('[Auth] Exception fetching staff profile:', e);
@@ -371,7 +386,7 @@ export async function signIn(
   setLocalCachedSession(null);
 
   if (!isSupabaseConfigured) {
-    return { session: null, error: 'Database service is currently connecting. Please reload or try again.' };
+    return { session: null, error: 'Database backend is not configured. Live Supabase connection is required.' };
   }
 
   try {
@@ -537,37 +552,7 @@ export async function createOrganizationAndAdmin(
   options?: CreateOrgCustomOptions
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   if (!isSupabaseConfigured) {
-    // Offline / Local Simulation Mode:
-    const mockOrgId = 'org-local-' + Math.random().toString(36).substring(2, 9);
-    const mockOrg: TenantOrganization = {
-      id: mockOrgId,
-      name: orgName,
-      plan_tier: 'starter',
-      subscription_status: 'trial',
-      trial_ends_at: new Date(Date.now() + 14 * 86400000).toISOString(),
-      max_staff_seats: 5,
-    };
-    try {
-      localStorage.setItem('frostly_active_org_id', mockOrgId);
-      const existingSettingsStr = localStorage.getItem('frostly_settings_v2');
-      const existingSettings = existingSettingsStr ? JSON.parse(existingSettingsStr) : {};
-      localStorage.setItem('frostly_settings_v2', JSON.stringify({
-        ...existingSettings,
-        companyName: orgName,
-        facilityCode: options?.facilityCode || `FAC-${orgName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase()}-01`,
-        currency: options?.currency || existingSettings.currency || 'GHS',
-        primaryPort: options?.primaryPort || existingSettings.primaryPort || 'Port of Tema & Pier 38 Fishing Harbour',
-      }));
-    } catch {}
-
-    if (cachedStaffProfile) {
-      cachedStaffProfile.organization_id = mockOrgId;
-      cachedStaffProfile.organization_name = orgName;
-      cachedStaffProfile.organization = mockOrg;
-      cachedStaffProfile.role = 'admin';
-      cachedStaffProfile.needs_onboarding = false;
-    }
-    return { success: true, data: { organization_id: mockOrgId, organization_name: orgName } };
+    return { success: false, error: 'Database backend is not configured. Live Supabase connection is required.' };
   }
 
   try {
@@ -820,45 +805,7 @@ export async function signUpAndCreateOrganization(
   const cleanEmail = emailCheck.normalizedEmail;
 
   if (!isSupabaseConfigured) {
-    const orgRes = await createOrganizationAndAdmin(orgName, adminFullName, adminDepartment, options);
-    if (!orgRes.success) {
-      return { session: null, profile: null, error: orgRes.error || 'Failed to create organization' };
-    }
-    const mockProfile: StaffProfile = {
-      id: 'usr-local-' + Math.random().toString(36).substring(2, 9),
-      organization_id: orgRes.data?.organization_id || 'org-local-1',
-      organization_name: orgName,
-      email: cleanEmail,
-      full_name: adminFullName || cleanEmail.split('@')[0],
-      role: 'admin',
-      department: adminDepartment,
-      is_active: true,
-      needs_onboarding: false,
-    };
-    const mockUser: User = {
-      id: mockProfile.id,
-      app_metadata: { provider: 'email' },
-      user_metadata: {
-        full_name: mockProfile.full_name,
-        role: 'admin',
-        organization_name: orgName,
-      },
-      aud: 'authenticated',
-      created_at: new Date().toISOString(),
-      email: cleanEmail,
-    } as any;
-    const mockSession: Session = {
-      access_token: 'local-token-' + Date.now(),
-      refresh_token: 'local-refresh-' + Date.now(),
-      expires_in: 86400,
-      token_type: 'bearer',
-      user: mockUser,
-    };
-    cachedSession = mockSession;
-    cachedStaffProfile = mockProfile;
-    setLocalCachedSession(mockSession);
-    notifyAuthSubscribers(mockSession);
-    return { session: mockSession, profile: mockProfile, error: null };
+    return { session: null, profile: null, error: 'Database backend is not configured. Live Supabase connection is required.' };
   }
 
   try {

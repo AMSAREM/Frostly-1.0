@@ -18,7 +18,6 @@ import {
   Building2,
   FileText,
   Receipt,
-  RotateCcw,
   ArrowDownLeft,
   ChevronRight,
   Eye,
@@ -26,12 +25,19 @@ import {
   Printer,
   ShieldCheck,
   CreditCard,
-  X
+  X,
+  Trash2,
+  Archive,
+  RotateCcw,
+  Ban,
+  ShieldAlert
 } from 'lucide-react';
-import { Supplier, PurchaseOrderLanding, FinancialLedgerEntry, SupplierType, QualityGrade, StorageZone } from '../types';
+import { Supplier, PurchaseOrderLanding, FinancialLedgerEntry, SupplierType, SupplierStatus, QualityGrade, StorageZone } from '../types';
 import { SupplierLedgerTab } from './SupplierLedgerTab';
 import { RecordSupplierPaymentModal } from './Modals/RecordSupplierPaymentModal';
 import { SupplierPaymentVoucherModal } from './Modals/SupplierPaymentVoucherModal';
+import { DeleteSupplierModal } from './Modals/DeleteSupplierModal';
+import { AccountStatusModal } from './Modals/AccountStatusModal';
 
 interface SuppliersViewProps {
   suppliers: Supplier[];
@@ -49,6 +55,8 @@ interface SuppliersViewProps {
     specificPOId?: string
   ) => void;
   onReversePayment?: (paymentEntryId: string, supplierId: string, amount: number, reason: string) => void;
+  onDeleteSupplier?: (supplierId: string) => Promise<void> | void;
+  onUpdateSupplierStatus?: (supplierId: string, status: SupplierStatus, reason?: string) => Promise<void> | void;
   formatCurrency: (amount: number) => string;
 }
 
@@ -60,6 +68,8 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
   onAddPurchaseOrder,
   onRecordPayment,
   onReversePayment,
+  onDeleteSupplier,
+  onUpdateSupplierStatus,
   formatCurrency
 }) => {
   const [activeTab, setActiveTab] = useState<'suppliers' | 'inward_catch'>('suppliers');
@@ -78,6 +88,56 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
   const [preselectedPOId, setPreselectedPOId] = useState<string | undefined>(undefined);
   const [suggestedPaymentAmount, setSuggestedPaymentAmount] = useState<number | undefined>(undefined);
   const [lastCreatedVoucher, setLastCreatedVoucher] = useState<any | null>(null);
+
+  // Supplier Deletion & Status Management State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [supplierToDelete, setSupplierToDelete] = useState<Supplier | null>(null);
+  const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
+  const [statusModalSupplier, setStatusModalSupplier] = useState<Supplier | null>(null);
+  const [statusModalAction, setStatusModalAction] = useState<'blacklist' | 'close' | 'reactivate' | 'manage'>('manage');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+
+  const handleOpenStatusModal = (sup: Supplier, action: 'blacklist' | 'close' | 'reactivate' | 'manage') => {
+    setStatusModalSupplier(sup);
+    setStatusModalAction(action);
+    setIsStatusModalOpen(true);
+  };
+
+  const handleOpenDeleteModal = (sup: Supplier) => {
+    setSupplierToDelete(sup);
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleConfirmStatusChange = async (newStatus: SupplierStatus, reason: string) => {
+    if (!statusModalSupplier) return;
+    const nowIso = new Date().toISOString();
+    const updated: Supplier = {
+      ...statusModalSupplier,
+      status: newStatus,
+      statusReason: reason || statusModalSupplier.statusReason,
+      statusUpdatedAt: nowIso,
+      notes: reason 
+        ? `${statusModalSupplier.notes ? statusModalSupplier.notes + ' | ' : ''}[${nowIso.split('T')[0]}] Status set to ${newStatus}: ${reason}`
+        : statusModalSupplier.notes
+    };
+
+    if (onUpdateSupplierStatus) {
+      await onUpdateSupplierStatus(statusModalSupplier.id, newStatus, reason);
+    }
+
+    if (selectedSupplier?.id === statusModalSupplier.id) {
+      setSelectedSupplier(updated);
+    }
+  };
+
+  const handleConfirmDeleteSupplier = async (supplierId: string) => {
+    if (onDeleteSupplier) {
+      await onDeleteSupplier(supplierId);
+    }
+    if (selectedSupplier?.id === supplierId) {
+      setSelectedSupplier(null);
+    }
+  };
 
   // New Supplier Form State
   const [supName, setSupName] = useState('');
@@ -108,12 +168,13 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
 
   const filteredSuppliers = suppliers.filter(sup => {
     const matchesType = filterType === 'all' || sup.type === filterType;
+    const matchesStatus = filterStatus === 'all' || sup.status === filterStatus;
     const matchesSearch = 
       sup.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       sup.contactPerson.toLowerCase().includes(searchQuery.toLowerCase()) ||
       sup.portLocation.toLowerCase().includes(searchQuery.toLowerCase()) ||
       sup.suppliedSpecies.some(sp => sp.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesType && matchesSearch;
+    return matchesType && matchesStatus && matchesSearch;
   });
 
   const handleOpenSupplierProfile = (sup: Supplier, initialTab: 'ledger' | 'catches' | 'terms' = 'ledger') => {
@@ -171,6 +232,18 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
   const handleCreateCatchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const sup = suppliers.find(s => s.id === poSupplierId) || suppliers[0];
+    if (!sup) return;
+
+    if (sup.status === 'Blacklisted') {
+      alert(`Supplier "${sup.name}" is BLACKLISTED. Creating inward catch purchase orders is strictly prohibited.`);
+      return;
+    }
+
+    if (sup.status === 'Closed') {
+      alert(`Supplier "${sup.name}" is CLOSED. Please reactivate this supplier account before creating purchase orders.`);
+      return;
+    }
+
     const weight = parseFloat(poWeightKg);
     const unitCost = parseFloat(poCostPerKg);
     if (isNaN(weight) || isNaN(unitCost) || weight <= 0 || unitCost <= 0) return;
@@ -323,21 +396,44 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
               />
             </div>
 
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 sm:pb-0">
-              <span className="text-xs text-slate-400 font-medium shrink-0">Type:</span>
-              {['all', 'Fishermen Co-op', 'Aquaculture Farm', 'Vessel / Fleet Captain', 'Fish Auction / Wholesaler'].map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setFilterType(t)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
-                    filterType === t
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {t === 'all' ? 'All Partners' : t}
-                </button>
-              ))}
+            <div className="flex flex-col lg:flex-row items-start lg:items-center gap-2 overflow-x-auto no-scrollbar pb-1 sm:pb-0">
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                <span className="text-[11px] text-slate-400 font-bold uppercase shrink-0">Type:</span>
+                {['all', 'Fishermen Co-op', 'Aquaculture Farm', 'Vessel / Fleet Captain', 'Fish Auction / Wholesaler'].map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setFilterType(t)}
+                    className={`px-2.5 py-1 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+                      filterType === t
+                        ? 'bg-slate-900 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {t === 'all' ? 'All Partners' : t}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                <span className="text-[11px] text-slate-400 font-bold uppercase shrink-0">Status:</span>
+                {['all', 'Active', 'Preferred Partner', 'Under Audit', 'Closed', 'Blacklisted'].map((st) => (
+                  <button
+                    key={st}
+                    onClick={() => setFilterStatus(st)}
+                    className={`px-2.5 py-1 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+                      filterStatus === st
+                        ? st === 'Blacklisted'
+                          ? 'bg-rose-700 text-white'
+                          : st === 'Closed'
+                          ? 'bg-slate-700 text-white'
+                          : 'bg-blue-700 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {st === 'all' ? 'All Statuses' : st}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -348,7 +444,13 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
               return (
                 <div 
                   key={sup.id} 
-                  className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5 flex flex-col justify-between hover:border-slate-300 transition-all space-y-4"
+                  className={`bg-white rounded-3xl border shadow-xs p-5 flex flex-col justify-between transition-all space-y-4 ${
+                    sup.status === 'Blacklisted' 
+                      ? 'border-rose-300 ring-1 ring-rose-200' 
+                      : sup.status === 'Closed' 
+                      ? 'border-slate-300 opacity-90' 
+                      : 'border-slate-200 hover:border-slate-300'
+                  }`}
                 >
                   <div>
                     <div className="flex items-start justify-between gap-2">
@@ -362,9 +464,27 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1 bg-amber-50 text-amber-900 px-2 py-0.5 rounded-lg text-xs font-bold border border-amber-200/60 shrink-0">
-                        <Star className="w-3 h-3 fill-amber-400 text-amber-500" />
-                        <span>{sup.rating.toFixed(1)}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {sup.status === 'Blacklisted' ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-900 text-rose-100 border border-rose-950 flex items-center gap-1 shadow-2xs">
+                            <ShieldAlert className="w-3 h-3 text-rose-300" />
+                            <span>Blacklisted</span>
+                          </span>
+                        ) : sup.status === 'Closed' ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-700 text-slate-100 border border-slate-800 flex items-center gap-1">
+                            <Archive className="w-3 h-3 text-slate-300" />
+                            <span>Closed</span>
+                          </span>
+                        ) : sup.status === 'Under Audit' ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                            Audit
+                          </span>
+                        ) : (
+                          <div className="flex items-center gap-1 bg-amber-50 text-amber-900 px-2 py-0.5 rounded-lg text-xs font-bold border border-amber-200/60 shrink-0">
+                            <Star className="w-3 h-3 fill-amber-400 text-amber-500" />
+                            <span>{sup.rating.toFixed(1)}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -418,21 +538,64 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                       </span>
                     </div>
 
-                    <div className="flex gap-2 pt-2">
+                    <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100">
                       <button
                         onClick={() => handleOpenSupplierProfile(sup, 'ledger')}
-                        className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1"
+                        className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1"
                       >
                         <Receipt className="w-3.5 h-3.5 text-slate-500" />
-                        <span>Ledger & History</span>
+                        <span>Ledger</span>
                       </button>
 
                       <button
-                        onClick={() => handleOpenRecordPayment(sup)}
-                        className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 shadow-xs"
+                        onClick={() => handleOpenSupplierProfile(sup, 'terms')}
+                        className="py-1.5 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-all cursor-pointer"
                       >
-                        <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>{hasPayable ? 'Disburse Payout' : 'Post Payment'}</span>
+                        Profile
+                      </button>
+
+                      {sup.status === 'Blacklisted' || sup.status === 'Closed' ? (
+                        <button
+                          onClick={() => handleOpenStatusModal(sup, 'reactivate')}
+                          className="py-1.5 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 shadow-xs"
+                          title="Reactivate Supplier Account"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>Reopen</span>
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => handleOpenRecordPayment(sup)}
+                            className="py-1.5 px-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 shadow-xs"
+                            title={hasPayable ? 'Disburse Payout' : 'Post Payment'}
+                          >
+                            <DollarSign className="w-3.5 h-3.5" />
+                            <span>Pay</span>
+                          </button>
+                          <button
+                            onClick={() => handleOpenStatusModal(sup, 'close')}
+                            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition-all cursor-pointer"
+                            title="Close Supplier Account"
+                          >
+                            <Archive className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleOpenStatusModal(sup, 'blacklist')}
+                            className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl transition-all cursor-pointer"
+                            title="Blacklist Supplier Account"
+                          >
+                            <Ban className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
+
+                      <button
+                        onClick={() => handleOpenDeleteModal(sup)}
+                        className="p-1.5 bg-slate-100 hover:bg-rose-50 text-slate-500 hover:text-rose-600 rounded-xl transition-all cursor-pointer"
+                        title="Delete Supplier Account"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
@@ -699,6 +862,65 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
               </div>
             </div>
 
+            {/* Status Alert Banner in Profile if Blacklisted or Closed */}
+            {selectedSupplier.status === 'Blacklisted' && (
+              <div className="mx-6 mt-4 p-4 bg-rose-900 text-white rounded-2xl flex items-start justify-between gap-4 shadow-md">
+                <div className="flex items-start gap-3">
+                  <ShieldAlert className="w-5 h-5 text-rose-300 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <div className="font-extrabold text-xs text-rose-100 uppercase tracking-wider">
+                      Supplier Status: Blacklisted
+                    </div>
+                    <div className="text-xs text-rose-200">
+                      This harvester/supplier is blacklisted. Receiving new catch lots and issuing purchase orders are strictly prohibited.
+                      {selectedSupplier.notes && (
+                        <span className="block mt-1 text-[11px] text-rose-300 italic">
+                          Audit Trail: {selectedSupplier.notes}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleOpenStatusModal(selectedSupplier, 'reactivate')}
+                  className="shrink-0 px-3 py-1.5 bg-rose-800 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border border-rose-700 shadow-xs"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reactivate Supplier</span>
+                </button>
+              </div>
+            )}
+
+            {selectedSupplier.status === 'Closed' && (
+              <div className="mx-6 mt-4 p-4 bg-slate-800 text-white rounded-2xl flex items-start justify-between gap-4 shadow-md">
+                <div className="flex items-start gap-3">
+                  <Archive className="w-5 h-5 text-slate-300 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <div className="font-extrabold text-xs text-slate-100 uppercase tracking-wider">
+                      Supplier Status: Closed
+                    </div>
+                    <div className="text-xs text-slate-300">
+                      This supplier account is closed. No new inward catches or dock POs can be logged. Historical payables remain payable.
+                      {selectedSupplier.notes && (
+                        <span className="block mt-1 text-[11px] text-slate-400 italic">
+                          Audit Trail: {selectedSupplier.notes}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleOpenStatusModal(selectedSupplier, 'reactivate')}
+                  className="shrink-0 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border border-slate-600 shadow-xs"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reactivate Supplier</span>
+                </button>
+              </div>
+            )}
+
             {/* Profile Tab Navigation */}
             <div className="px-6 py-2.5 bg-slate-100 border-b border-slate-200 flex items-center justify-between gap-4 overflow-x-auto no-scrollbar shrink-0">
               <div className="flex items-center gap-2">
@@ -939,6 +1161,58 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Profile Footer with Full Lifecycle Actions */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2">
+                {selectedSupplier.status === 'Blacklisted' || selectedSupplier.status === 'Closed' ? (
+                  <button
+                    onClick={() => handleOpenStatusModal(selectedSupplier, 'reactivate')}
+                    className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Reactivate Supplier</span>
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => handleOpenStatusModal(selectedSupplier, 'close')}
+                      className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                      title="Close this supplier account"
+                    >
+                      <Archive className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Close Account</span>
+                    </button>
+                    <button
+                      onClick={() => handleOpenStatusModal(selectedSupplier, 'blacklist')}
+                      className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                      title="Blacklist supplier"
+                    >
+                      <Ban className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Blacklist</span>
+                    </button>
+                  </>
+                )}
+
+                <button
+                  onClick={() => handleOpenDeleteModal(selectedSupplier)}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                  title="Permanently delete supplier (requires zero unsettled AP and no active POs)"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete</span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSelectedSupplier(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs transition-all cursor-pointer"
+                >
+                  Close View
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1003,9 +1277,15 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                     onChange={(e) => setPoSupplierId(e.target.value)}
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
                   >
-                    {suppliers.map(s => (
-                      <option key={s.id} value={s.id}>{s.name} ({s.portLocation})</option>
-                    ))}
+                    {suppliers.map(s => {
+                      const isBlocked = s.status === 'Blacklisted' || s.status === 'Closed';
+                      return (
+                        <option key={s.id} value={s.id} disabled={isBlocked}>
+                          {s.status === 'Blacklisted' ? '⛔ [BLACKLISTED] ' : s.status === 'Closed' ? '🔒 [CLOSED] ' : ''}
+                          {s.name} ({s.portLocation}) — {s.status}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 
@@ -1275,6 +1555,36 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Delete Supplier Modal */}
+      <DeleteSupplierModal
+        isOpen={isDeleteModalOpen}
+        supplier={supplierToDelete}
+        purchaseOrders={purchaseOrders}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setSupplierToDelete(null);
+        }}
+        onConfirmDelete={handleConfirmDeleteSupplier}
+        onCloseAccount={(sup) => handleOpenStatusModal(sup, 'close')}
+        formatCurrency={formatCurrency}
+      />
+
+      {/* Account Status / Blacklist / Close / Reactivate Modal */}
+      <AccountStatusModal
+        isOpen={isStatusModalOpen}
+        accountType="supplier"
+        accountId={statusModalSupplier?.id || ''}
+        accountName={statusModalSupplier?.name || ''}
+        currentStatus={statusModalSupplier?.status || 'Active'}
+        targetAction={statusModalAction}
+        onClose={() => {
+          setIsStatusModalOpen(false);
+          setStatusModalSupplier(null);
+        }}
+        onConfirm={handleConfirmStatusChange}
+      />
+
     </div>
   );
 };

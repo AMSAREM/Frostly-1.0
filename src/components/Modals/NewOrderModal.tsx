@@ -189,6 +189,8 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
   const remainingCreditAfterOrder = availableCredit - totalQuoted;
   const isOverCreditLimit = totalQuoted > availableCredit;
   const isCreditHold = selectedCustomer?.status === 'Credit Hold';
+  const isBlacklisted = selectedCustomer?.status === 'Blacklisted';
+  const isClosed = selectedCustomer?.status === 'Closed';
   const creditUtilizationPct = creditLimit > 0 ? Math.min(100, Math.round((outstandingBalance / creditLimit) * 100)) : 0;
   const projectedUtilizationPct = creditLimit > 0 
     ? Math.min(100, Math.round(((outstandingBalance + totalQuoted) / creditLimit) * 100)) 
@@ -215,6 +217,21 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
 
     if (!clientName.trim()) {
       setValidationError('Please enter or select a client business name.');
+      return;
+    }
+
+    // Strict Operational Safeguards for Blacklisted / Closed Accounts
+    if (isBlacklisted) {
+      setValidationError(
+        `Customer "${selectedCustomer?.name || clientName}" is BLACKLISTED. Creating orders or extending credit is strictly prohibited.`
+      );
+      return;
+    }
+
+    if (isClosed) {
+      setValidationError(
+        `Customer "${selectedCustomer?.name || clientName}" account is CLOSED. Please reactivate the account in the Customer Directory before creating orders.`
+      );
       return;
     }
 
@@ -344,13 +361,44 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
                 <option value="">-- Choose from Registered Customer Directory --</option>
                 {customers.map((c) => {
                   const avail = Math.max(0, c.creditLimitUSD - c.outstandingBalanceUSD);
+                  const statusPrefix = c.status === 'Blacklisted' ? '⛔ [BLACKLISTED] ' : c.status === 'Closed' ? '🔒 [CLOSED] ' : '';
                   return (
-                    <option key={c.id} value={c.id}>
-                      {c.name} ({c.companyName}) — Limit: {formatCurrency(c.creditLimitUSD)} | Avail: {formatCurrency(avail)} | Status: {c.status}
+                    <option key={c.id} value={c.id} disabled={c.status === 'Blacklisted' || c.status === 'Closed'}>
+                      {statusPrefix}{c.name} ({c.companyName}) — Limit: {formatCurrency(c.creditLimitUSD)} | Avail: {formatCurrency(avail)} | Status: {c.status}
                     </option>
                   );
                 })}
               </select>
+            )}
+
+            {/* Blacklisted Warning Banner */}
+            {isBlacklisted && (
+              <div className="p-3.5 bg-rose-900 text-white rounded-xl border border-rose-950 flex items-start gap-2.5 shadow-sm">
+                <AlertTriangle className="w-5 h-5 text-rose-300 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <div className="font-extrabold text-xs text-rose-100 uppercase tracking-wider">
+                    CRITICAL: Account is Blacklisted
+                  </div>
+                  <div className="text-[11px] text-rose-200">
+                    This customer is blacklisted. All order placements, fulfillment allocations, and credit facilities are strictly blocked by compliance policy.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Closed Warning Banner */}
+            {isClosed && (
+              <div className="p-3.5 bg-slate-800 text-white rounded-xl border border-slate-900 flex items-start gap-2.5 shadow-sm">
+                <AlertTriangle className="w-5 h-5 text-slate-300 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <div className="font-extrabold text-xs text-slate-100 uppercase tracking-wider">
+                    Notice: Account is Closed
+                  </div>
+                  <div className="text-[11px] text-slate-300">
+                    This account is closed. To create a new order, reactivate this customer from the Customer Directory first.
+                  </div>
+                </div>
+              </div>
             )}
 
             {/* Live Customer Credit Facility Breakdown */}
@@ -361,10 +409,16 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
                     <div className="text-[10px] uppercase font-bold text-slate-400">Account Status</div>
                     <div className="mt-0.5 flex items-center gap-1">
                       <span className={`w-2 h-2 rounded-full ${
-                        selectedCustomer.status === 'Active' ? 'bg-emerald-500' : selectedCustomer.status === 'Credit Hold' ? 'bg-rose-500' : 'bg-amber-500'
+                        selectedCustomer.status === 'Active' ? 'bg-emerald-500' :
+                        selectedCustomer.status === 'Blacklisted' ? 'bg-rose-600' :
+                        selectedCustomer.status === 'Closed' ? 'bg-slate-500' :
+                        selectedCustomer.status === 'Credit Hold' ? 'bg-rose-500' : 'bg-amber-500'
                       }`} />
                       <span className={`font-bold text-xs ${
-                        selectedCustomer.status === 'Active' ? 'text-emerald-700' : selectedCustomer.status === 'Credit Hold' ? 'text-rose-700' : 'text-amber-700'
+                        selectedCustomer.status === 'Active' ? 'text-emerald-700' :
+                        selectedCustomer.status === 'Blacklisted' ? 'text-rose-700 font-extrabold' :
+                        selectedCustomer.status === 'Closed' ? 'text-slate-700' :
+                        selectedCustomer.status === 'Credit Hold' ? 'text-rose-700' : 'text-amber-700'
                       }`}>
                         {selectedCustomer.status}
                       </span>
@@ -772,7 +826,7 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={saleType === 'Credit Sale (On Account)' && (isCreditHold || isOverCreditLimit) && !creditOverrideConfirmed}
+              disabled={isBlacklisted || isClosed || (saleType === 'Credit Sale (On Account)' && (isCreditHold || isOverCreditLimit) && !creditOverrideConfirmed)}
               className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white font-bold shadow-md shadow-indigo-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Plus className="w-4 h-4" />

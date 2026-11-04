@@ -5784,3 +5784,33 @@ BEGIN
 END $$;
 
 
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- START OF 031_app_settings_rls_hardening.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+GRANT SELECT, INSERT, UPDATE ON public.app_settings TO authenticated;
+
+DROP POLICY IF EXISTS "app_settings_insert" ON public.app_settings;
+CREATE POLICY "app_settings_insert" ON public.app_settings
+FOR INSERT TO authenticated
+WITH CHECK (
+    (public.is_admin() OR public.is_platform_admin())
+    AND organization_id = public.current_org_id()
+    AND public.org_has_write_access()
+);
+
+DROP POLICY IF EXISTS "app_settings_update" ON public.app_settings;
+CREATE POLICY "app_settings_update" ON public.app_settings
+FOR UPDATE TO authenticated
+USING (
+    (public.is_admin() OR public.is_platform_admin())
+    AND organization_id = public.current_org_id()
+    AND public.org_has_write_access()
+)
+WITH CHECK (
+    (public.is_admin() OR public.is_platform_admin())
+    AND organization_id = public.current_org_id()
+    AND public.org_has_write_access()
+);

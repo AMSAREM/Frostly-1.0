@@ -24,7 +24,8 @@ import {
   RefreshCw,
   LogOut,
   Building2,
-  FileText
+  FileText,
+  Receipt
 } from 'lucide-react';
 import { SystemNotification } from '../types';
 import { syncManager, SyncState } from '../sync/syncManager';
@@ -44,6 +45,7 @@ interface HeaderProps {
   markNotificationRead: (id: string) => void;
   onOpenNewBatchModal: () => void;
   onOpenNewOrderModal: () => void;
+  onOpenRecordExpenseModal?: () => void;
   activeAlertCount: number;
   onOpenInstallModal?: () => void;
   isInstallable?: boolean;
@@ -70,6 +72,7 @@ export const Header: React.FC<HeaderProps> = ({
   markNotificationRead,
   onOpenNewBatchModal,
   onOpenNewOrderModal,
+  onOpenRecordExpenseModal,
   activeAlertCount,
   onOpenInstallModal,
   isInstallable = false,
@@ -368,6 +371,23 @@ export const Header: React.FC<HeaderProps> = ({
                     <div>
                       <div>Log Inward Catch</div>
                       <div className="text-[10px] font-normal text-slate-400">Harvester vessel dock intake</div>
+                    </div>
+                  </button>
+
+                  <button
+                    id="header-quick-record-expense-btn"
+                    onClick={() => {
+                      setShowQuickAddMenu(false);
+                      onOpenRecordExpenseModal?.();
+                    }}
+                    className="w-full flex items-center gap-2.5 p-2.5 rounded-xl text-left hover:bg-slate-50 transition-colors cursor-pointer text-xs font-bold text-slate-800 border-t border-slate-100 pt-2"
+                  >
+                    <div className="p-1.5 rounded-lg bg-rose-50 text-rose-600">
+                      <Receipt className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div>Record Expense</div>
+                      <div className="text-[10px] font-normal text-slate-400">OpEx &amp; operational costs</div>
                     </div>
                   </button>
                 </div>

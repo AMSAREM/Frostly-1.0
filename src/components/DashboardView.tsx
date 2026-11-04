@@ -23,7 +23,8 @@ import {
   ShoppingBag,
   CreditCard,
   Building2,
-  FileText
+  FileText,
+  Receipt
 } from 'lucide-react';
 import { 
   InventoryBatch, 
@@ -51,6 +52,7 @@ interface DashboardViewProps {
   onOpenNewBatch: () => void;
   onOpenNewOrder?: () => void;
   onOpenNewOrderModal?: () => void;
+  onOpenRecordExpense?: () => void;
   useImperial: boolean;
   companyName?: string;
 }
@@ -69,6 +71,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenNewBatch,
   onOpenNewOrder,
   onOpenNewOrderModal,
+  onOpenRecordExpense,
   useImperial,
   companyName
 }) => {
@@ -120,8 +123,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 lg:flex lg:flex-wrap xl:flex-nowrap items-stretch sm:items-center gap-2 sm:gap-2.5 w-full lg:w-auto min-w-0 flex-initial">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:flex lg:flex-wrap xl:flex-nowrap items-stretch sm:items-center gap-2 sm:gap-2.5 w-full lg:w-auto min-w-0 flex-initial">
           <button
+            id="dashboard-quick-retail-pos-btn"
             onClick={() => onSelectTab('retail_wholesale')}
             className="w-full lg:w-auto flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0"
           >
@@ -129,6 +133,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span className="truncate">Retail POS</span>
           </button>
           <button
+            id="dashboard-quick-harvester-catch-btn"
             onClick={() => onSelectTab('suppliers')}
             className="w-full lg:w-auto flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0"
           >
@@ -136,6 +141,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span className="truncate">Harvester Catch</span>
           </button>
           <button
+            id="dashboard-quick-record-expense-btn"
+            onClick={onOpenRecordExpense}
+            className="w-full lg:w-auto flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0"
+            title="Quickly record an operating expense or disbursement"
+          >
+            <Receipt className="w-4 h-4 shrink-0" />
+            <span className="truncate">Record Expense</span>
+          </button>
+          <button
+            id="dashboard-quick-financials-btn"
             onClick={() => onSelectTab('financials')}
             className="w-full lg:w-auto flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer min-w-0"
           >
@@ -378,7 +393,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="pt-2.5 sm:pt-3 border-t border-white/10 flex items-center justify-between text-xs font-bold text-amber-300">
             <span>View Full Financials</span>
-            <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+            {onOpenRecordExpense ? (
+              <button
+                type="button"
+                id="dashboard-card-quick-expense-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenRecordExpense();
+                }}
+                className="px-2 py-0.5 rounded-lg bg-rose-500/30 hover:bg-rose-500/50 text-rose-200 border border-rose-400/40 text-[11px] font-bold transition-colors cursor-pointer flex items-center gap-1"
+                title="Quick record operating expense"
+              >
+                <Plus className="w-3 h-3" />
+                <span>+ Expense</span>
+              </button>
+            ) : (
+              <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+            )}
           </div>
         </div>
       </div>

@@ -44,6 +44,25 @@ function getGoogleSmtpTransporter() {
   });
 }
 
+// Token verification cache to eliminate repetitive /auth/v1/user network hops
+interface CachedUserSession {
+  user: any;
+  expiresAt: number;
+}
+const tokenVerificationCache = new Map<string, CachedUserSession>();
+
+export async function verifySessionToken(adminClient: any, token: string): Promise<{ user: any; error: any }> {
+  const cached = tokenVerificationCache.get(token);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { user: cached.user, error: null };
+  }
+  const { data, error } = await adminClient.auth.getUser(token);
+  if (!error && data?.user) {
+    tokenVerificationCache.set(token, { user: data.user, expiresAt: Date.now() + 60_000 });
+  }
+  return { user: data?.user || null, error };
+}
+
 export async function createExpressApp(options: { withVite?: boolean; adminClient?: any } = {}) {
   const app = express();
   const PORT = 3000;
@@ -589,13 +608,11 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
     }
 
     try {
-      const { data: userData, error: userErr } = await adminClient.auth.getUser(token);
-      if (userErr || !userData?.user) {
+      const { user, error: userErr } = await verifySessionToken(adminClient, token);
+      if (userErr || !user) {
         res.status(401).json({ error: 'Invalid or expired session token.' });
         return;
       }
-
-      const user = userData.user;
 
       // 1. Fetch staff profile
       let { data: staffProfile } = await adminClient
@@ -786,13 +803,11 @@ export async function createExpressApp(options: { withVite?: boolean; adminClien
     }
 
     try {
-      const { data: userData, error: userErr } = await adminClient.auth.getUser(token);
-      if (userErr || !userData?.user) {
+      const { user, error: userErr } = await verifySessionToken(adminClient, token);
+      if (userErr || !user) {
         res.status(401).json({ error: 'Unauthorized: Invalid or expired session token.' });
         return;
       }
-
-      const user = userData.user;
       const targetOrgId = (req.body?.organizationId || req.query?.organizationId) as string | undefined;
 
       // Look up caller's staff profile

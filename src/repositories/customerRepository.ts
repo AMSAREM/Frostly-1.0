@@ -42,6 +42,13 @@ export class CustomerRepository extends BaseRepository<Customer, DatabaseCustome
 
     return this.save(updated, false);
   }
+
+  /**
+   * Delete customer account
+   */
+  public async deleteCustomer(id: string): Promise<void> {
+    return this.delete(id);
+  }
 }
 
 export const customerRepository = new CustomerRepository();

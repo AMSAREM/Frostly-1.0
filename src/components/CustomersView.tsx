@@ -22,19 +22,24 @@ import {
   Save,
   Tag,
   Receipt,
-  RotateCcw,
   ArrowDownLeft,
   ArrowUpRight,
   Eye,
   Download,
   Printer,
-  FileX
+  FileX,
+  Trash2,
+  Archive,
+  RotateCcw,
+  Ban
 } from 'lucide-react';
 import { Customer, ClientOrder, FinancialLedgerEntry, CustomerType, PricingTier, PaymentTerms, CustomerStatus } from '../types';
 import { CustomerLedgerTab } from './CustomerLedgerTab';
 import { RecordPaymentModal } from './Modals/RecordPaymentModal';
 import { PaymentReceiptModal } from './Modals/PaymentReceiptModal';
 import { VoidOrderModal } from './Modals/VoidOrderModal';
+import { DeleteCustomerModal } from './Modals/DeleteCustomerModal';
+import { AccountStatusModal } from './Modals/AccountStatusModal';
 
 interface CustomersViewProps {
   customers: Customer[];
@@ -55,6 +60,8 @@ interface CustomersViewProps {
   onReversePayment?: (paymentEntryId: string, customerId: string, amount: number, reason: string) => void;
   onOpenInvoice?: (order: ClientOrder) => void;
   onVoidOrder?: (orderId: string, reason: string, voidedBy: string) => Promise<void> | void;
+  onDeleteCustomer?: (customerId: string) => Promise<void> | void;
+  onUpdateCustomerStatus?: (customerId: string, status: CustomerStatus, reason?: string) => Promise<void> | void;
   formatCurrency: (amount: number) => string;
 }
 
@@ -69,6 +76,8 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   onReversePayment,
   onOpenInvoice,
   onVoidOrder,
+  onDeleteCustomer,
+  onUpdateCustomerStatus,
   formatCurrency
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -103,6 +112,59 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
       }
     }
     setOrderToVoid(null);
+  };
+
+  // Customer Deletion & Status Management State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
+  const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
+  const [statusModalCustomer, setStatusModalCustomer] = useState<Customer | null>(null);
+  const [statusModalAction, setStatusModalAction] = useState<'blacklist' | 'close' | 'reactivate' | 'manage'>('manage');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+
+  const handleOpenStatusModal = (cust: Customer, action: 'blacklist' | 'close' | 'reactivate' | 'manage') => {
+    setStatusModalCustomer(cust);
+    setStatusModalAction(action);
+    setIsStatusModalOpen(true);
+  };
+
+  const handleOpenDeleteModal = (cust: Customer) => {
+    setCustomerToDelete(cust);
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleConfirmStatusChange = async (newStatus: CustomerStatus, reason: string) => {
+    if (!statusModalCustomer) return;
+    const nowIso = new Date().toISOString();
+    const updated: Customer = {
+      ...statusModalCustomer,
+      status: newStatus,
+      statusReason: reason || statusModalCustomer.statusReason,
+      statusUpdatedAt: nowIso,
+      notes: reason 
+        ? `${statusModalCustomer.notes ? statusModalCustomer.notes + ' | ' : ''}[${nowIso.split('T')[0]}] Status set to ${newStatus}: ${reason}`
+        : statusModalCustomer.notes
+    };
+
+    if (onUpdateCustomerStatus) {
+      await onUpdateCustomerStatus(statusModalCustomer.id, newStatus, reason);
+    } else {
+      onUpdateCustomer(updated);
+    }
+
+    if (selectedCustomer?.id === statusModalCustomer.id) {
+      setSelectedCustomer(updated);
+      setFacilityStatus(newStatus);
+    }
+  };
+
+  const handleConfirmDeleteCustomer = async (customerId: string) => {
+    if (onDeleteCustomer) {
+      await onDeleteCustomer(customerId);
+    }
+    if (selectedCustomer?.id === customerId) {
+      setSelectedCustomer(null);
+    }
   };
 
   // Credit Facility Quick Adjustment State
@@ -166,12 +228,13 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
 
   const filteredCustomers = customers.filter(cust => {
     const matchesType = filterType === 'all' || cust.type === filterType;
+    const matchesStatus = filterStatus === 'all' || cust.status === filterStatus;
     const matchesSearch = 
       cust.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       cust.companyName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       cust.contactPerson.toLowerCase().includes(searchQuery.toLowerCase()) ||
       cust.city.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesType && matchesSearch;
+    return matchesType && matchesStatus && matchesSearch;
   });
 
   const handleCreateCustomerSubmit = (e: React.FormEvent) => {
@@ -293,21 +356,44 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
           />
         </div>
 
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 sm:pb-0">
-          <span className="text-xs text-slate-400 font-medium shrink-0">Type:</span>
-          {['all', 'Wholesale Restaurant', 'Hotel & Resort', 'Supermarket / Retailer', 'Fishmonger / Distributor', 'Direct Retail VIP'].map((t) => (
-            <button
-              key={t}
-              onClick={() => setFilterType(t)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
-                filterType === t
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              {t === 'all' ? 'All Channels' : t}
-            </button>
-          ))}
+        <div className="flex flex-col lg:flex-row items-start lg:items-center gap-2 overflow-x-auto no-scrollbar pb-1 sm:pb-0">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            <span className="text-[11px] text-slate-400 font-bold uppercase shrink-0">Channel:</span>
+            {['all', 'Wholesale Restaurant', 'Hotel & Resort', 'Supermarket / Retailer', 'Fishmonger / Distributor', 'Direct Retail VIP'].map((t) => (
+              <button
+                key={t}
+                onClick={() => setFilterType(t)}
+                className={`px-2.5 py-1 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+                  filterType === t
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {t === 'all' ? 'All Channels' : t}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            <span className="text-[11px] text-slate-400 font-bold uppercase shrink-0">Status:</span>
+            {['all', 'Active', 'Credit Hold', 'Closed', 'Blacklisted'].map((st) => (
+              <button
+                key={st}
+                onClick={() => setFilterStatus(st)}
+                className={`px-2.5 py-1 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+                  filterStatus === st
+                    ? st === 'Blacklisted' 
+                      ? 'bg-rose-700 text-white' 
+                      : st === 'Closed' 
+                      ? 'bg-slate-700 text-white' 
+                      : 'bg-indigo-700 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {st === 'all' ? 'All Statuses' : st}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -324,13 +410,25 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                   <div className="text-[11px] text-slate-400">{cust.city}</div>
                 </div>
                 <div className="text-right">
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                    cust.status === 'Credit Hold' 
-                      ? 'bg-rose-100 text-rose-800' 
-                      : 'bg-emerald-100 text-emerald-800'
-                  }`}>
-                    {cust.status}
-                  </span>
+                  {cust.status === 'Blacklisted' ? (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-900 text-rose-100 border border-rose-950 flex items-center gap-1 shadow-2xs">
+                      <ShieldAlert className="w-3 h-3 text-rose-300" />
+                      <span>Blacklisted</span>
+                    </span>
+                  ) : cust.status === 'Closed' ? (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-700 text-slate-100 border border-slate-800 flex items-center gap-1">
+                      <Archive className="w-3 h-3 text-slate-300" />
+                      <span>Closed</span>
+                    </span>
+                  ) : (
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      cust.status === 'Credit Hold' 
+                        ? 'bg-rose-100 text-rose-800 border border-rose-200' 
+                        : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                    }`}>
+                      {cust.status}
+                    </span>
+                  )}
                   <div className="text-[10px] text-slate-400 mt-1 font-mono-code">{cust.paymentTerms}</div>
                 </div>
               </div>
@@ -351,36 +449,56 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5 pt-1">
+              <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100">
                 <button
                   onClick={() => handleOpenLedger(cust)}
-                  className="flex-1 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-xl text-xs font-bold text-center border border-emerald-200 transition-colors cursor-pointer flex items-center justify-center gap-1"
+                  className="flex-1 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-xl text-xs font-bold text-center border border-emerald-200 transition-colors cursor-pointer flex items-center justify-center gap-1"
                 >
                   <Receipt className="w-3.5 h-3.5" />
                   <span>Ledger</span>
                 </button>
                 <button
                   onClick={() => handleOpenCustomerProfile(cust, 'terms')}
-                  className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold text-center transition-colors cursor-pointer"
+                  className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold text-center transition-colors cursor-pointer"
                 >
                   Profile
                 </button>
-                {isOverdue ? (
+
+                {cust.status === 'Blacklisted' || cust.status === 'Closed' ? (
                   <button
-                    onClick={() => handleOpenRecordPayment(cust)}
-                    className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold text-center transition-colors cursor-pointer flex items-center justify-center gap-1"
+                    onClick={() => handleOpenStatusModal(cust, 'reactivate')}
+                    className="py-1.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold text-center transition-colors cursor-pointer flex items-center justify-center gap-1 shadow-xs"
+                    title="Reactivate Account"
                   >
-                    <CreditCard className="w-3.5 h-3.5" />
-                    <span>Pay</span>
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reopen</span>
                   </button>
                 ) : (
-                  <button
-                    onClick={() => onSelectCustomerForOrder(cust)}
-                    className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold text-center transition-colors cursor-pointer"
-                  >
-                    Order
-                  </button>
+                  <>
+                    <button
+                      onClick={() => handleOpenStatusModal(cust, 'close')}
+                      className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors cursor-pointer"
+                      title="Close Account"
+                    >
+                      <Archive className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleOpenStatusModal(cust, 'blacklist')}
+                      className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl transition-colors cursor-pointer"
+                      title="Blacklist Account"
+                    >
+                      <Ban className="w-3.5 h-3.5" />
+                    </button>
+                  </>
                 )}
+
+                <button
+                  onClick={() => handleOpenDeleteModal(cust)}
+                  className="p-1.5 bg-slate-100 hover:bg-rose-50 text-slate-500 hover:text-rose-600 rounded-xl transition-colors cursor-pointer"
+                  title="Delete Account"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               </div>
             </div>
           );
@@ -416,11 +534,21 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                             B2B
                           </span>
                         )}
-                        {cust.status === 'Credit Hold' && (
+                        {cust.status === 'Blacklisted' ? (
+                          <span className="px-1.5 py-0.5 text-[9px] font-extrabold bg-rose-900 text-rose-100 rounded-md border border-rose-950 flex items-center gap-1">
+                            <ShieldAlert className="w-2.5 h-2.5 text-rose-300" />
+                            Blacklisted
+                          </span>
+                        ) : cust.status === 'Closed' ? (
+                          <span className="px-1.5 py-0.5 text-[9px] font-bold bg-slate-700 text-slate-100 rounded-md border border-slate-800 flex items-center gap-1">
+                            <Archive className="w-2.5 h-2.5 text-slate-300" />
+                            Closed
+                          </span>
+                        ) : cust.status === 'Credit Hold' ? (
                           <span className="px-1.5 py-0.5 text-[9px] font-bold bg-rose-100 text-rose-800 rounded-md border border-rose-200">
                             Hold
                           </span>
-                        )}
+                        ) : null}
                       </div>
                       <div className="text-slate-500 text-[11px] flex items-center gap-1 mt-0.5">
                         <Building2 className="w-3 h-3 text-slate-400" />
@@ -447,6 +575,9 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                         <span>{cust.paymentTerms}</span>
                         {cust.status === 'Credit Hold' && (
                           <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
+                        )}
+                        {cust.status === 'Blacklisted' && (
+                          <Ban className="w-3.5 h-3.5 text-rose-600" />
                         )}
                       </div>
                       <div className="text-slate-500 text-[11px]">
@@ -495,23 +626,58 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                         Profile
                       </button>
 
-                      {isOverdue ? (
+                      {cust.status === 'Blacklisted' || cust.status === 'Closed' ? (
                         <button
-                          onClick={() => handleOpenRecordPayment(cust)}
-                          className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1"
-                          title="Record Payment Received"
+                          onClick={() => handleOpenStatusModal(cust, 'reactivate')}
+                          className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1 shadow-xs"
+                          title="Reactivate Account"
                         >
-                          <CreditCard className="w-3.5 h-3.5" />
-                          <span>Pay</span>
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>Reopen</span>
                         </button>
                       ) : (
-                        <button
-                          onClick={() => onSelectCustomerForOrder(cust)}
-                          className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition-all cursor-pointer"
-                        >
-                          Order
-                        </button>
+                        <>
+                          {isOverdue ? (
+                            <button
+                              onClick={() => handleOpenRecordPayment(cust)}
+                              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                              title="Record Payment Received"
+                            >
+                              <CreditCard className="w-3.5 h-3.5" />
+                              <span>Pay</span>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => onSelectCustomerForOrder(cust)}
+                              className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition-all cursor-pointer"
+                            >
+                              Order
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleOpenStatusModal(cust, 'close')}
+                            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-all cursor-pointer inline-flex items-center"
+                            title="Close Account"
+                          >
+                            <Archive className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleOpenStatusModal(cust, 'blacklist')}
+                            className="p-1.5 text-rose-400 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-all cursor-pointer inline-flex items-center"
+                            title="Blacklist Account"
+                          >
+                            <Ban className="w-3.5 h-3.5" />
+                          </button>
+                        </>
                       )}
+
+                      <button
+                        onClick={() => handleOpenDeleteModal(cust)}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer inline-flex items-center"
+                        title="Delete Account"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </td>
                   </tr>
                 );
@@ -562,6 +728,65 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* Status Alert Banner in Profile if Blacklisted or Closed */}
+            {selectedCustomer.status === 'Blacklisted' && (
+              <div className="p-4 bg-rose-900 text-white rounded-2xl flex items-start justify-between gap-4 shadow-md">
+                <div className="flex items-start gap-3">
+                  <ShieldAlert className="w-5 h-5 text-rose-300 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <div className="font-extrabold text-xs text-rose-100 uppercase tracking-wider">
+                      Account Status: Blacklisted
+                    </div>
+                    <div className="text-xs text-rose-200">
+                      This customer account is currently blacklisted. Order issuance, inventory allocation, and credit facilities are strictly blocked by corporate policy.
+                      {selectedCustomer.notes && (
+                        <span className="block mt-1 text-[11px] text-rose-300 italic">
+                          Audit Trail: {selectedCustomer.notes}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleOpenStatusModal(selectedCustomer, 'reactivate')}
+                  className="shrink-0 px-3 py-1.5 bg-rose-800 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border border-rose-700 shadow-xs"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reactivate Account</span>
+                </button>
+              </div>
+            )}
+
+            {selectedCustomer.status === 'Closed' && (
+              <div className="p-4 bg-slate-800 text-white rounded-2xl flex items-start justify-between gap-4 shadow-md">
+                <div className="flex items-start gap-3">
+                  <Archive className="w-5 h-5 text-slate-300 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <div className="font-extrabold text-xs text-slate-100 uppercase tracking-wider">
+                      Account Status: Closed
+                    </div>
+                    <div className="text-xs text-slate-300">
+                      This account is closed. No new wholesale orders can be booked until reactivated. Outstanding balances remain collectible.
+                      {selectedCustomer.notes && (
+                        <span className="block mt-1 text-[11px] text-slate-400 italic">
+                          Audit Trail: {selectedCustomer.notes}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleOpenStatusModal(selectedCustomer, 'reactivate')}
+                  className="shrink-0 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border border-slate-600 shadow-xs"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reactivate Account</span>
+                </button>
+              </div>
+            )}
 
             {/* Profile Tab Navigation Strip */}
             <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
@@ -836,6 +1061,8 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                           >
                             <option value="Active">Active (Good Standing)</option>
                             <option value="Credit Hold">Credit Hold (Suspended)</option>
+                            <option value="Closed">Closed (Retired)</option>
+                            <option value="Blacklisted">Blacklisted (Policy Block)</option>
                             <option value="Pending Review">Pending Review</option>
                             <option value="Inactive">Inactive</option>
                           </select>
@@ -911,34 +1138,78 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                   </div>
                   {selectedCustomer.notes && (
                     <div className="pt-2 border-t border-slate-200 text-slate-600 italic">
-                      <strong>Notes:</strong> {selectedCustomer.notes}
+                      <strong>Notes & Audit:</strong> {selectedCustomer.notes}
                     </div>
                   )}
                 </div>
               </div>
             )}
 
-            {/* Profile Footer */}
-            <div className="flex gap-3 pt-3 border-t border-slate-100">
-              {selectedCustomer.outstandingBalanceUSD > 0 && (
+            {/* Profile Footer with Full Lifecycle Actions */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
+              <div className="flex items-center gap-2">
+                {selectedCustomer.status === 'Blacklisted' || selectedCustomer.status === 'Closed' ? (
+                  <button
+                    onClick={() => handleOpenStatusModal(selectedCustomer, 'reactivate')}
+                    className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Reactivate Account</span>
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => handleOpenStatusModal(selectedCustomer, 'close')}
+                      className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                      title="Close this customer account"
+                    >
+                      <Archive className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Close Account</span>
+                    </button>
+                    <button
+                      onClick={() => handleOpenStatusModal(selectedCustomer, 'blacklist')}
+                      className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                      title="Blacklist customer due to dispute or risk"
+                    >
+                      <Ban className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Blacklist</span>
+                    </button>
+                  </>
+                )}
+
                 <button
-                  onClick={() => handleOpenRecordPayment(selectedCustomer)}
-                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+                  onClick={() => handleOpenDeleteModal(selectedCustomer)}
+                  className="px-3 py-2 bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                  title="Permanently delete customer (requires clean balance and zero open orders)"
                 >
-                  <DollarSign className="w-4 h-4" />
-                  <span>Receive Payment ({formatCurrency(selectedCustomer.outstandingBalanceUSD)})</span>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete</span>
                 </button>
-              )}
-              <button
-                onClick={() => {
-                  const cust = selectedCustomer;
-                  setSelectedCustomer(null);
-                  onSelectCustomerForOrder(cust);
-                }}
-                className="flex-1 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition-all cursor-pointer"
-              >
-                Create New Order
-              </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {selectedCustomer.outstandingBalanceUSD > 0 && (
+                  <button
+                    onClick={() => handleOpenRecordPayment(selectedCustomer)}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
+                  >
+                    <DollarSign className="w-4 h-4" />
+                    <span>Receive Payment ({formatCurrency(selectedCustomer.outstandingBalanceUSD)})</span>
+                  </button>
+                )}
+                {selectedCustomer.status !== 'Blacklisted' && selectedCustomer.status !== 'Closed' && (
+                  <button
+                    onClick={() => {
+                      const cust = selectedCustomer;
+                      setSelectedCustomer(null);
+                      onSelectCustomerForOrder(cust);
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition-all cursor-pointer"
+                  >
+                    Create New Order
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1171,6 +1442,35 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
         customer={selectedCustomer}
         formatCurrency={formatCurrency}
         onConfirmVoid={handleConfirmVoid}
+      />
+
+      {/* Delete Customer Account Modal */}
+      <DeleteCustomerModal
+        isOpen={isDeleteModalOpen}
+        customer={customerToDelete}
+        orders={orders}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setCustomerToDelete(null);
+        }}
+        onConfirmDelete={handleConfirmDeleteCustomer}
+        onCloseAccount={(cust) => handleOpenStatusModal(cust, 'close')}
+        formatCurrency={formatCurrency}
+      />
+
+      {/* Account Status / Blacklist / Close / Reactivate Modal */}
+      <AccountStatusModal
+        isOpen={isStatusModalOpen}
+        accountType="customer"
+        accountId={statusModalCustomer?.id || ''}
+        accountName={statusModalCustomer?.companyName || statusModalCustomer?.name || ''}
+        currentStatus={statusModalCustomer?.status || 'Active'}
+        targetAction={statusModalAction}
+        onClose={() => {
+          setIsStatusModalOpen(false);
+          setStatusModalCustomer(null);
+        }}
+        onConfirm={handleConfirmStatusChange}
       />
 
     </div>

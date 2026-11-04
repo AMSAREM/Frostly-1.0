@@ -61,7 +61,9 @@ import {
   DEFAULT_SETTINGS,
   StorageZone,
   InventoryAdjustmentAccount,
-  InventoryStockAdjustment
+  InventoryStockAdjustment,
+  CustomerStatus,
+  SupplierStatus
 } from './types';
 import { formatCurrency } from './utils/formatters';
 import { getSpeciesIdFromName, getSpeciesTaxonomy } from './utils/speciesHelper';
@@ -502,8 +504,8 @@ export default function App() {
   }, [stockAdjustments, staffProfile?.organization_id]);
 
   useEffect(() => {
-    settingsRepository.saveSettings(settings).catch(console.warn);
-  }, [settings]);
+    settingsRepository.setLocalCache(settings, staffProfile?.organization_id);
+  }, [settings, staffProfile?.organization_id]);
 
   // Helper to reconcile Dual-Price & Retail catalog products with cold-chain inventory lots
   const reconcileCatalogWithInventory = (
@@ -595,10 +597,12 @@ export default function App() {
 
   // Auto-reconcile catalog products to ensure every retail/dual product has a physical lot in Inventory Ledger
   const reconciledProductCountRef = useRef<number>(-1);
+  const batchesRef = useRef(batches);
+  batchesRef.current = batches;
 
   useEffect(() => {
     if (products.length > 0 && reconciledProductCountRef.current !== products.length) {
-      const { updatedBatches, newLots } = reconcileCatalogWithInventory(products, batches);
+      const { updatedBatches, newLots } = reconcileCatalogWithInventory(products, batchesRef.current);
       if (newLots.length > 0) {
         setBatches(updatedBatches);
         newLots.forEach(lot => {
@@ -609,7 +613,7 @@ export default function App() {
       }
       reconciledProductCountRef.current = products.length;
     }
-  }, [products, batches]);
+  }, [products]);
 
   // Settings & Data Management Handlers
   const handleUpdateSettings = (newSettings: AppSettings) => {
@@ -1199,6 +1203,55 @@ export default function App() {
     });
   };
 
+  const handleDeleteCustomer = async (customerId: string) => {
+    const cust = customers.find(c => c.id === customerId);
+    setCustomers(prev => prev.filter(c => c.id !== customerId));
+    try {
+      await customerRepository.delete(customerId);
+      addNotification({
+        type: 'system',
+        title: `Customer Account Deleted`,
+        message: `${cust?.companyName || cust?.name || customerId} has been permanently deleted.`,
+        urgency: 'low'
+      });
+    } catch (err) {
+      console.warn('[App] customerRepository delete error:', err);
+    }
+  };
+
+  const handleUpdateCustomerStatus = async (customerId: string, newStatus: CustomerStatus, reason?: string) => {
+    let updatedCustomer: Customer | undefined;
+    const nowIso = new Date().toISOString();
+    setCustomers(prev => prev.map(c => {
+      if (c.id !== customerId) return c;
+      const updated: Customer = {
+        ...c,
+        status: newStatus,
+        statusReason: reason || c.statusReason,
+        statusUpdatedAt: nowIso,
+        notes: reason 
+          ? `${c.notes ? c.notes + ' | ' : ''}[${nowIso.split('T')[0]}] Status set to ${newStatus}: ${reason}`
+          : c.notes
+      };
+      updatedCustomer = updated;
+      return updated;
+    }));
+
+    if (updatedCustomer) {
+      try {
+        await customerRepository.save(updatedCustomer, false);
+        addNotification({
+          type: 'order_update',
+          title: `Customer Status: ${newStatus}`,
+          message: `${updatedCustomer.companyName || updatedCustomer.name} marked as ${newStatus}${reason ? `: ${reason}` : '.'}`,
+          urgency: newStatus === 'Blacklisted' ? 'high' : 'low'
+        });
+      } catch (err) {
+        console.warn('[App] Error updating customer status in repository:', err);
+      }
+    }
+  };
+
   const handleSelectCustomerForOrder = (customer: Customer) => {
     setPreselectedCustomerId(customer.id);
     setIsNewOrderModalOpen(true);
@@ -1216,6 +1269,55 @@ export default function App() {
       message: `${newSup.name} (${newSup.portLocation}) registered.`,
       urgency: 'low'
     });
+  };
+
+  const handleDeleteSupplier = async (supplierId: string) => {
+    const sup = suppliers.find(s => s.id === supplierId);
+    setSuppliers(prev => prev.filter(s => s.id !== supplierId));
+    try {
+      await supplierRepository.delete(supplierId);
+      addNotification({
+        type: 'system',
+        title: `Supplier Account Deleted`,
+        message: `${sup?.name || supplierId} has been permanently deleted.`,
+        urgency: 'low'
+      });
+    } catch (err) {
+      console.warn('[App] supplierRepository delete error:', err);
+    }
+  };
+
+  const handleUpdateSupplierStatus = async (supplierId: string, newStatus: SupplierStatus, reason?: string) => {
+    let updatedSupplier: Supplier | undefined;
+    const nowIso = new Date().toISOString();
+    setSuppliers(prev => prev.map(s => {
+      if (s.id !== supplierId) return s;
+      const updated: Supplier = {
+        ...s,
+        status: newStatus,
+        statusReason: reason || s.statusReason,
+        statusUpdatedAt: nowIso,
+        notes: reason 
+          ? `${s.notes ? s.notes + ' | ' : ''}[${nowIso.split('T')[0]}] Status set to ${newStatus}: ${reason}`
+          : s.notes
+      };
+      updatedSupplier = updated;
+      return updated;
+    }));
+
+    if (updatedSupplier) {
+      try {
+        await supplierRepository.save(updatedSupplier, false);
+        addNotification({
+          type: 'order_update',
+          title: `Supplier Status: ${newStatus}`,
+          message: `${updatedSupplier.name} status updated to ${newStatus}${reason ? `: ${reason}` : '.'}`,
+          urgency: newStatus === 'Blacklisted' ? 'high' : 'low'
+        });
+      } catch (err) {
+        console.warn('[App] Error updating supplier status in repository:', err);
+      }
+    }
   };
 
   const handleAddPurchaseOrder = (newPO: PurchaseOrderLanding) => {
@@ -2083,6 +2185,8 @@ export default function App() {
             onReversePayment={handleReversePayment}
             onOpenInvoice={(o) => setInvoiceOrder(o)}
             onVoidOrder={handleVoidOrder}
+            onDeleteCustomer={handleDeleteCustomer}
+            onUpdateCustomerStatus={handleUpdateCustomerStatus}
             formatCurrency={formatAppCurrency}
           />
         )}
@@ -2096,6 +2200,8 @@ export default function App() {
             onAddPurchaseOrder={handleAddPurchaseOrder}
             onRecordPayment={handleRecordPayment}
             onReversePayment={handleReverseSupplierPayment}
+            onDeleteSupplier={handleDeleteSupplier}
+            onUpdateSupplierStatus={handleUpdateSupplierStatus}
             formatCurrency={formatAppCurrency}
           />
         )}

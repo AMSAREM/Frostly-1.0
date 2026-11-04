@@ -55,29 +55,41 @@ export class SettingsRepository {
     const orgId = await this.getOrganizationId();
     this.setLocalCache(settings, orgId);
 
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && orgId && orgId !== 'org-frostly-hq' && orgId !== '00000000-0000-0000-0000-000000000000') {
       try {
         const dbPayload: Record<string, any> = { ...settingsMapper.toDatabase(settings) };
-        if (!dbPayload.organization_id) {
-          dbPayload.organization_id = orgId;
-        }
+        delete dbPayload.id; // Do not hardcode id; allow existing row id to be preserved
+        dbPayload.organization_id = orgId;
 
-        const { error } = await supabase
+        // Use UPDATE first to conform to RLS UPDATE policy
+        const { data: updatedRows, error: updateErr } = await supabase
           .from('app_settings')
-          .upsert(dbPayload, { onConflict: 'organization_id,id' });
+          .update(dbPayload)
+          .eq('organization_id', orgId)
+          .select('id');
 
-        if (error) {
-          console.warn('[SettingsRepository] Error upserting app_settings:', error);
+        if (updateErr) {
+          // If RLS denies update (e.g. non-admin viewer or expired token), record warning
+          console.warn('[SettingsRepository] Supabase settings update notice:', updateErr.message);
+        } else if (!updatedRows || updatedRows.length === 0) {
+          // If no row exists yet for this organization, attempt insert with id = 1
+          dbPayload.id = 1;
+          const { error: insertErr } = await supabase
+            .from('app_settings')
+            .upsert(dbPayload, { onConflict: 'organization_id,id' });
+          if (insertErr) {
+            console.warn('[SettingsRepository] Supabase settings fallback notice:', insertErr.message);
+          }
         }
-      } catch (err) {
-        console.warn('[SettingsRepository] Network error saving app_settings:', err);
+      } catch (err: any) {
+        console.warn('[SettingsRepository] Network error saving app_settings:', err?.message || err);
       }
     }
 
     return settings;
   }
 
-  private getLocalCache(orgId?: string): AppSettings | null {
+  public getLocalCache(orgId?: string): AppSettings | null {
     try {
       const key = this.getScopedStorageKey(orgId);
       if (!key) return null;
@@ -88,7 +100,7 @@ export class SettingsRepository {
     }
   }
 
-  private setLocalCache(settings: AppSettings, orgId?: string): void {
+  public setLocalCache(settings: AppSettings, orgId?: string): void {
     try {
       const key = this.getScopedStorageKey(orgId);
       if (!key) return;
