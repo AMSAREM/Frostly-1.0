@@ -1396,7 +1396,8 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
               {/* Dynamic Cost Fluctuation & Dynamic Margin Intelligence */}
               {(() => {
                 const landingUnitCost = parseFloat(poCostPerKg) || 0;
-                const historicalSpeciesCost = getHistoricalSpeciesCostAverage(batches, poSpeciesName);
+                const historicalSpeciesCostObj = getHistoricalSpeciesCostAverage(batches, poSpeciesName);
+                const historicalSpeciesCost = historicalSpeciesCostObj.avgCostPerKg;
                 const costVariance = calculateCostVariance(landingUnitCost, historicalSpeciesCost);
                 const targetMargin = settings?.targetMarginPct ?? 30;
                 const suggestedWholesale = calculateDynamicWholesalePrice(landingUnitCost, targetMargin);

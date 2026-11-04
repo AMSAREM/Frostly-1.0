@@ -24,7 +24,9 @@ import {
   CreditCard,
   Building2,
   FileText,
-  Receipt
+  Receipt,
+  Target,
+  Boxes
 } from 'lucide-react';
 import { 
   InventoryBatch, 
@@ -92,6 +94,55 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalAR = customers.reduce((sum, c) => sum + c.outstandingBalanceUSD, 0);
   const totalAP = suppliers.reduce((sum, s) => sum + s.outstandingPayableUSD, 0);
 
+  // Executive Overview Widget Calculations
+  // 1. Total Active Inventory: Available unexpired inventory batches
+  const activeBatches = batches.filter(b => b.availableWeightKg > 0);
+  const activeBatchesCount = activeBatches.length;
+  const activeInventoryWeightKg = activeBatches.reduce((sum, b) => sum + b.availableWeightKg, 0);
+  const activeInventoryValueUSD = activeBatches.reduce((sum, b) => sum + (b.availableWeightKg * b.wholesalePricePerKg), 0);
+  const allocatedWeightKg = batches.reduce((sum, b) => sum + (b.allocatedWeightKg || 0), 0);
+
+  // 2. Monthly Revenue Target Progress: Month-to-date sales vs target
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  const daysInCurrentMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+  const currentDayOfMonth = now.getDate();
+  const monthProratedRatio = Math.max(0.05, currentDayOfMonth / daysInCurrentMonth);
+
+  const mtdWholesaleRevenue = orders.filter(o => {
+    if (!o.orderDate) return false;
+    const d = new Date(o.orderDate);
+    return !isNaN(d.getTime()) && d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+  }).reduce((sum, o) => sum + (o.adjustedTotalUSD || o.quotedTotalUSD || 0), 0);
+
+  const mtdRetailRevenue = retailSales.filter(r => {
+    if (!r.timestamp) return false;
+    const d = new Date(r.timestamp);
+    return !isNaN(d.getTime()) && d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+  }).reduce((sum, r) => sum + (r.totalAmount || 0), 0);
+
+  // If order/sales dates are across sample periods or unanchored, fall back gracefully to total revenue
+  const effectiveMonthRevenue = (mtdWholesaleRevenue + mtdRetailRevenue) > 0 
+    ? (mtdWholesaleRevenue + mtdRetailRevenue) 
+    : grossRevenue;
+
+  // Monthly Revenue Target baseline: 120% of current revenue or benchmark $25,000 / GHS benchmark
+  const monthlyRevenueTarget = Math.max(25000, Math.ceil((effectiveMonthRevenue * 1.25) / 5000) * 5000);
+  const revenueTargetProgressPct = monthlyRevenueTarget > 0 
+    ? Math.min(100, Math.round((effectiveMonthRevenue / monthlyRevenueTarget) * 100))
+    : 0;
+
+  // 3. Pending Order Value: Active orders pending fulfillment / transit / delivery
+  const pendingOrders = orders.filter(o => 
+    o.status !== 'Delivered' && o.status !== 'Cancelled' && o.status !== 'Voided'
+  );
+  const pendingOrdersCount = pendingOrders.length;
+  const pendingOrdersValueUSD = pendingOrders.reduce((sum, o) => sum + (o.adjustedTotalUSD || o.quotedTotalUSD || 0), 0);
+  const pendingOrdersWeightKg = pendingOrders.reduce((sum, o) => 
+    sum + o.items.reduce((itemSum, item) => itemSum + (item.actualWeighedKg || item.requestedWeightKg || 0), 0), 0
+  );
+
   const displayCompanyName = companyName || 'Commercial Cold-Chain Operations';
 
   return (
@@ -157,6 +208,176 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <DollarSign className="w-4 h-4 shrink-0" />
             <span className="truncate">Financials &amp; P&amp;L</span>
           </button>
+        </div>
+      </div>
+
+      {/* Executive Summary KPI Widgets (Requested Highlights: Total Active Inventory, Monthly Revenue Target Progress, Pending Order Value) */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-indigo-600" />
+            <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-800 font-heading">
+              Executive Overview
+            </h2>
+          </div>
+          <span className="text-[11px] text-slate-500 font-mono-code">
+            Live Enterprise Telemetry
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
+          {/* Executive Widget 1: Total Active Inventory */}
+          <div 
+            id="executive-kpi-active-inventory"
+            onClick={() => onSelectTab('inventory')}
+            className="bg-gradient-to-br from-indigo-900 via-slate-900 to-slate-950 text-white p-5 rounded-2xl border border-indigo-950/60 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between min-w-0"
+          >
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <Boxes className="w-4.5 h-4.5 text-indigo-300" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-xs font-bold text-indigo-200 uppercase tracking-wider block">
+                      Total Active Inventory
+                    </span>
+                    <span className="text-[11px] text-slate-400 truncate block">
+                      Available across Cryo-Lots
+                    </span>
+                  </div>
+                </div>
+                <span className="text-[11px] font-semibold text-indigo-300 group-hover:text-white flex items-center gap-0.5 shrink-0 transition-colors">
+                  <span>View</span>
+                  <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                </span>
+              </div>
+
+              <div className="mt-4">
+                <div className="text-2xl sm:text-3xl font-black text-white font-mono-code tracking-tight truncate">
+                  {formatWeight(activeInventoryWeightKg, useImperial)}
+                </div>
+                <div className="text-xs font-semibold text-indigo-300 font-mono-code mt-0.5 truncate">
+                  Valued at {formatCurrency(activeInventoryValueUSD)}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-300">
+              <span className="inline-flex items-center gap-1.5 font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                <strong>{activeBatchesCount}</strong> active batches in cold-store
+              </span>
+              <span className="text-slate-400 truncate">
+                {allocatedWeightKg > 0 ? `${formatWeight(allocatedWeightKg, useImperial)} allocated` : '100% unallocated'}
+              </span>
+            </div>
+          </div>
+
+          {/* Executive Widget 2: Monthly Revenue Target Progress */}
+          <div 
+            id="executive-kpi-monthly-target"
+            onClick={() => onSelectTab('financials')}
+            className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between min-w-0"
+          >
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <Target className="w-4.5 h-4.5 text-emerald-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+                      Monthly Revenue Target Progress
+                    </span>
+                    <span className="text-[11px] text-slate-500 truncate block">
+                      Target: {formatCurrency(monthlyRevenueTarget)}
+                    </span>
+                  </div>
+                </div>
+                <span className="text-xs font-bold text-emerald-700 font-mono-code shrink-0">
+                  {revenueTargetProgressPct}%
+                </span>
+              </div>
+
+              <div className="mt-4">
+                <div className="flex items-baseline justify-between gap-2">
+                  <div className="text-2xl sm:text-3xl font-black text-slate-900 font-mono-code tracking-tight truncate">
+                    {formatCurrency(effectiveMonthRevenue)}
+                  </div>
+                  <span className="text-xs font-medium text-slate-400 shrink-0">
+                    of {formatCurrency(monthlyRevenueTarget)}
+                  </span>
+                </div>
+
+                {/* Progress Bar with indicator */}
+                <div className="mt-2.5 w-full bg-slate-100 rounded-full h-2.5 overflow-hidden border border-slate-200/60">
+                  <div 
+                    className="bg-gradient-to-r from-emerald-500 to-teal-600 h-2.5 rounded-full transition-all duration-500"
+                    style={{ width: `${revenueTargetProgressPct}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/70">
+                <TrendingUp className="w-3 h-3 text-emerald-600" />
+                {effectiveMonthRevenue >= monthlyRevenueTarget ? 'Target Achieved' : `${formatCurrency(monthlyRevenueTarget - effectiveMonthRevenue)} remaining`}
+              </span>
+              <span className="text-slate-400 text-[10px] sm:text-[11px] truncate">
+                Day {currentDayOfMonth} of {daysInCurrentMonth}
+              </span>
+            </div>
+          </div>
+
+          {/* Executive Widget 3: Pending Order Value */}
+          <div 
+            id="executive-kpi-pending-orders"
+            onClick={() => onSelectTab('orders')}
+            className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between min-w-0"
+          >
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-700 border border-amber-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <Clock className="w-4.5 h-4.5 text-amber-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+                      Pending Order Value
+                    </span>
+                    <span className="text-[11px] text-slate-500 truncate block">
+                      Fulfillment pipeline in progress
+                    </span>
+                  </div>
+                </div>
+                <span className="text-[11px] font-semibold text-slate-400 group-hover:text-slate-800 flex items-center gap-0.5 shrink-0 transition-colors">
+                  <span>Pipeline</span>
+                  <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                </span>
+              </div>
+
+              <div className="mt-4">
+                <div className="text-2xl sm:text-3xl font-black text-slate-900 font-mono-code tracking-tight truncate">
+                  {formatCurrency(pendingOrdersValueUSD)}
+                </div>
+                <div className="text-xs font-semibold text-amber-700 font-mono-code mt-0.5 truncate">
+                  {formatWeight(pendingOrdersWeightKg, useImperial)} committed volume
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-600">
+              <span className="inline-flex items-center gap-1 font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/70">
+                <Package className="w-3 h-3 text-amber-600" />
+                <strong>{pendingOrdersCount}</strong> active wholesale orders
+              </span>
+              <span className="text-slate-400 text-[10px] sm:text-[11px] truncate">
+                Awaiting transit/delivery
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 

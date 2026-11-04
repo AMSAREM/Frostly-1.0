@@ -790,26 +790,6 @@ export const AuthGateScreen: React.FC<AuthGateScreenProps> = ({
                       <span>Log In to Workspace</span>
                     )}
                   </button>
-
-                  <div className="relative my-3">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-slate-200"></div>
-                    </div>
-                    <div className="relative flex justify-center text-[10px] uppercase font-bold tracking-wider">
-                      <span className="bg-white px-2 text-slate-400">or explore without credentials</span>
-                    </div>
-                  </div>
-
-                  <button
-                    id="auth-gate-instant-demo-btn"
-                    type="button"
-                    onClick={handleDevQuickLogin}
-                    disabled={isLoading}
-                    className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Explore Demo Mode (Instant Access)</span>
-                  </button>
                 </>
               ) : (
                 /* Sub-form: Secure Password Recovery */

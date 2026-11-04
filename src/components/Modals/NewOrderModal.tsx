@@ -935,7 +935,7 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
                 <span className="text-indigo-300">•</span>
                 <span className="flex items-center gap-1 text-slate-600">
                   <Clock className="w-3.5 h-3.5 text-slate-500" />
-                  <span>Spot Validity: {quoteValidityHours}h (Expires {formatQuoteExpiry(quoteValidityHours)})</span>
+                  <span>Spot Validity: {formatQuoteExpiry(quoteValidityHours).formattedLabel}</span>
                 </span>
               </div>
             </div>
