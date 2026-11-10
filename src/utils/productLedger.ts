@@ -30,13 +30,20 @@ export function buildProductLedger(
   const productNameLower = product.name.toLowerCase().trim();
   const productSkuLower = (product.sku || '').toLowerCase().trim();
 
-  // Find linked batch IDs
-  const linkedBatches = batches.filter(b => 
+  // Find linked batch IDs: prioritize explicit product/SKU/lot matches
+  const directBatches = batches.filter(b => 
     (b.linkedProductId && b.linkedProductId === product.id) ||
-    (b.productSku && b.productSku.toLowerCase().trim() === productSkuLower) ||
+    (b.productSku && productSkuLower && b.productSku.toLowerCase().trim() === productSkuLower) ||
     (product.linkedBatchId && b.id === product.linkedBatchId) ||
-    (b.speciesId === product.speciesId && b.grade === product.grade)
+    b.id === `LOT-RET-${(product.sku || product.id).toUpperCase().replace(/[^A-Z0-9-]/g, '')}` ||
+    b.id === `LOT-RET-${product.id.replace('prod-', '')}` ||
+    b.id === `LOT-RET-${product.id}`
   );
+
+  const linkedBatches = directBatches.length > 0
+    ? directBatches
+    : batches.filter(b => b.speciesId === product.speciesId && b.grade === product.grade);
+
   const linkedBatchIds = new Set(linkedBatches.map(b => b.id));
 
   const rawMovements: Array<{

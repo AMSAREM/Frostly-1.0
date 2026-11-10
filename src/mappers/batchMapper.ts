@@ -210,6 +210,9 @@ export const batchMapper = {
       expiry_date: batch.expiryDate,
       qr_code_seed: batch.qrCodeSeed || batch.id,
       notes: cleanNotes || null,
+      linked_product_id: batch.linkedProductId || null,
+      product_sku: batch.productSku || null,
+      is_retail_cut_lot: Boolean(batch.isRetailCutLot),
     };
 
     return payload;

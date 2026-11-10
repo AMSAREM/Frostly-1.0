@@ -13,6 +13,10 @@ export class FinancialRepository extends BaseRepository<FinancialLedgerEntry, Da
       getId: (entry) => entry.id,
       onConflict: 'organization_id,id',
     });
+
+    // Pre-register known optional columns pending database migration 017
+    BaseRepository.registerMissingColumn('financial_ledger_entries', 'customer_id');
+    BaseRepository.registerMissingColumn('financial_ledger_entries', 'notes');
   }
 
   public async getEntries(fallback: FinancialLedgerEntry[] = []): Promise<FinancialLedgerEntry[]> {
@@ -31,6 +35,8 @@ export class FinancialRepository extends BaseRepository<FinancialLedgerEntry, Da
         if (orgId) {
           payload.organization_id = orgId;
         }
+        delete payload.customer_id;
+        delete payload.notes;
         const { data, error } = await supabase
           .from(this.tableName)
           .insert(payload)

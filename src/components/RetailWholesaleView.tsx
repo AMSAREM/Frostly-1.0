@@ -29,7 +29,8 @@ import {
   Image as ImageIcon,
   Calculator,
   FileText,
-  Check
+  Check,
+  RefreshCw
 } from 'lucide-react';
 import { 
   RetailWholesaleProduct, 
@@ -68,6 +69,7 @@ interface RetailWholesaleViewProps {
   onSaveProduct?: (product: RetailWholesaleProduct) => Promise<void> | void;
   onDeleteProduct?: (productId: string) => Promise<void> | void;
   onNavigateToInventory?: () => void;
+  onReconcileCatalog?: () => void;
   formatCurrency: (amount: number) => string;
   useImperial?: boolean;
 }
@@ -93,6 +95,7 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   onSaveProduct,
   onDeleteProduct,
   onNavigateToInventory,
+  onReconcileCatalog,
   formatCurrency,
   useImperial = false
 }) => {
@@ -1223,8 +1226,14 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
               <div className="space-y-0.5">
                 <div className="font-bold text-slate-900 flex items-center gap-2 flex-wrap">
                   <span>How Dual Price Catalog Connects to Inventory Ledger</span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800">
-                    {products.length} Products Configured
+                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                    products.length === batches.length
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                      : 'bg-amber-100 text-amber-800 border border-amber-300'
+                  }`}>
+                    {products.length === batches.length
+                      ? `✓ 1:1 Parity (${products.length} Products = ${batches.length} Vault Lots)`
+                      : `${products.length} Products / ${batches.length} Vault Lots (Sync Needed)`}
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-600 leading-relaxed max-w-3xl">
@@ -1232,15 +1241,27 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                 </p>
               </div>
             </div>
-            {onNavigateToInventory && (
-              <button
-                onClick={onNavigateToInventory}
-                className="px-3.5 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-indigo-700 text-xs font-bold border border-indigo-200 transition-colors shadow-2xs cursor-pointer shrink-0 flex items-center gap-1 self-start sm:self-center"
-              >
-                <span>View In Inventory</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            )}
+            <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
+              {products.length !== batches.length && onReconcileCatalog && (
+                <button
+                  onClick={onReconcileCatalog}
+                  className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors shadow-2xs cursor-pointer flex items-center gap-1.5"
+                  title="Force 1:1 parity synchronization between catalog products and inventory lots"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Sync Parity</span>
+                </button>
+              )}
+              {onNavigateToInventory && (
+                <button
+                  onClick={onNavigateToInventory}
+                  className="px-3.5 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-indigo-700 text-xs font-bold border border-indigo-200 transition-colors shadow-2xs cursor-pointer flex items-center gap-1"
+                >
+                  <span>View In Inventory</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Mobile Price Matrix Cards */}
@@ -1270,11 +1291,17 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                         <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
                         <div className="text-[11px] text-slate-500">{prod.cutType} • {prod.sku}</div>
                         {(() => {
+                          const deterministicBatchId = `LOT-RET-${(prod.sku || prod.id).toUpperCase().replace(/[^A-Z0-9-]/g, '')}`;
+                          const prodSkuClean = (prod.sku || '').toLowerCase().trim();
                           const linkedBatch = batches.find(b => 
                             (prod.linkedBatchId && b.id === prod.linkedBatchId) ||
                             (b.linkedProductId && b.linkedProductId === prod.id) ||
-                            (b.productSku && prod.sku && b.productSku.toLowerCase() === prod.sku.toLowerCase()) ||
-                            b.id === `LOT-RET-${prod.id.replace('prod-', '')}`
+                            (b.productSku && prodSkuClean && b.productSku.toLowerCase().trim() === prodSkuClean) ||
+                            b.id === deterministicBatchId ||
+                            b.id === `LOT-RET-${prod.id.replace('prod-', '')}` ||
+                            b.id === `LOT-RET-${prod.id}` ||
+                            prod.id === `prod-${b.id}` ||
+                            (b.speciesId === prod.speciesId && b.grade === prod.grade)
                           );
                           if (linkedBatch) {
                             return (
@@ -1428,11 +1455,17 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                             <div className="font-bold text-slate-900 text-sm">{prod.name}</div>
                             <div className="text-slate-400 text-[11px]">{prod.cutType} • {prod.sku}</div>
                             {(() => {
+                              const deterministicBatchId = `LOT-RET-${(prod.sku || prod.id).toUpperCase().replace(/[^A-Z0-9-]/g, '')}`;
+                              const prodSkuClean = (prod.sku || '').toLowerCase().trim();
                               const linkedBatch = batches.find(b => 
                                 (prod.linkedBatchId && b.id === prod.linkedBatchId) ||
                                 (b.linkedProductId && b.linkedProductId === prod.id) ||
-                                (b.productSku && prod.sku && b.productSku.toLowerCase() === prod.sku.toLowerCase()) ||
-                                b.id === `LOT-RET-${prod.id.replace('prod-', '')}`
+                                (b.productSku && prodSkuClean && b.productSku.toLowerCase().trim() === prodSkuClean) ||
+                                b.id === deterministicBatchId ||
+                                b.id === `LOT-RET-${prod.id.replace('prod-', '')}` ||
+                                b.id === `LOT-RET-${prod.id}` ||
+                                prod.id === `prod-${b.id}` ||
+                                (b.speciesId === prod.speciesId && b.grade === prod.grade)
                               );
                               if (linkedBatch) {
                                 return (

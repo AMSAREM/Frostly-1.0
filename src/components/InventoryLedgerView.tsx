@@ -107,12 +107,20 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
   const catalogProductsCount = products?.length || 0;
   const unlinkedProducts = useMemo(() => {
     if (!products || products.length === 0) return [];
-    return products.filter(p => !batches.some(b => 
-      (p.linkedBatchId && b.id === p.linkedBatchId) ||
-      (b.linkedProductId && b.linkedProductId === p.id) ||
-      (b.productSku && p.sku && b.productSku.toLowerCase() === p.sku.toLowerCase()) ||
-      b.id === `LOT-RET-${p.id.replace('prod-', '')}`
-    ));
+    return products.filter(p => {
+      const prodSkuClean = (p.sku || '').toLowerCase().trim();
+      const detBatchId = `LOT-RET-${(p.sku || p.id).toUpperCase().replace(/[^A-Z0-9-]/g, '')}`;
+      return !batches.some(b => 
+        (p.linkedBatchId && b.id === p.linkedBatchId) ||
+        (b.linkedProductId && b.linkedProductId === p.id) ||
+        (b.productSku && prodSkuClean && b.productSku.toLowerCase().trim() === prodSkuClean) ||
+        b.id === detBatchId ||
+        b.id === `LOT-RET-${p.id.replace('prod-', '')}` ||
+        b.id === `LOT-RET-${p.id}` ||
+        p.id === `prod-${b.id}` ||
+        (b.speciesId === p.speciesId && b.grade === p.grade)
+      );
+    });
   }, [products, batches]);
 
   // Filtered batches

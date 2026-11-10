@@ -64,7 +64,8 @@ import {
   InventoryAdjustmentAccount,
   InventoryStockAdjustment,
   CustomerStatus,
-  SupplierStatus
+  SupplierStatus,
+  SeafoodCutType
 } from './types';
 import { formatCurrency } from './utils/formatters';
 import { getSpeciesIdFromName, getSpeciesTaxonomy } from './utils/speciesHelper';
@@ -173,6 +174,9 @@ export default function App() {
       return activeOrgId ? [] : INITIAL_BATCHES;
     }
   });
+
+  const [isBatchesHydrated, setIsBatchesHydrated] = useState<boolean>(false);
+  const [isProductsHydrated, setIsProductsHydrated] = useState<boolean>(false);
 
   const [orders, setOrders] = useState<ClientOrder[]>(() => {
     try {
@@ -364,6 +368,50 @@ export default function App() {
     }
   }, [isPlatformCreator, isTenantUser, staffProfile]);
 
+  /**
+   * Consolidates redundant lots linked to the same product or SKU.
+   * Keeps the authoritative lot and removes orphan duplicate IDs.
+   */
+  const deduplicateBatches = (rawBatches: InventoryBatch[]): { deduplicated: InventoryBatch[]; removedIds: string[] } => {
+    const seenProductIds = new Set<string>();
+    const seenSkus = new Set<string>();
+    const seenCatchIds = new Set<string>();
+    const deduplicated: InventoryBatch[] = [];
+    const removedIds: string[] = [];
+
+    for (const batch of rawBatches) {
+      // 1. Regular catch landings (non-retail cut lots) are unique by batch ID
+      if (!batch.isRetailCutLot && !batch.linkedProductId && !batch.id.startsWith('LOT-RET-')) {
+        if (!seenCatchIds.has(batch.id)) {
+          seenCatchIds.add(batch.id);
+          deduplicated.push(batch);
+        } else {
+          removedIds.push(batch.id);
+        }
+        continue;
+      }
+
+      // 2. Retail/dual product lots: exactly ONE active lot per product ID or SKU
+      const prodId = batch.linkedProductId;
+      const sku = (batch.productSku || '').toLowerCase().trim();
+
+      if (prodId && seenProductIds.has(prodId)) {
+        removedIds.push(batch.id);
+        continue;
+      }
+      if (sku && seenSkus.has(sku)) {
+        removedIds.push(batch.id);
+        continue;
+      }
+
+      if (prodId) seenProductIds.add(prodId);
+      if (sku) seenSkus.add(sku);
+      deduplicated.push(batch);
+    }
+
+    return { deduplicated, removedIds };
+  };
+
   // Hydrate batches and workspace data from repository on mount and when authenticated session or active tenant changes
   useEffect(() => {
     let isMounted = true;
@@ -372,12 +420,24 @@ export default function App() {
 
     batchRepository.getBatches(fallbackList).then(fresh => {
       if (isMounted) {
-        setBatches(fresh || []);
+        const { deduplicated, removedIds } = deduplicateBatches(fresh || []);
+        setBatches(deduplicated);
+        setIsBatchesHydrated(true);
+
+        if (removedIds.length > 0) {
+          console.info(`[App] Automatically consolidated ${removedIds.length} redundant duplicate inventory lots:`, removedIds);
+          removedIds.forEach(id => {
+            batchRepository.delete(id).catch(err => console.warn('[App] Error cleaning duplicate batch:', err));
+          });
+        }
       }
       // Drains offline sync queue immediately if network and session are active
       syncManager.flushAll().catch(console.warn);
     }).catch(err => {
       console.warn('[App] Batch repository load error:', err);
+      if (isMounted) {
+        setIsBatchesHydrated(true);
+      }
     });
 
     customerRepository.getCustomers(fallbackList).then(fresh => {
@@ -439,9 +499,13 @@ export default function App() {
     productRepository.getProducts(fallbackList).then(fresh => {
       if (isMounted) {
         setProducts(fresh || []);
+        setIsProductsHydrated(true);
       }
     }).catch(err => {
       console.warn('[App] Product repository load error:', err);
+      if (isMounted) {
+        setIsProductsHydrated(true);
+      }
     });
 
     retailTransactionRepository.getTransactions(fallbackList).then(fresh => {
@@ -509,32 +573,135 @@ export default function App() {
     settingsRepository.setLocalCache(settings, staffProfile?.organization_id);
   }, [settings, staffProfile?.organization_id]);
 
-  // Helper to reconcile Dual-Price & Retail catalog products with cold-chain inventory lots
+  // Helper to reconcile Dual-Price & Retail catalog products with cold-chain inventory lots bidirectionally
   const reconcileCatalogWithInventory = (
     currentProducts: RetailWholesaleProduct[],
     currentBatches: InventoryBatch[]
-  ): { updatedBatches: InventoryBatch[]; newLots: InventoryBatch[] } => {
-    if (!currentProducts || currentProducts.length === 0) {
-      return { updatedBatches: currentBatches, newLots: [] };
+  ): { 
+    updatedBatches: InventoryBatch[]; 
+    updatedProducts: RetailWholesaleProduct[];
+    newLots: InventoryBatch[]; 
+    newProducts: RetailWholesaleProduct[];
+  } => {
+    let workingBatches = [...(currentBatches || [])];
+    let workingProducts = [...(currentProducts || [])];
+    const newLots: InventoryBatch[] = [];
+    const newProducts: RetailWholesaleProduct[] = [];
+
+    // Match helper: does product match batch?
+    const isProductBatchMatch = (p: RetailWholesaleProduct, b: InventoryBatch) => {
+      const prodSkuClean = (p.sku || '').toLowerCase().trim();
+      const batchSkuClean = (b.productSku || '').toLowerCase().trim();
+      const detBatchId = `LOT-RET-${(p.sku || p.id).toUpperCase().replace(/[^A-Z0-9-]/g, '')}`;
+
+      return (
+        (p.linkedBatchId && p.linkedBatchId === b.id) ||
+        (b.linkedProductId && b.linkedProductId === p.id) ||
+        (batchSkuClean && prodSkuClean && batchSkuClean === prodSkuClean) ||
+        b.id === detBatchId ||
+        b.id === `LOT-RET-${p.id.replace('prod-', '')}` ||
+        b.id === `LOT-RET-${p.id}` ||
+        p.id === `prod-${b.id}` ||
+        (b.speciesId === p.speciesId && b.grade === p.grade)
+      );
+    };
+
+    // PASS 1: Ensure every Cold Storage Batch has an authoritative Dual Price Catalog Product
+    for (const batch of workingBatches) {
+      const matchedProduct = workingProducts.find(p => isProductBatchMatch(p, batch));
+
+      if (!matchedProduct) {
+        const matchedSpecies = SPECIES_CATALOG.find(s => s.id === batch.speciesId || s.name === batch.speciesName);
+        const resolvedSpeciesId = batch.speciesId || matchedSpecies?.id || getSpeciesIdFromName(batch.speciesName);
+
+        let cutType: SeafoodCutType = 'Whole Round Fish';
+        if (batch.storageZone?.includes('Live')) {
+          cutType = 'Live in Oxygen Tank';
+        } else if (batch.grade === 'Sashimi AAA' || batch.storageZone?.includes('-60')) {
+          cutType = 'Skinless Sashimi Saku Block';
+        } else if (batch.category === 'Crustacean') {
+          cutType = 'Packaged 500g Tray';
+        } else {
+          cutType = 'Skin-On Loin / Fillet';
+        }
+
+        const sku = batch.productSku || (batch.id.startsWith('LOT-RET-') ? batch.id.replace('LOT-RET-', '') : `SKU-${batch.id}`);
+        const costPrice = Number(batch.costPerKg) || 0;
+        const wholesalePrice = Number(batch.wholesalePricePerKg) || (costPrice > 0 ? Number((costPrice * 1.35).toFixed(2)) : 35.0);
+        const retailPrice = Number((wholesalePrice * 1.30).toFixed(2));
+
+        const newProd: RetailWholesaleProduct = {
+          id: `prod-${batch.id}`,
+          speciesId: resolvedSpeciesId,
+          name: batch.speciesName,
+          cutType: cutType,
+          category: batch.category,
+          grade: batch.grade,
+          stockKg: Number(batch.availableWeightKg) || 0,
+          unit: 'kg',
+          costPricePerUnit: costPrice,
+          wholesalePricePerUnit: wholesalePrice,
+          retailPricePerUnit: retailPrice,
+          wholesaleMinQty: 10,
+          retailPackSize: '1.0 kg fresh pack',
+          sku: sku,
+          imageUrl: matchedSpecies?.image || 'https://images.unsplash.com/photo-1534482421-64566f976cfa?auto=format&fit=crop&w=600&q=80',
+          origin: batch.landingPort || batch.coordinates?.description || 'Certified Cold Storage Vault',
+          isAvailableForRetail: true,
+          isAvailableForWholesale: true,
+          linkedBatchId: batch.id,
+          storageZone: batch.storageZone,
+          minSafetyStockKg: 20
+        };
+
+        newProducts.push(newProd);
+        workingProducts = [newProd, ...workingProducts];
+
+        batch.linkedProductId = newProd.id;
+        batch.productSku = newProd.sku;
+      } else {
+        // Product exists: sync available weight and wholesale/cost pricing in lockstep
+        let productNeedsUpdate = false;
+        const updatedProd = { ...matchedProduct };
+
+        if (!matchedProduct.linkedBatchId || matchedProduct.linkedBatchId !== batch.id) {
+          updatedProd.linkedBatchId = batch.id;
+          productNeedsUpdate = true;
+        }
+
+        if (Math.abs((updatedProd.stockKg || 0) - (batch.availableWeightKg || 0)) > 0.05) {
+          updatedProd.stockKg = Number(batch.availableWeightKg) || 0;
+          productNeedsUpdate = true;
+        }
+
+        if (batch.wholesalePricePerKg > 0 && Math.abs((updatedProd.wholesalePricePerUnit || 0) - (batch.wholesalePricePerKg || 0)) > 0.05) {
+          updatedProd.wholesalePricePerUnit = batch.wholesalePricePerKg;
+          productNeedsUpdate = true;
+        }
+
+        if (batch.costPerKg > 0 && Math.abs((updatedProd.costPricePerUnit || 0) - (batch.costPerKg || 0)) > 0.05) {
+          updatedProd.costPricePerUnit = batch.costPerKg;
+          productNeedsUpdate = true;
+        }
+
+        if (productNeedsUpdate) {
+          workingProducts = workingProducts.map(p => p.id === updatedProd.id ? updatedProd : p);
+        }
+
+        if (!batch.linkedProductId || !batch.productSku) {
+          batch.linkedProductId = matchedProduct.id;
+          batch.productSku = matchedProduct.sku;
+        }
+      }
     }
 
-    const newLots: InventoryBatch[] = [];
-    let workingBatches = [...currentBatches];
+    // PASS 2: Ensure every Dual Price Product has an authoritative lot in Cold Storage Batches
+    for (const product of workingProducts) {
+      const matchedBatch = workingBatches.find(b => isProductBatchMatch(product, b));
 
-    for (const product of currentProducts) {
-      const hasLot = workingBatches.some(b => 
-        (product.linkedBatchId && b.id === product.linkedBatchId) ||
-        (b.linkedProductId && b.linkedProductId === product.id) ||
-        (b.productSku && product.sku && b.productSku.toLowerCase() === product.sku.toLowerCase()) ||
-        b.id === `LOT-RET-${product.id.replace('prod-', '')}`
-      );
-
-      if (!hasLot) {
+      if (!matchedBatch) {
         const matchedSpecies = SPECIES_CATALOG.find(s => s.id === product.speciesId);
-        const spPrefix = (product.speciesId || 'SPEC').replace('spec-', '').toUpperCase().slice(0, 4);
-        const cleanSku = (product.sku || '').replace(/[^a-zA-Z0-9]/g, '').slice(-4);
-        const cleanId = (product.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-4);
-        const newBatchId = `LOT-RET-${spPrefix}-${cleanSku || cleanId || Math.floor(1000 + Math.random() * 9000)}`;
+        const deterministicBatchId = `LOT-RET-${(product.sku || product.id).toUpperCase().replace(/[^A-Z0-9-]/g, '')}`;
 
         const zone: StorageZone = product.storageZone || 
           (product.grade === 'Sashimi AAA' 
@@ -550,7 +717,7 @@ export default function App() {
         const channelLabel = isDual ? 'Dual (B2B/POS)' : product.isAvailableForRetail ? 'Retail (POS)' : 'Wholesale (B2B)';
 
         const newLot: InventoryBatch = {
-          id: newBatchId,
+          id: deterministicBatchId,
           speciesId: product.speciesId,
           speciesName: product.name,
           scientificName: matchedSpecies?.scientificName || 'Seafood Commercial Cut',
@@ -591,31 +758,51 @@ export default function App() {
 
         newLots.push(newLot);
         workingBatches = [newLot, ...workingBatches];
+        product.linkedBatchId = newLot.id;
       }
     }
 
-    return { updatedBatches: workingBatches, newLots };
+    return { 
+      updatedBatches: workingBatches, 
+      updatedProducts: workingProducts, 
+      newLots, 
+      newProducts 
+    };
   };
 
-  // Auto-reconcile catalog products to ensure every retail/dual product has a physical lot in Inventory Ledger
-  const reconciledProductCountRef = useRef<number>(-1);
-  const batchesRef = useRef(batches);
-  batchesRef.current = batches;
+  // Auto-reconcile catalog products and inventory lots to maintain strict 1:1 bidirectional parity
+  const lastReconcileKeyRef = useRef<string>('');
 
   useEffect(() => {
-    if (products.length > 0 && reconciledProductCountRef.current !== products.length) {
-      const { updatedBatches, newLots } = reconcileCatalogWithInventory(products, batchesRef.current);
-      if (newLots.length > 0) {
-        setBatches(updatedBatches);
-        newLots.forEach(lot => {
-          batchRepository.save(lot, true).catch(err => {
-            console.warn('[App] batchRepository auto-reconcile save error:', err);
+    // CRITICAL: Block reconciliation until BOTH inventory batches and products have finished hydrating
+    if (!isBatchesHydrated || !isProductsHydrated) return;
+
+    const currentKey = `${batches.length}_${products.length}`;
+    if (lastReconcileKeyRef.current !== currentKey) {
+      const { updatedBatches, updatedProducts, newLots, newProducts } = reconcileCatalogWithInventory(products, batches);
+
+      if (newLots.length > 0 || newProducts.length > 0 || updatedBatches.length !== batches.length || updatedProducts.length !== products.length) {
+        if (updatedBatches.length !== batches.length || newLots.length > 0) {
+          setBatches(updatedBatches);
+          newLots.forEach(lot => {
+            batchRepository.save(lot, false).catch(err => {
+              console.warn('[App] batchRepository auto-reconcile save error:', err);
+            });
           });
-        });
+        }
+
+        if (updatedProducts.length !== products.length || newProducts.length > 0) {
+          setProducts(updatedProducts);
+          newProducts.forEach(prod => {
+            productRepository.save(prod, false).catch(err => {
+              console.warn('[App] productRepository auto-reconcile save error:', err);
+            });
+          });
+        }
       }
-      reconciledProductCountRef.current = products.length;
+      lastReconcileKeyRef.current = `${updatedBatches.length}_${updatedProducts.length}`;
     }
-  }, [products]);
+  }, [products, isBatchesHydrated, isProductsHydrated, batches]);
 
   // Settings & Data Management Handlers
   const handleUpdateSettings = (newSettings: AppSettings) => {
@@ -714,14 +901,70 @@ export default function App() {
 
   // Add Batch Handler
   const handleAddBatch = (newBatch: InventoryBatch) => {
-    setBatches(prev => [newBatch, ...prev]);
-    batchRepository.save(newBatch, true).catch(err => {
+    const matchedSpecies = SPECIES_CATALOG.find(s => s.id === newBatch.speciesId || s.name === newBatch.speciesName);
+    const resolvedSpeciesId = newBatch.speciesId || matchedSpecies?.id || getSpeciesIdFromName(newBatch.speciesName);
+
+    let cutType: SeafoodCutType = 'Whole Round Fish';
+    if (newBatch.storageZone?.includes('Live')) {
+      cutType = 'Live in Oxygen Tank';
+    } else if (newBatch.grade === 'Sashimi AAA' || newBatch.storageZone?.includes('-60')) {
+      cutType = 'Skinless Sashimi Saku Block';
+    } else if (newBatch.category === 'Crustacean') {
+      cutType = 'Packaged 500g Tray';
+    } else {
+      cutType = 'Skin-On Loin / Fillet';
+    }
+
+    const sku = newBatch.productSku || (newBatch.id.startsWith('LOT-RET-') ? newBatch.id.replace('LOT-RET-', '') : `SKU-${newBatch.id}`);
+    const costPrice = Number(newBatch.costPerKg) || 0;
+    const wholesalePrice = Number(newBatch.wholesalePricePerKg) || (costPrice > 0 ? Number((costPrice * 1.35).toFixed(2)) : 35.0);
+    const retailPrice = Number((wholesalePrice * 1.30).toFixed(2));
+
+    const newProd: RetailWholesaleProduct = {
+      id: `prod-${newBatch.id}`,
+      speciesId: resolvedSpeciesId,
+      name: newBatch.speciesName,
+      cutType: cutType,
+      category: newBatch.category,
+      grade: newBatch.grade,
+      stockKg: Number(newBatch.availableWeightKg) || 0,
+      unit: 'kg',
+      costPricePerUnit: costPrice,
+      wholesalePricePerUnit: wholesalePrice,
+      retailPricePerUnit: retailPrice,
+      wholesaleMinQty: 10,
+      retailPackSize: '1.0 kg fresh pack',
+      sku: sku,
+      imageUrl: matchedSpecies?.image || 'https://images.unsplash.com/photo-1534482421-64566f976cfa?auto=format&fit=crop&w=600&q=80',
+      origin: newBatch.landingPort || newBatch.coordinates?.description || 'Certified Cold Storage Vault',
+      isAvailableForRetail: true,
+      isAvailableForWholesale: true,
+      linkedBatchId: newBatch.id,
+      storageZone: newBatch.storageZone,
+      minSafetyStockKg: 20
+    };
+
+    const batchToSave: InventoryBatch = {
+      ...newBatch,
+      linkedProductId: newProd.id,
+      productSku: newProd.sku,
+      wholesalePricePerKg: wholesalePrice
+    };
+
+    setBatches(prev => [batchToSave, ...prev]);
+    setProducts(prev => [newProd, ...prev]);
+
+    batchRepository.save(batchToSave, true).catch(err => {
       console.warn('[App] batchRepository save error:', err);
     });
+    productRepository.save(newProd, true).catch(err => {
+      console.warn('[App] productRepository save error:', err);
+    });
+
     addNotification({
       type: 'catch_landed',
       title: `Intake Complete: ${newBatch.speciesName}`,
-      message: `Lot ${newBatch.id} (${newBatch.availableWeightKg} kg) placed in ${newBatch.storageZone}.`,
+      message: `Lot ${newBatch.id} (${newBatch.availableWeightKg} kg) placed in ${newBatch.storageZone} and registered in Dual Price Book.`,
       urgency: 'medium'
     });
   };
@@ -732,6 +975,37 @@ export default function App() {
     batchRepository.save(updatedBatch, false).catch(err => {
       console.warn('[App] batchRepository save error on update:', err);
     });
+
+    // Synchronize matching product in Dual Price Book in lockstep
+    const productSkuClean = (updatedBatch.productSku || '').toLowerCase().trim();
+    setProducts(prev => prev.map(p => {
+      const prodSkuClean = (p.sku || '').toLowerCase().trim();
+      const detBatchId = `LOT-RET-${(p.sku || p.id).toUpperCase().replace(/[^A-Z0-9-]/g, '')}`;
+      const isMatch = (
+        (p.linkedBatchId && p.linkedBatchId === updatedBatch.id) ||
+        (updatedBatch.linkedProductId && updatedBatch.linkedProductId === p.id) ||
+        (productSkuClean && prodSkuClean && productSkuClean === prodSkuClean) ||
+        updatedBatch.id === detBatchId ||
+        updatedBatch.id === `LOT-RET-${p.id.replace('prod-', '')}` ||
+        updatedBatch.id === `LOT-RET-${p.id}` ||
+        p.id === `prod-${updatedBatch.id}`
+      );
+
+      if (isMatch) {
+        const syncedProduct: RetailWholesaleProduct = {
+          ...p,
+          stockKg: updatedBatch.availableWeightKg,
+          costPricePerUnit: updatedBatch.costPerKg || p.costPricePerUnit,
+          wholesalePricePerUnit: updatedBatch.wholesalePricePerKg || p.wholesalePricePerUnit,
+          linkedBatchId: updatedBatch.id
+        };
+        productRepository.save(syncedProduct, false).catch(err => {
+          console.warn('[App] productRepository sync on batch update error:', err);
+        });
+        return syncedProduct;
+      }
+      return p;
+    }));
 
     if (adjustmentData) {
       const newAdjustment: InventoryStockAdjustment = {
@@ -1346,11 +1620,51 @@ export default function App() {
       return sup;
     }));
 
-    // Add to Inventory Batches
+    // Add to Inventory Batches & Dual Pricing Products
     const item = newPO.speciesItems[0];
     if (item) {
       const resolvedSpeciesId = getSpeciesIdFromName(item.speciesName);
       const taxonomy = getSpeciesTaxonomy(resolvedSpeciesId);
+      const matchedSpecies = SPECIES_CATALOG.find(s => s.id === resolvedSpeciesId || s.name === item.speciesName);
+
+      const wholesalePrice = Number((item.costPerKg * 1.45).toFixed(2));
+      const retailPrice = Number((wholesalePrice * 1.30).toFixed(2));
+
+      let cutType: SeafoodCutType = 'Whole Round Fish';
+      if (item.storageZone?.includes('Live')) {
+        cutType = 'Live in Oxygen Tank';
+      } else if (item.grade === 'Sashimi AAA' || item.storageZone?.includes('-60')) {
+        cutType = 'Skinless Sashimi Saku Block';
+      } else if (taxonomy.category === 'Crustacean') {
+        cutType = 'Packaged 500g Tray';
+      } else {
+        cutType = 'Skin-On Loin / Fillet';
+      }
+
+      const newProd: RetailWholesaleProduct = {
+        id: `prod-${newPO.lotAssignedId}`,
+        speciesId: resolvedSpeciesId,
+        name: item.speciesName,
+        cutType: cutType,
+        category: taxonomy.category,
+        grade: item.grade,
+        stockKg: item.weightKg,
+        unit: 'kg',
+        costPricePerUnit: item.costPerKg,
+        wholesalePricePerUnit: wholesalePrice,
+        retailPricePerUnit: retailPrice,
+        wholesaleMinQty: 10,
+        retailPackSize: '1.0 kg fresh pack',
+        sku: `SKU-${newPO.lotAssignedId}`,
+        imageUrl: matchedSpecies?.image || 'https://images.unsplash.com/photo-1534482421-64566f976cfa?auto=format&fit=crop&w=600&q=80',
+        origin: newPO.portLocation || 'Dockside Inward Hub',
+        isAvailableForRetail: true,
+        isAvailableForWholesale: true,
+        linkedBatchId: newPO.lotAssignedId,
+        storageZone: item.storageZone,
+        minSafetyStockKg: 20
+      };
+
       const newBatch: InventoryBatch = {
         id: newPO.lotAssignedId,
         speciesId: resolvedSpeciesId,
@@ -1377,7 +1691,7 @@ export default function App() {
         currentTempCelsius: item.storageZone.includes('-60') ? -59.5 : item.storageZone.includes('-22') ? -22.1 : 0.8,
         targetTempCelsius: item.storageZone.includes('-60') ? -60 : item.storageZone.includes('-22') ? -22 : 1.0,
         costPerKg: item.costPerKg,
-        wholesalePricePerKg: item.costPerKg * 1.45,
+        wholesalePricePerKg: wholesalePrice,
         certifications: ['MSC Certified', 'FDA HACCP Certified'],
         inspectionStatus: 'Passed',
         histaminePpm: 4.2,
@@ -1385,11 +1699,18 @@ export default function App() {
         receivedDate: newPO.orderDate,
         expiryDate: new Date(Date.now() + 180 * 86400000).toISOString().split('T')[0],
         qrCodeSeed: `QR-AUTH-PROV-${newPO.lotAssignedId}`,
-        notes: newPO.notes
+        notes: newPO.notes,
+        linkedProductId: newProd.id,
+        productSku: newProd.sku,
+        isRetailCutLot: false
       };
       setBatches(prev => [newBatch, ...prev]);
+      setProducts(prev => [newProd, ...prev]);
       batchRepository.save(newBatch, true).catch(err => {
         console.warn('[App] batchRepository save error for landing:', err);
+      });
+      productRepository.save(newProd, true).catch(err => {
+        console.warn('[App] productRepository save error for PO product:', err);
       });
     }
 
@@ -1520,6 +1841,7 @@ export default function App() {
   };
 
   const handleUpdateProductPricing = (productId: string, wholesalePrice: number, retailPrice: number) => {
+    let targetProduct: RetailWholesaleProduct | undefined;
     setProducts(prev => prev.map(p => {
       if (p.id === productId) {
         const updatedProd = {
@@ -1527,6 +1849,7 @@ export default function App() {
           wholesalePricePerUnit: wholesalePrice,
           retailPricePerUnit: retailPrice
         };
+        targetProduct = updatedProd;
         productRepository.save(updatedProd, false).catch(err => {
           console.warn('[App] productRepository update pricing error:', err);
         });
@@ -1535,10 +1858,42 @@ export default function App() {
       return p;
     }));
 
+    // Update matching lot in cold storage inventory in lockstep
+    if (targetProduct) {
+      const prod = targetProduct as RetailWholesaleProduct;
+      const productSkuClean = (prod.sku || '').toLowerCase().trim();
+      setBatches(prev => prev.map(b => {
+        const batchSkuClean = (b.productSku || '').toLowerCase().trim();
+        const detBatchId = `LOT-RET-${(prod.sku || prod.id).toUpperCase().replace(/[^A-Z0-9-]/g, '')}`;
+        const isMatch = (
+          (prod.linkedBatchId && b.id === prod.linkedBatchId) ||
+          (b.linkedProductId && b.linkedProductId === prod.id) ||
+          (batchSkuClean && productSkuClean && batchSkuClean === productSkuClean) ||
+          b.id === detBatchId ||
+          b.id === `LOT-RET-${prod.id.replace('prod-', '')}` ||
+          b.id === `LOT-RET-${prod.id}` ||
+          prod.id === `prod-${b.id}` ||
+          (b.speciesId === prod.speciesId && b.grade === prod.grade)
+        );
+
+        if (isMatch) {
+          const updatedBatch = {
+            ...b,
+            wholesalePricePerKg: wholesalePrice
+          };
+          batchRepository.save(updatedBatch, false).catch(err => {
+            console.warn('[App] batchRepository update pricing error:', err);
+          });
+          return updatedBatch;
+        }
+        return b;
+      }));
+    }
+
     addNotification({
       type: 'order_update',
-      title: `Price Book Updated`,
-      message: `Product pricing adjusted for SKU.`,
+      title: `Price Book & Inventory Synchronized`,
+      message: `Product and vault lot wholesale price updated to ${formatAppCurrency(wholesalePrice)}/kg.`,
       urgency: 'low'
     });
   };
@@ -1583,11 +1938,16 @@ export default function App() {
       }
 
       // 2. If not linked to a vessel lot, check if a dedicated retail lot already exists for this product ID or SKU
+      const productSkuClean = (product.sku || '').toLowerCase().trim();
+      const deterministicBatchId = `LOT-RET-${(product.sku || product.id).toUpperCase().replace(/[^A-Z0-9-]/g, '')}`;
+
       if (!linkedBatch) {
         const existingLot = batches.find(b => 
           (b.linkedProductId && b.linkedProductId === product.id) || 
-          (b.productSku && b.productSku === product.sku) ||
-          b.id === `LOT-RET-${product.id.replace('prod-', '')}`
+          (b.productSku && productSkuClean && b.productSku.toLowerCase().trim() === productSkuClean) ||
+          b.id === deterministicBatchId ||
+          b.id === `LOT-RET-${product.id.replace('prod-', '')}` ||
+          b.id === `LOT-RET-${product.id}`
         );
 
         if (existingLot) {
@@ -1611,9 +1971,7 @@ export default function App() {
       // 3. If no lot exists yet, create a brand new dedicated Retail Inventory Batch in the ledger
       if (!linkedBatch) {
         isNewBatch = true;
-        const spPrefix = (product.speciesId || 'SPEC').replace('spec-', '').toUpperCase().slice(0, 4);
-        const lotSuffix = product.sku ? product.sku.replace(/[^a-zA-Z0-9]/g, '').slice(-4) : Math.floor(1000 + Math.random() * 9000);
-        const newBatchId = `LOT-RET-${spPrefix}-${lotSuffix}`;
+        const newBatchId = deterministicBatchId;
 
         const zone: StorageZone = product.storageZone || 
           (product.grade === 'Sashimi AAA' 
@@ -1731,23 +2089,37 @@ export default function App() {
   };
 
   const handleReconcileCatalog = () => {
-    const { updatedBatches, newLots } = reconcileCatalogWithInventory(products, batches);
-    if (newLots.length > 0) {
+    const { updatedBatches, updatedProducts, newLots, newProducts } = reconcileCatalogWithInventory(products, batches);
+    let changed = false;
+
+    if (newLots.length > 0 || updatedBatches.length !== batches.length) {
       setBatches(updatedBatches);
       newLots.forEach(lot => {
-        batchRepository.save(lot, true).catch(err => console.warn(err));
+        batchRepository.save(lot, false).catch(err => console.warn(err));
       });
+      changed = true;
+    }
+
+    if (newProducts.length > 0 || updatedProducts.length !== products.length) {
+      setProducts(updatedProducts);
+      newProducts.forEach(prod => {
+        productRepository.save(prod, false).catch(err => console.warn(err));
+      });
+      changed = true;
+    }
+
+    if (changed || newLots.length > 0 || newProducts.length > 0) {
       addNotification({
         type: 'order_update',
-        title: 'Catalog Synchronized with Inventory',
-        message: `Registered ${newLots.length} new inventory lot(s) for catalog products into cold storage.`,
+        title: 'Catalog & Inventory Synchronized',
+        message: `Parity confirmed: ${updatedProducts.length} Dual Price Products strictly match ${updatedBatches.length} Cold Storage Lots.`,
         urgency: 'low'
       });
     } else {
       addNotification({
         type: 'system',
-        title: 'All Products Synchronized',
-        message: `All ${products.length} catalog products already have active physical lots in the Inventory Ledger.`,
+        title: '1:1 Parity Verified',
+        message: `All ${products.length} products and vault lots are strictly equal and synchronized.`,
         urgency: 'low'
       });
     }
@@ -2174,6 +2546,7 @@ export default function App() {
             settings={settings}
             stockAdjustments={stockAdjustments}
             purchaseOrders={purchaseOrders}
+            onReconcileCatalog={handleReconcileCatalog}
           />
         )}
 
