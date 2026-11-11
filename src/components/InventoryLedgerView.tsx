@@ -47,12 +47,16 @@ import { LotDetailsModal } from './Inventory/LotDetailsModal';
 import { StockAdjustmentModal, StockAdjustmentData } from './Inventory/StockAdjustmentModal';
 import { AdjustmentAccountsModal } from './Inventory/AdjustmentAccountsModal';
 import { BatchImageUploadModal } from './Inventory/BatchImageUploadModal';
+import { ExportDropdown } from './common/ExportDropdown';
+import { exportInventoryToExcel, exportInventoryToPdf } from '../utils/exportEngine';
 
 interface InventoryLedgerViewProps {
   batches: InventoryBatch[];
   products?: RetailWholesaleProduct[];
   adjustmentAccounts?: InventoryAdjustmentAccount[];
   stockAdjustments?: InventoryStockAdjustment[];
+  companyName?: string;
+  currencySymbol?: string;
   onOpenPassport: (batch: InventoryBatch) => void;
   onOpenNewBatch: () => void;
   onUpdateBatch?: (updatedBatch: InventoryBatch, adjustmentData?: StockAdjustmentData) => void;
@@ -72,6 +76,8 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
   products = [],
   adjustmentAccounts = [],
   stockAdjustments = [],
+  companyName,
+  currencySymbol = '$',
   onOpenPassport,
   onOpenNewBatch,
   onUpdateBatch,
@@ -230,6 +236,24 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
           </div>
 
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5">
+            <ExportDropdown
+              label="Export Inventory"
+              onExportExcel={() => exportInventoryToExcel({
+                batches,
+                products,
+                companyName: companyName || 'Amansocean Seafoods',
+                currencySymbol: currencySymbol || '$'
+              })}
+              onExportPdf={() => exportInventoryToPdf({
+                batches,
+                products,
+                companyName: companyName || 'Amansocean Seafoods',
+                currencySymbol: currencySymbol || '$'
+              })}
+              excelTooltip="Export full vault lot master with HACCP logs & cold zones (.xlsx)"
+              pdfTooltip="Generate certified cold-chain custody report (.pdf)"
+            />
+
             <button
               onClick={() => setIsAdjustmentAccountsModalOpen(true)}
               className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-bold border border-indigo-200 transition-colors shadow-2xs cursor-pointer"

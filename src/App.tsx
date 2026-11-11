@@ -2568,6 +2568,7 @@ export default function App() {
             formatCurrency={formatAppCurrency}
             useImperial={useImperial}
             settings={settings}
+            companyName={companyName}
             stockAdjustments={stockAdjustments}
             purchaseOrders={purchaseOrders}
             onReconcileCatalog={handleReconcileCatalog}
@@ -2632,6 +2633,8 @@ export default function App() {
             products={products}
             adjustmentAccounts={adjustmentAccounts}
             stockAdjustments={stockAdjustments}
+            companyName={companyName}
+            currencySymbol={settings.currency || '$'}
             onOpenPassport={(b) => setPassportBatch(b)}
             onOpenNewBatch={() => setIsNewBatchModalOpen(true)}
             onUpdateBatch={handleUpdateBatch}

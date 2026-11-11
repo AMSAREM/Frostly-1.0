@@ -47,6 +47,13 @@ import {
 import { ProductModal } from './Modals/ProductModal';
 import { ProductLedgerTab } from './ProductLedgerTab';
 import { ProductLedgerModal } from './Modals/ProductLedgerModal';
+import { ExportDropdown } from './common/ExportDropdown';
+import { 
+  exportDualPricingToExcel, 
+  exportDualPricingToPdf, 
+  exportWholesaleOrdersToExcel, 
+  exportWholesaleOrdersToPdf 
+} from '../utils/exportEngine';
 
 interface RetailWholesaleViewProps {
   products: RetailWholesaleProduct[];
@@ -57,6 +64,7 @@ interface RetailWholesaleViewProps {
   stockAdjustments?: InventoryStockAdjustment[];
   purchaseOrders?: PurchaseOrderLanding[];
   settings?: AppSettings;
+  companyName?: string;
   onCompleteRetailSale: (sale: RetailTransaction) => void;
   onOpenNewWholesaleOrder: () => void;
   onOpenWeigher: (order: ClientOrder) => void;
@@ -83,6 +91,7 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   stockAdjustments = [],
   purchaseOrders = [],
   settings,
+  companyName,
   onCompleteRetailSale,
   onOpenNewWholesaleOrder,
   onOpenWeigher,
@@ -868,13 +877,30 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                 <p className="text-xs text-slate-500">Commercial restaurant and distributor purchase orders, credit terms, and invoices.</p>
               </div>
 
-              <button
-                onClick={onOpenNewWholesaleOrder}
-                className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer w-full sm:w-auto"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Create Wholesale Order</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                <ExportDropdown
+                  label="Export Orders"
+                  onExportExcel={() => exportWholesaleOrdersToExcel({
+                    orders: wholesaleOrders,
+                    companyName: companyName || settings?.companyName || 'Amansocean Seafoods',
+                    currencySymbol: settings?.currency || '$'
+                  })}
+                  onExportPdf={() => exportWholesaleOrdersToPdf({
+                    orders: wholesaleOrders,
+                    companyName: companyName || settings?.companyName || 'Amansocean Seafoods',
+                    currencySymbol: settings?.currency || '$'
+                  })}
+                  excelTooltip="Export all wholesale orders with terms, weights, and items detail (.xlsx)"
+                  pdfTooltip="Generate commercial B2B fulfillment and delivery report (.pdf)"
+                />
+                <button
+                  onClick={onOpenNewWholesaleOrder}
+                  className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer w-full sm:w-auto"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Create Wholesale Order</span>
+                </button>
+              </div>
             </div>
 
             {/* Wholesale Credit & Receivables Overview Cards */}
@@ -1205,16 +1231,35 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
               <h2 className="text-lg font-bold text-slate-900">Dual Wholesale vs Retail Pricing Catalog</h2>
               <p className="text-xs text-slate-500">Live price matrix, minimum order quantities (MOQ), product images, and margin spreads by cut.</p>
             </div>
-            <button
-              onClick={() => {
-                setEditingProduct(null);
-                setIsProductModalOpen(true);
-              }}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer shrink-0"
-            >
-              <Plus className="w-4 h-4" />
-              <span>+ Add Retail Product</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              <ExportDropdown
+                label="Export Price Book"
+                onExportExcel={() => exportDualPricingToExcel({
+                  products,
+                  batches,
+                  companyName: companyName || settings?.companyName || 'Amansocean Seafoods',
+                  currencySymbol: settings?.currency || '$'
+                })}
+                onExportPdf={() => exportDualPricingToPdf({
+                  products,
+                  batches,
+                  companyName: companyName || settings?.companyName || 'Amansocean Seafoods',
+                  currencySymbol: settings?.currency || '$'
+                })}
+                excelTooltip="Export complete dual wholesale & retail price book with margin spreads (.xlsx)"
+                pdfTooltip="Export official print-ready B2B commercial catalog (.pdf)"
+              />
+              <button
+                onClick={() => {
+                  setEditingProduct(null);
+                  setIsProductModalOpen(true);
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer shrink-0"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Add Retail Product</span>
+              </button>
+            </div>
           </div>
 
           {/* Dual Channel Connection Explainer */}
