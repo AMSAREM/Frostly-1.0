@@ -34,6 +34,16 @@ export async function runSchemaHealthcheck(): Promise<SchemaHealthResult> {
       columns: ['is_retail_cut_lot', 'linked_product_id', 'product_sku'],
       migration: '017_inventory_retail_linking.sql',
     },
+    {
+      table: 'retail_wholesale_products',
+      columns: ['linked_batch_id', 'storage_zone'],
+      migration: '017_inventory_retail_linking.sql',
+    },
+    {
+      table: 'financial_ledger_entries',
+      columns: ['customer_id', 'notes'],
+      migration: '017_inventory_retail_linking.sql',
+    },
   ];
 
   const missingColumnsByTable: Record<string, string[]> = {};

@@ -13,6 +13,10 @@ export class ProductRepository extends BaseRepository<RetailWholesaleProduct, Da
       getId: (prod) => prod.id,
       onConflict: 'organization_id,id',
     });
+
+    // Pre-register known optional columns pending database migration 017
+    BaseRepository.registerMissingColumn('retail_wholesale_products', 'linked_batch_id');
+    BaseRepository.registerMissingColumn('retail_wholesale_products', 'storage_zone');
   }
 
   public async getProducts(fallback: RetailWholesaleProduct[] = []): Promise<RetailWholesaleProduct[]> {

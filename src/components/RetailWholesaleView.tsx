@@ -1338,6 +1338,19 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                       >
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
+                      {onDeleteProduct && (
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`Are you sure you want to remove "${prod.name}" (${prod.sku}) from both the Dual Price Book and Cold Storage Inventory?`)) {
+                              onDeleteProduct(prod.id);
+                            }
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                          title="Delete Product & Remove from Inventory"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -1580,6 +1593,19 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                               >
                                 <Edit2 className="w-3.5 h-3.5" />
                               </button>
+                              {onDeleteProduct && (
+                                <button
+                                  onClick={() => {
+                                    if (window.confirm(`Are you sure you want to remove "${prod.name}" (${prod.sku}) from both the Dual Price Book and Cold Storage Inventory?`)) {
+                                      onDeleteProduct(prod.id);
+                                    }
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                  title="Delete Product & Remove from Inventory"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </>
                           )}
                         </div>

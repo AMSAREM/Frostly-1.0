@@ -12,6 +12,11 @@ export class BatchRepository extends BaseRepository<InventoryBatch, DatabaseInve
       getId: (batch) => batch.id,
       onConflict: 'organization_id,id',
     });
+
+    // Pre-register known optional columns pending database migration 017
+    BaseRepository.registerMissingColumn('inventory_batches', 'linked_product_id');
+    BaseRepository.registerMissingColumn('inventory_batches', 'product_sku');
+    BaseRepository.registerMissingColumn('inventory_batches', 'is_retail_cut_lot');
   }
 
   /**
