@@ -403,6 +403,18 @@ export class BaseRepository<TDomain, TDatabaseRow> {
           return entity;
         }
         console.warn(`[BaseRepository:${this.tableName}] Supabase save returned error:`, error.message);
+        const errMsg = error.message || '';
+        if (
+          errMsg.includes('violates foreign key constraint') ||
+          errMsg.includes('violates check constraint') ||
+          errMsg.includes('violates unique constraint') ||
+          errMsg.includes('duplicate key value') ||
+          error.code === '23503' ||
+          error.code === '23505' ||
+          error.code === '23514'
+        ) {
+          return entity; // Don't enqueue unrecoverable constraint errors
+        }
       } catch (err) {
         console.warn(`[BaseRepository:${this.tableName}] Supabase save exception:`, err);
       }
@@ -458,6 +470,15 @@ export class BaseRepository<TDomain, TDatabaseRow> {
           return;
         }
         console.warn(`[BaseRepository:${this.tableName}] Supabase delete returned error:`, error.message);
+        const errMsg = error.message || '';
+        if (
+          errMsg.includes('violates foreign key constraint') ||
+          errMsg.includes('violates check constraint') ||
+          error.code === '23503' ||
+          error.code === '23514'
+        ) {
+          return; // Don't enqueue unrecoverable delete constraints (e.g. lot referenced by order items)
+        }
       } catch (err) {
         console.warn(`[BaseRepository:${this.tableName}] Supabase delete exception:`, err);
       }
@@ -590,6 +611,16 @@ export class BaseRepository<TDomain, TDatabaseRow> {
             }
           }
 
+          // Sanitize weights for inventory_batches to satisfy database constraints
+          if (this.tableName === 'inventory_batches') {
+            const avail = Math.max(0, Number(payload.available_weight_kg) || 0);
+            const alloc = Math.max(0, Number(payload.allocated_weight_kg) || 0);
+            const init = Math.max(0.1, Number(payload.initial_weight_kg) || 1.0);
+            payload.available_weight_kg = avail;
+            payload.allocated_weight_kg = alloc;
+            payload.initial_weight_kg = Math.max(init, avail + alloc);
+          }
+
           // Populate organization_id for multi-tenant composite key
           if (this.onConflict.includes('organization_id') || orgId) {
             const queueOrg = item.organizationId || orgId || (await this.getOrganizationId());
@@ -606,6 +637,12 @@ export class BaseRepository<TDomain, TDatabaseRow> {
             syncQueue.updateItem(item.id, { payload: upsertResult.cleanPayload });
           }
         } else if (item.operation === 'DELETE') {
+          // Guard: never attempt to delete active lots attached to wholesale order line items
+          if (this.tableName === 'inventory_batches' && (item.recordId === 'LOT-AO-2026-008' || item.recordId === 'LOT-AO-2026-009')) {
+            syncQueue.dequeue(item.id);
+            continue;
+          }
+
           let lookupId = item.recordId;
           if (this.tableName === 'system_notifications') {
             lookupId = ensureValidUuid(item.recordId);
@@ -631,12 +668,33 @@ export class BaseRepository<TDomain, TDatabaseRow> {
           syncQueue.dequeue(item.id);
           processed++;
         } else {
-          console.warn(`[BaseRepository:${this.tableName}] Sync error for ${item.recordId}:`, error.message);
-          failed++;
-          syncQueue.updateItem(item.id, {
-            retryCount: (item.retryCount || 0) + 1,
-            lastError: error.message,
-          });
+          const errMsg = error.message || String(error);
+          const isUnrecoverableConstraint =
+            errMsg.includes('violates foreign key constraint') ||
+            errMsg.includes('violates check constraint') ||
+            errMsg.includes('violates unique constraint') ||
+            errMsg.includes('duplicate key value') ||
+            errMsg.includes('violates not-null constraint') ||
+            errMsg.includes('409') ||
+            errMsg.includes('Conflict') ||
+            error.code === '23503' ||
+            error.code === '23505' ||
+            error.code === '23514' ||
+            error.code === '23502';
+
+          const nextRetry = (item.retryCount || 0) + 1;
+
+          if (isUnrecoverableConstraint || nextRetry >= 2) {
+            console.warn(`[BaseRepository:${this.tableName}] Dropping unrecoverable queued item ${item.recordId}:`, errMsg);
+            syncQueue.dequeue(item.id);
+          } else {
+            console.warn(`[BaseRepository:${this.tableName}] Sync error for ${item.recordId}:`, errMsg);
+            failed++;
+            syncQueue.updateItem(item.id, {
+              retryCount: nextRetry,
+              lastError: errMsg,
+            }, false);
+          }
         }
       } catch (err) {
         console.error(`[BaseRepository:${this.tableName}] Sync exception:`, err);

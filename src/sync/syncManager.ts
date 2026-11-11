@@ -53,11 +53,13 @@ class SyncManager {
     }
 
     // Subscribe to syncQueue mutations so new items automatically schedule flush if online & authed
+    let prevQueueSize = syncQueue.size();
     syncQueue.subscribe((items) => {
       this.notifyListeners();
-      if (items.length > 0 && typeof navigator !== 'undefined' && navigator.onLine) {
-        this.scheduleAutoFlush(1000);
+      if (items.length > prevQueueSize && typeof navigator !== 'undefined' && navigator.onLine) {
+        this.scheduleAutoFlush(2000);
       }
+      prevQueueSize = items.length;
     });
   }
 

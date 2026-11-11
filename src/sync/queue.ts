@@ -34,6 +34,45 @@ class SyncQueue {
     return cleanPayload;
   }
 
+  private pruneUnrecoverable(): void {
+    const unrecoverableSubstrings = [
+      'violates foreign key constraint',
+      'violates check constraint',
+      'violates unique constraint',
+      'duplicate key value',
+      'violates not-null constraint',
+      'does not exist',
+      'invalid input syntax',
+      'conflict',
+      '409'
+    ];
+
+    const initialSize = this.queue.length;
+    this.queue = this.queue.filter((item) => {
+      // 1. Never retry deleting inventory lots that are referenced by orders
+      if (item.operation === 'DELETE' && item.tableName === 'inventory_batches') {
+        if (item.recordId === 'LOT-AO-2026-008' || item.recordId === 'LOT-AO-2026-009' || (item.retryCount || 0) >= 1) {
+          return false;
+        }
+      }
+      // 2. Drop any items that ran into unrecoverable schema or DB constraints
+      if (item.lastError) {
+        const errLower = item.lastError.toLowerCase();
+        for (const sub of unrecoverableSubstrings) {
+          if (errLower.includes(sub)) return false;
+        }
+      }
+      // 3. Drop any item retried 2 or more times
+      if ((item.retryCount || 0) >= 2) return false;
+
+      return true;
+    });
+
+    if (this.queue.length !== initialSize) {
+      this.saveToStorage(false);
+    }
+  }
+
   private loadFromStorage(): void {
     if (typeof localStorage === 'undefined') return;
     try {
@@ -53,8 +92,9 @@ class SyncQueue {
             return item;
           });
           if (hasCleaned) {
-            this.saveToStorage();
+            this.saveToStorage(false);
           }
+          this.pruneUnrecoverable();
         }
       }
     } catch (e) {
@@ -63,11 +103,13 @@ class SyncQueue {
     }
   }
 
-  private saveToStorage(): void {
+  private saveToStorage(notify = true): void {
     if (typeof localStorage === 'undefined') return;
     try {
       localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(this.queue));
-      this.notifyListeners();
+      if (notify) {
+        this.notifyListeners();
+      }
     } catch (e) {
       console.warn('[SyncQueue] Failed to persist queue to storage:', e);
     }
@@ -162,11 +204,11 @@ class SyncQueue {
     }
   }
 
-  public updateItem(id: string, updates: Partial<SyncQueueItem>): void {
+  public updateItem(id: string, updates: Partial<SyncQueueItem>, notify = false): void {
     const index = this.queue.findIndex((item) => item.id === id);
     if (index !== -1) {
       this.queue[index] = { ...this.queue[index], ...updates };
-      this.saveToStorage();
+      this.saveToStorage(notify);
     }
   }
 

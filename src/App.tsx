@@ -128,7 +128,7 @@ export default function App() {
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get('tab') as ActiveTab;
-      if (tabParam && ['dashboard', 'retail_wholesale', 'customers', 'suppliers', 'financials', 'inventory', 'settings', 'platform'].includes(tabParam)) {
+      if (tabParam && ['dashboard', 'orders', 'retail_wholesale', 'customers', 'suppliers', 'financials', 'inventory', 'settings', 'platform'].includes(tabParam)) {
         return tabParam;
       }
     } catch (e) {
@@ -369,47 +369,22 @@ export default function App() {
   }, [isPlatformCreator, isTenantUser, staffProfile]);
 
   /**
-   * Consolidates redundant lots linked to the same product or SKU.
-   * Keeps the authoritative lot and removes orphan duplicate IDs.
+   * Deduplicates inventory batches in-memory by primary key ID to prevent duplicate items.
+   * Never issues destructive deletes against the database for real inventory lots.
    */
-  const deduplicateBatches = (rawBatches: InventoryBatch[]): { deduplicated: InventoryBatch[]; removedIds: string[] } => {
-    const seenProductIds = new Set<string>();
-    const seenSkus = new Set<string>();
-    const seenCatchIds = new Set<string>();
+  const deduplicateBatches = (rawBatches: InventoryBatch[]): InventoryBatch[] => {
+    const seenIds = new Set<string>();
     const deduplicated: InventoryBatch[] = [];
-    const removedIds: string[] = [];
 
     for (const batch of rawBatches) {
-      // 1. Regular catch landings (non-retail cut lots) are unique by batch ID
-      if (!batch.isRetailCutLot && !batch.linkedProductId && !batch.id.startsWith('LOT-RET-')) {
-        if (!seenCatchIds.has(batch.id)) {
-          seenCatchIds.add(batch.id);
-          deduplicated.push(batch);
-        } else {
-          removedIds.push(batch.id);
-        }
-        continue;
+      if (!batch || !batch.id) continue;
+      if (!seenIds.has(batch.id)) {
+        seenIds.add(batch.id);
+        deduplicated.push(batch);
       }
-
-      // 2. Retail/dual product lots: exactly ONE active lot per product ID or SKU
-      const prodId = batch.linkedProductId;
-      const sku = (batch.productSku || '').toLowerCase().trim();
-
-      if (prodId && seenProductIds.has(prodId)) {
-        removedIds.push(batch.id);
-        continue;
-      }
-      if (sku && seenSkus.has(sku)) {
-        removedIds.push(batch.id);
-        continue;
-      }
-
-      if (prodId) seenProductIds.add(prodId);
-      if (sku) seenSkus.add(sku);
-      deduplicated.push(batch);
     }
 
-    return { deduplicated, removedIds };
+    return deduplicated;
   };
 
   // Hydrate batches and workspace data from repository on mount and when authenticated session or active tenant changes
@@ -420,16 +395,9 @@ export default function App() {
 
     batchRepository.getBatches(fallbackList).then(fresh => {
       if (isMounted) {
-        const { deduplicated, removedIds } = deduplicateBatches(fresh || []);
+        const deduplicated = deduplicateBatches(fresh || []);
         setBatches(deduplicated);
         setIsBatchesHydrated(true);
-
-        if (removedIds.length > 0) {
-          console.info(`[App] Automatically consolidated ${removedIds.length} redundant duplicate inventory lots:`, removedIds);
-          removedIds.forEach(id => {
-            batchRepository.delete(id).catch(err => console.warn('[App] Error cleaning duplicate batch:', err));
-          });
-        }
       }
       // Drains offline sync queue immediately if network and session are active
       syncManager.flushAll().catch(console.warn);
@@ -756,8 +724,8 @@ export default function App() {
         },
         gearType: 'Certified Retail Cutting & Skin-Packing',
         grade: product.grade,
-        initialWeightKg: Number(product.stockKg) || 0,
-        availableWeightKg: Number(product.stockKg) || 0,
+        initialWeightKg: Math.max(1.0, Number(product.stockKg) || 1.0),
+        availableWeightKg: Math.max(0, Number(product.stockKg) || 0),
         allocatedWeightKg: 0,
         storageZone: zone,
         currentTempCelsius: currentTemp,
@@ -1974,8 +1942,8 @@ export default function App() {
             ...existingLot,
             speciesName: product.name,
             grade: product.grade,
-            initialWeightKg: Math.max(existingLot.initialWeightKg, product.stockKg),
-            availableWeightKg: product.stockKg,
+            initialWeightKg: Math.max(1.0, Math.max(Number(existingLot.initialWeightKg) || 1.0, Number(product.stockKg) || 0)),
+            availableWeightKg: Math.max(0, Number(product.stockKg) || 0),
             costPerKg: product.costPricePerUnit,
             wholesalePricePerKg: product.wholesalePricePerUnit,
             storageZone: product.storageZone || existingLot.storageZone,
@@ -2021,8 +1989,8 @@ export default function App() {
           },
           gearType: 'Certified Retail Cutting & Skin-Packing',
           grade: product.grade,
-          initialWeightKg: Number(product.stockKg) || 0,
-          availableWeightKg: Number(product.stockKg) || 0,
+          initialWeightKg: Math.max(1.0, Number(product.stockKg) || 1.0),
+          availableWeightKg: Math.max(0, Number(product.stockKg) || 0),
           allocatedWeightKg: 0,
           storageZone: zone,
           currentTempCelsius: currentTemp,
