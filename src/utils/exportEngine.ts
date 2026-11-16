@@ -824,3 +824,210 @@ export function exportWholesaleOrdersToPdf({
   doc.save(`${cleanCompanyName}_Wholesale_Orders_${dateStr}.pdf`);
 }
 
+/**
+ * ============================================================================
+ * 4. OPERATING EXPENSE LEDGER & HISTORY EXPORTS (EXCEL & PDF)
+ * ============================================================================
+ */
+
+export interface ExportExpensesOptions {
+  expenses: FinancialLedgerEntry[];
+  companyName?: string;
+  currencySymbol?: string;
+}
+
+export function exportExpensesToExcel({
+  expenses,
+  companyName = 'Amansocean Seafoods',
+  currencySymbol = '$'
+}: ExportExpensesOptions): void {
+  const dateStr = new Date().toISOString().split('T')[0];
+  const workbook = XLSX.utils.book_new();
+
+  const rows = expenses.map(exp => ({
+    'Date': formatDate(exp.date),
+    'Ref / Voucher #': exp.voucherNumber || exp.referenceId || exp.id,
+    'Expense Category': exp.category,
+    'Vendor / Payee': exp.entityName || 'Operational Vendor',
+    'Description / Memo': exp.description,
+    'Payment Method': exp.paymentMethod,
+    [`Amount (${currencySymbol})`]: Number((Number(exp.amount) || 0).toFixed(2)),
+    'Status': exp.status,
+    'Notes': exp.notes || ''
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  worksheet['!cols'] = [
+    { wch: 12 },
+    { wch: 18 },
+    { wch: 28 },
+    { wch: 24 },
+    { wch: 36 },
+    { wch: 22 },
+    { wch: 16 },
+    { wch: 12 },
+    { wch: 26 }
+  ];
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Expense Ledger');
+
+  // Category Breakdown sheet
+  const byCategory = expenses.reduce<Record<string, { total: number; count: number }>>((acc, exp) => {
+    const cat = exp.category || 'Operating Expense';
+    if (!acc[cat]) acc[cat] = { total: 0, count: 0 };
+    acc[cat].total += Number(exp.amount) || 0;
+    acc[cat].count += 1;
+    return acc;
+  }, {});
+
+  const totalOpEx = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const summaryRows = [
+    ['OPERATING EXPENSE (OPEX) LEDGER SUMMARY'],
+    ['Company / Organization', companyName],
+    ['Export Date', dateStr],
+    ['Total Operating Expenses', Number(totalOpEx.toFixed(2))],
+    ['Total Entries', expenses.length],
+    [''],
+    ['CATEGORY', 'ENTRIES', `TOTAL (${currencySymbol})`, 'SHARE (%)'],
+    ...Object.entries(byCategory)
+      .sort(([, a], [, b]) => b.total - a.total)
+      .map(([cat, info]) => [
+        cat,
+        info.count,
+        Number(info.total.toFixed(2)),
+        totalOpEx > 0 ? `${((info.total / totalOpEx) * 100).toFixed(1)}%` : '0.0%'
+      ])
+  ];
+
+  const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
+  summarySheet['!cols'] = [{ wch: 32 }, { wch: 12 }, { wch: 18 }, { wch: 14 }];
+  XLSX.utils.book_append_sheet(workbook, summarySheet, 'OpEx Summary');
+
+  const cleanCompanyName = companyName.replace(/[^a-zA-Z0-9_-]/g, '_');
+  XLSX.writeFile(workbook, `${cleanCompanyName}_Expense_Ledger_${dateStr}.xlsx`);
+}
+
+export function exportExpensesToPdf({
+  expenses,
+  companyName = 'Amansocean Seafoods',
+  currencySymbol = '$'
+}: ExportExpensesOptions): void {
+  const dateStr = new Date().toISOString().split('T')[0];
+  const doc = new jsPDF({
+    orientation: 'landscape',
+    unit: 'pt',
+    format: 'a4'
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  doc.setFillColor(15, 23, 42);
+  doc.rect(0, 0, pageWidth, 68, 'F');
+  doc.setFillColor(225, 29, 72); // rose-600
+  doc.rect(0, 68, pageWidth, 4, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text(`${companyName.toUpperCase()} • OPERATING EXPENSE LEDGER & HISTORY`, 28, 30);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(203, 213, 225);
+  doc.text('Supabase-Verified Operating Disbursements, Logistics, Utilities & Facility Costs', 28, 48);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text(`DATE: ${dateStr}`, pageWidth - 140, 30);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`ENTRIES: ${expenses.length}`, pageWidth - 140, 48);
+
+  const totalOpEx = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const settledTotal = expenses.filter(e => e.status === 'Settled').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+
+  doc.setFillColor(241, 245, 249);
+  doc.roundedRect(28, 80, pageWidth - 56, 30, 4, 4, 'F');
+
+  doc.setTextColor(51, 65, 85);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Total OpEx:', 40, 99);
+  doc.setTextColor(190, 18, 60);
+  doc.text(formatMoney(totalOpEx, currencySymbol), 100, 99);
+
+  doc.setTextColor(51, 65, 85);
+  doc.text('Settled:', 260, 99);
+  doc.setTextColor(5, 150, 105);
+  doc.text(formatMoney(settledTotal, currencySymbol), 305, 99);
+
+  doc.setTextColor(51, 65, 85);
+  doc.text('Records:', 460, 99);
+  doc.setTextColor(15, 23, 42);
+  doc.text(`${expenses.length} Expense(s)`, 508, 99);
+
+  const tableData = expenses.map(exp => [
+    formatDate(exp.date),
+    exp.voucherNumber || exp.referenceId || exp.id,
+    exp.category,
+    exp.entityName || 'Operational Vendor',
+    exp.description,
+    exp.paymentMethod,
+    exp.status,
+    formatMoney(exp.amount, currencySymbol)
+  ]);
+
+  autoTable(doc, {
+    startY: 118,
+    margin: { left: 28, right: 28 },
+    head: [[
+      'Date',
+      'Ref / Voucher #',
+      'Category',
+      'Vendor / Payee',
+      'Description / Memo',
+      'Payment Method',
+      'Status',
+      'Amount'
+    ]],
+    body: tableData,
+    theme: 'grid',
+    headStyles: {
+      fillColor: [15, 23, 42],
+      textColor: [255, 255, 255],
+      fontSize: 8,
+      fontStyle: 'bold'
+    },
+    styles: {
+      fontSize: 7.5,
+      cellPadding: 4.5,
+      textColor: [30, 41, 59]
+    },
+    columnStyles: {
+      0: { cellWidth: 62 },
+      1: { cellWidth: 85, fontStyle: 'bold' },
+      2: { cellWidth: 120 },
+      3: { cellWidth: 110 },
+      4: { cellWidth: 185 },
+      5: { cellWidth: 90 },
+      6: { cellWidth: 55, halign: 'center' },
+      7: { cellWidth: 78, halign: 'right', fontStyle: 'bold', textColor: [190, 18, 60] }
+    },
+    alternateRowStyles: {
+      fillColor: [248, 250, 252]
+    },
+    didDrawPage: (data) => {
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(148, 163, 184);
+      doc.text(
+        `Frostly Seafood ERP • Operating Expense Ledger • Page ${data.pageNumber}`,
+        28,
+        pageHeight - 16
+      );
+    }
+  });
+
+  const cleanCompanyName = companyName.replace(/[^a-zA-Z0-9_-]/g, '_');
+  doc.save(`${cleanCompanyName}_Expense_Ledger_${dateStr}.pdf`);
+}
+
+

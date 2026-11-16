@@ -225,50 +225,50 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5 sm:gap-4">
           {/* Executive Widget 1: Total Active Inventory */}
           <div 
             id="executive-kpi-active-inventory"
             onClick={() => onSelectTab('inventory')}
-            className="bg-gradient-to-br from-indigo-900 via-slate-900 to-slate-950 text-white p-5 rounded-2xl border border-indigo-950/60 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between min-w-0"
+            className="bg-gradient-to-br from-indigo-900 via-slate-900 to-slate-950 text-white p-4 sm:p-5 lg:p-6 rounded-2xl border border-indigo-800/70 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between min-w-0"
           >
             <div>
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                    <Boxes className="w-4.5 h-4.5 text-indigo-300" />
+              <div className="flex items-start justify-between gap-2.5">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-500/25 text-indigo-200 border border-indigo-400/40 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <Boxes className="w-5 h-5 text-indigo-200" />
                   </div>
                   <div className="min-w-0">
-                    <span className="text-xs font-bold text-indigo-200 uppercase tracking-wider block">
+                    <span className="text-xs sm:text-[13px] font-bold text-indigo-100 uppercase tracking-wide leading-snug block">
                       Total Active Inventory
                     </span>
-                    <span className="text-[11px] text-slate-400 truncate block">
+                    <span className="text-xs text-slate-300 leading-snug block mt-0.5">
                       Available across Cryo-Lots
                     </span>
                   </div>
                 </div>
-                <span className="text-[11px] font-semibold text-indigo-300 group-hover:text-white flex items-center gap-0.5 shrink-0 transition-colors">
+                <span className="text-xs font-semibold text-indigo-200 group-hover:text-white flex items-center gap-0.5 shrink-0 transition-colors pt-0.5">
                   <span>View</span>
                   <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                 </span>
               </div>
 
-              <div className="mt-4">
-                <div className="text-2xl sm:text-3xl font-black text-white font-mono-code tracking-tight truncate">
+              <div className="mt-4 sm:mt-5">
+                <div className="text-xl sm:text-2xl 2xl:text-3xl font-black text-white font-mono-code tracking-tight leading-tight tabular-nums break-words">
                   {formatWeight(activeInventoryWeightKg, useImperial)}
                 </div>
-                <div className="text-xs font-semibold text-indigo-300 font-mono-code mt-0.5 truncate">
+                <div className="text-xs sm:text-[13px] font-semibold text-indigo-200 font-mono-code mt-1 tabular-nums break-words">
                   Valued at {formatCurrency(activeInventoryValueUSD)}
                 </div>
               </div>
             </div>
 
-            <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-300">
+            <div className="mt-4 pt-3 border-t border-white/15 flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-xs text-slate-200">
               <span className="inline-flex items-center gap-1.5 font-medium">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-                <strong>{activeBatchesCount}</strong> active batches in cold-store
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                <span><strong className="text-white">{activeBatchesCount}</strong> active batches in cold-store</span>
               </span>
-              <span className="text-slate-400 truncate">
+              <span className="text-slate-300 font-medium tabular-nums">
                 {allocatedWeightKg > 0 ? `${formatWeight(allocatedWeightKg, useImperial)} allocated` : '100% unallocated'}
               </span>
             </div>
@@ -278,40 +278,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div 
             id="executive-kpi-monthly-target"
             onClick={() => onSelectTab('financials')}
-            className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between min-w-0"
+            className="bg-white p-4 sm:p-5 lg:p-6 rounded-2xl border border-slate-200 shadow-xs hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between min-w-0"
           >
             <div>
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                    <Target className="w-4.5 h-4.5 text-emerald-600" />
+              <div className="flex items-start justify-between gap-2.5">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <Target className="w-5 h-5 text-emerald-600" />
                   </div>
                   <div className="min-w-0">
-                    <span className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+                    <span className="text-xs sm:text-[13px] font-bold text-slate-900 uppercase tracking-wide leading-snug block">
                       Monthly Revenue Target Progress
                     </span>
-                    <span className="text-[11px] text-slate-500 truncate block">
+                    <span className="text-xs text-slate-600 leading-snug block mt-0.5 tabular-nums">
                       Target: {formatCurrency(monthlyRevenueTarget)}
                     </span>
                   </div>
                 </div>
-                <span className="text-xs font-bold text-emerald-700 font-mono-code shrink-0">
+                <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-extrabold font-mono-code tabular-nums shrink-0">
                   {revenueTargetProgressPct}%
                 </span>
               </div>
 
-              <div className="mt-4">
-                <div className="flex items-baseline justify-between gap-2">
-                  <div className="text-2xl sm:text-3xl font-black text-slate-900 font-mono-code tracking-tight truncate">
+              <div className="mt-4 sm:mt-5">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+                  <div className="text-xl sm:text-2xl 2xl:text-3xl font-black text-slate-900 font-mono-code tracking-tight leading-tight tabular-nums break-words">
                     {formatCurrency(effectiveMonthRevenue)}
                   </div>
-                  <span className="text-xs font-medium text-slate-400 shrink-0">
+                  <span className="text-xs font-semibold text-slate-600 font-mono-code tabular-nums">
                     of {formatCurrency(monthlyRevenueTarget)}
                   </span>
                 </div>
 
                 {/* Progress Bar with indicator */}
-                <div className="mt-2.5 w-full bg-slate-100 rounded-full h-2.5 overflow-hidden border border-slate-200/60">
+                <div className="mt-3 w-full bg-slate-100 rounded-full h-2.5 overflow-hidden border border-slate-200/80">
                   <div 
                     className="bg-gradient-to-r from-emerald-500 to-teal-600 h-2.5 rounded-full transition-all duration-500"
                     style={{ width: `${revenueTargetProgressPct}%` }}
@@ -320,12 +320,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
             </div>
 
-            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px]">
-              <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/70">
-                <TrendingUp className="w-3 h-3 text-emerald-600" />
+            <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-md border border-emerald-200/80 tabular-nums">
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                 {effectiveMonthRevenue >= monthlyRevenueTarget ? 'Target Achieved' : `${formatCurrency(monthlyRevenueTarget - effectiveMonthRevenue)} remaining`}
               </span>
-              <span className="text-slate-400 text-[10px] sm:text-[11px] truncate">
+              <span className="text-slate-600 font-medium tabular-nums">
                 Day {currentDayOfMonth} of {daysInCurrentMonth}
               </span>
             </div>
@@ -335,45 +335,45 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div 
             id="executive-kpi-pending-orders"
             onClick={() => onSelectTab('orders')}
-            className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-xs hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between min-w-0"
+            className="bg-white p-4 sm:p-5 lg:p-6 rounded-2xl border border-slate-200 shadow-xs hover:border-slate-300 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between min-w-0 md:col-span-2 xl:col-span-1"
           >
             <div>
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-700 border border-amber-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                    <Clock className="w-4.5 h-4.5 text-amber-600" />
+              <div className="flex items-start justify-between gap-2.5">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-700 border border-amber-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <Clock className="w-5 h-5 text-amber-600" />
                   </div>
                   <div className="min-w-0">
-                    <span className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+                    <span className="text-xs sm:text-[13px] font-bold text-slate-900 uppercase tracking-wide leading-snug block">
                       Pending Order Value
                     </span>
-                    <span className="text-[11px] text-slate-500 truncate block">
+                    <span className="text-xs text-slate-600 leading-snug block mt-0.5">
                       Fulfillment pipeline in progress
                     </span>
                   </div>
                 </div>
-                <span className="text-[11px] font-semibold text-slate-400 group-hover:text-slate-800 flex items-center gap-0.5 shrink-0 transition-colors">
+                <span className="text-xs font-semibold text-slate-600 group-hover:text-slate-900 flex items-center gap-0.5 shrink-0 transition-colors pt-0.5">
                   <span>Pipeline</span>
                   <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                 </span>
               </div>
 
-              <div className="mt-4">
-                <div className="text-2xl sm:text-3xl font-black text-slate-900 font-mono-code tracking-tight truncate">
+              <div className="mt-4 sm:mt-5">
+                <div className="text-xl sm:text-2xl 2xl:text-3xl font-black text-slate-900 font-mono-code tracking-tight leading-tight tabular-nums break-words">
                   {formatCurrency(pendingOrdersValueUSD)}
                 </div>
-                <div className="text-xs font-semibold text-amber-700 font-mono-code mt-0.5 truncate">
+                <div className="text-xs sm:text-[13px] font-semibold text-amber-800 font-mono-code mt-1 tabular-nums break-words">
                   {formatWeight(pendingOrdersWeightKg, useImperial)} committed volume
                 </div>
               </div>
             </div>
 
-            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-600">
-              <span className="inline-flex items-center gap-1 font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/70">
-                <Package className="w-3 h-3 text-amber-600" />
-                <strong>{pendingOrdersCount}</strong> active wholesale orders
+            <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-700">
+              <span className="inline-flex items-center gap-1.5 font-semibold text-amber-900 bg-amber-50 px-2.5 py-0.5 rounded-md border border-amber-200/80">
+                <Package className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                <span><strong>{pendingOrdersCount}</strong> active wholesale orders</span>
               </span>
-              <span className="text-slate-400 text-[10px] sm:text-[11px] truncate">
+              <span className="text-slate-600 font-medium">
                 Awaiting transit/delivery
               </span>
             </div>

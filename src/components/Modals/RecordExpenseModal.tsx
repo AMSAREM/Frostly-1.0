@@ -71,13 +71,14 @@ export const RecordExpenseModal: React.FC<RecordExpenseModalProps> = ({
 
     onAddExpense({
       date: date || new Date().toISOString().split('T')[0],
-      type: 'OpEx',
+      type: category === 'COGS (Catch Intake)' ? 'COGS' : 'OpEx',
       category,
       description: description.trim(),
-      amount: parsedAmount,
+      referenceId: reference.trim() || `EXP-${Date.now().toString().slice(-4)}`,
       entityName: vendor.trim() || 'Operational Vendor',
+      amount: parsedAmount,
       paymentMethod,
-      orderId: reference.trim() || undefined
+      status: 'Settled'
     });
 
     onClose();

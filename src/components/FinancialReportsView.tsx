@@ -44,6 +44,7 @@ import {
   Customer, 
   Supplier 
 } from '../types';
+import { isReversalLedgerEntry } from '../repositories/financialRepository';
 
 interface FinancialReportsViewProps {
   financialEntries: FinancialLedgerEntry[];
@@ -75,104 +76,32 @@ export interface MonthlyFinancialSummary {
   retailTicketCount: number;
 }
 
-// Baseline historical months data for seasonal commercial seafood trading
-const HISTORICAL_MONTHLY_DATA: MonthlyFinancialSummary[] = [
-  {
-    monthKey: '2026-03',
-    monthLabel: 'March 2026',
-    shortMonth: 'Mar',
-    wholesaleRevenue: 142000,
-    retailRevenue: 18500,
-    totalRevenue: 160500,
-    cogs: 82000,
-    grossProfit: 78500,
-    grossMarginPct: 48.9,
-    opEx: 17200,
-    netProfit: 61300,
-    netMarginPct: 38.2,
-    cashInflow: 154000,
-    cashOutflow: 96000,
-    netCashFlow: 58000,
-    orderCount: 18,
-    retailTicketCount: 210
-  },
-  {
-    monthKey: '2026-04',
-    monthLabel: 'April 2026',
-    shortMonth: 'Apr',
-    wholesaleRevenue: 158400,
-    retailRevenue: 22100,
-    totalRevenue: 180500,
-    cogs: 91500,
-    grossProfit: 89000,
-    grossMarginPct: 49.3,
-    opEx: 18400,
-    netProfit: 70600,
-    netMarginPct: 39.1,
-    cashInflow: 172000,
-    cashOutflow: 104000,
-    netCashFlow: 68000,
-    orderCount: 22,
-    retailTicketCount: 245
-  },
-  {
-    monthKey: '2026-05',
-    monthLabel: 'May 2026',
-    shortMonth: 'May',
-    wholesaleRevenue: 176200,
-    retailRevenue: 26800,
-    totalRevenue: 203000,
-    cogs: 102000,
-    grossProfit: 101000,
-    grossMarginPct: 49.8,
-    opEx: 19800,
-    netProfit: 81200,
-    netMarginPct: 40.0,
-    cashInflow: 195000,
-    cashOutflow: 118000,
-    netCashFlow: 77000,
-    orderCount: 25,
-    retailTicketCount: 290
-  },
-  {
-    monthKey: '2026-06',
-    monthLabel: 'June 2026',
-    shortMonth: 'Jun',
-    wholesaleRevenue: 198500,
-    retailRevenue: 34200,
-    totalRevenue: 232700,
-    cogs: 114500,
-    grossProfit: 118200,
-    grossMarginPct: 50.8,
-    opEx: 21500,
-    netProfit: 96700,
-    netMarginPct: 41.6,
-    cashInflow: 224000,
-    cashOutflow: 132000,
-    netCashFlow: 92000,
-    orderCount: 29,
-    retailTicketCount: 340
-  },
-  {
-    monthKey: '2026-07',
-    monthLabel: 'July 2026',
-    shortMonth: 'Jul',
-    wholesaleRevenue: 224000,
-    retailRevenue: 41600,
-    totalRevenue: 265600,
-    cogs: 129000,
-    grossProfit: 136600,
-    grossMarginPct: 51.4,
-    opEx: 23400,
-    netProfit: 113200,
-    netMarginPct: 42.6,
-    cashInflow: 258000,
-    cashOutflow: 148000,
-    netCashFlow: 110000,
-    orderCount: 34,
-    retailTicketCount: 410
+const getMonthKey = (dateStr?: string, fallbackKey?: string): string => {
+  if (dateStr) {
+    const isoMatch = dateStr.match(/^(\d{4})-(\d{2})/);
+    if (isoMatch) {
+      return `${isoMatch[1]}-${isoMatch[2]}`;
+    }
+    const parsed = new Date(dateStr);
+    if (!isNaN(parsed.getTime())) {
+      return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
+    }
   }
-];
+  if (fallbackKey) return fallbackKey;
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const formatMonthLabels = (monthKey: string, isCurrentMonth: boolean) => {
+  const [yearStr, monthStr] = monthKey.split('-');
+  const d = new Date(Number(yearStr), Number(monthStr) - 1, 1);
+  const fullMonth = d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const shortMonth = d.toLocaleString('en-US', { month: 'short' });
+  return {
+    monthLabel: isCurrentMonth ? `${fullMonth} (Live MTD)` : fullMonth,
+    shortMonth: isCurrentMonth ? `${shortMonth} (MTD)` : shortMonth
+  };
+};
 
 export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
   financialEntries = [],
@@ -186,79 +115,107 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
   const [timeRange, setTimeRange] = useState<'6m' | '3m' | 'ytd'>('6m');
   const [chartMetric, setChartMetric] = useState<'all' | 'profit' | 'margins'>('all');
 
-  // Compute live current month (August 2026 / current active transactions)
-  const currentMonthSummary = useMemo<MonthlyFinancialSummary>(() => {
-    // Current Wholesale Revenue
-    const wholesaleRev = orders
-      .filter(o => o.status !== 'Cancelled')
-      .reduce((sum, o) => sum + (o.adjustedTotalUSD || o.quotedTotalUSD), 0);
+  // Compute live monthly summaries from actual transactions (last 6 calendar months + any active entry months)
+  const allMonthlyData = useMemo<MonthlyFinancialSummary[]>(() => {
+    const now = new Date();
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-    // Current Retail Revenue
-    const retailRev = retailSales.reduce((sum, r) => sum + r.totalAmount, 0);
-    const totRev = wholesaleRev + retailRev;
+    const monthKeysSet = new Set<string>();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      monthKeysSet.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
 
-    // Current COGS (Landed Catch Purchases + Inventory Adjustments/Shrinkage - Surplus Recoveries)
-    const poCogs = purchaseOrders.reduce((sum, po) => sum + po.totalCostUSD, 0);
-    const invAdjLoss = financialEntries
-      .filter(e => e.category === 'Inventory Adjustment' && e.type === 'COGS')
-      .reduce((sum, e) => sum + e.amount, 0);
-    const invAdjGain = financialEntries
-      .filter(e => e.category === 'Inventory Adjustment' && e.type === 'Income')
-      .reduce((sum, e) => sum + e.amount, 0);
-    const cogsTotal = poCogs + (invAdjLoss - invAdjGain);
-    const grossProf = totRev - cogsTotal;
-    const grossMargin = totRev > 0 ? (grossProf / totRev) * 100 : 0;
+    orders.forEach(o => monthKeysSet.add(getMonthKey(o.orderDate, currentMonthKey)));
+    retailSales.forEach(r => monthKeysSet.add(getMonthKey(r.date, currentMonthKey)));
+    purchaseOrders.forEach(po => monthKeysSet.add(getMonthKey(po.orderDate || po.deliveryDate, currentMonthKey)));
+    financialEntries.forEach(e => monthKeysSet.add(getMonthKey(e.date, currentMonthKey)));
 
-    // Current OpEx
-    const opExTotal = financialEntries
-      .filter(e => e.type === 'OpEx')
-      .reduce((sum, e) => sum + e.amount, 0);
+    const sortedKeys = Array.from(monthKeysSet).sort();
 
-    const netProf = grossProf - opExTotal;
-    const netMargin = totRev > 0 ? (netProf / totRev) * 100 : 0;
+    return sortedKeys.map(monthKey => {
+      const monthOrders = orders.filter(
+        o => o.status !== 'Cancelled' && getMonthKey(o.orderDate, currentMonthKey) === monthKey
+      );
+      const wholesaleRev = monthOrders.reduce(
+        (sum, o) => sum + (o.adjustedTotalUSD || o.quotedTotalUSD),
+        0
+      );
 
-    // Cash Inflow: Settled income & payments
-    const cashIn = financialEntries
-      .filter(e => e.type === 'Income' && e.status === 'Settled')
-      .reduce((sum, e) => sum + e.amount, 0) + retailRev;
+      const monthRetail = retailSales.filter(
+        r => getMonthKey(r.date, currentMonthKey) === monthKey
+      );
+      const retailRev = monthRetail.reduce((sum, r) => sum + r.totalAmount, 0);
+      const totRev = wholesaleRev + retailRev;
 
-    // Cash Outflow: Settled COGS & OpEx payments
-    const cashOut = financialEntries
-      .filter(e => (e.type === 'COGS' || e.type === 'OpEx') && e.status === 'Settled')
-      .reduce((sum, e) => sum + e.amount, 0);
+      const monthPOs = purchaseOrders.filter(
+        po => getMonthKey(po.orderDate || po.deliveryDate, currentMonthKey) === monthKey
+      );
+      const poCogs = monthPOs.reduce((sum, po) => sum + po.totalCostUSD, 0);
 
-    return {
-      monthKey: '2026-08',
-      monthLabel: 'August 2026 (Live MTD)',
-      shortMonth: 'Aug (MTD)',
-      wholesaleRevenue: wholesaleRev,
-      retailRevenue: retailRev,
-      totalRevenue: totRev,
-      cogs: cogsTotal,
-      grossProfit: grossProf,
-      grossMarginPct: parseFloat(grossMargin.toFixed(1)),
-      opEx: opExTotal > 0 ? opExTotal : 14150,
-      netProfit: netProf,
-      netMarginPct: parseFloat(netMargin.toFixed(1)),
-      cashInflow: cashIn > 0 ? cashIn : totRev * 0.85,
-      cashOutflow: cashOut > 0 ? cashOut : (cogsTotal + (opExTotal > 0 ? opExTotal : 14150)) * 0.9,
-      netCashFlow: (cashIn > 0 ? cashIn : totRev * 0.85) - (cashOut > 0 ? cashOut : (cogsTotal + (opExTotal > 0 ? opExTotal : 14150)) * 0.9),
-      orderCount: orders.length,
-      retailTicketCount: retailSales.length
-    };
+      const monthEntries = financialEntries.filter(
+        e => getMonthKey(e.date, currentMonthKey) === monthKey
+      );
+      const invAdjLoss = monthEntries
+        .filter(e => e.category === 'Inventory Adjustment' && e.type === 'COGS')
+        .reduce((sum, e) => sum + e.amount, 0);
+      const invAdjGain = monthEntries
+        .filter(e => e.category === 'Inventory Adjustment' && e.type === 'Income')
+        .reduce((sum, e) => sum + e.amount, 0);
+      const cogsTotal = poCogs + (invAdjLoss - invAdjGain);
+
+      const grossProf = totRev - cogsTotal;
+      const grossMargin = totRev > 0 ? (grossProf / totRev) * 100 : 0;
+
+      const isOpExEntry = (e: FinancialLedgerEntry) =>
+        e.type === 'OpEx' && !isReversalLedgerEntry(e);
+
+      const opExTotal = monthEntries
+        .filter(isOpExEntry)
+        .reduce((sum, e) => sum + e.amount, 0);
+
+      const netProf = grossProf - opExTotal;
+      const netMargin = totRev > 0 ? (netProf / totRev) * 100 : 0;
+
+      const cashIn =
+        monthEntries
+          .filter(e => e.type === 'Income' && e.status === 'Settled')
+          .reduce((sum, e) => sum + (isReversalLedgerEntry(e) ? -Math.abs(e.amount) : e.amount), 0) + retailRev;
+
+      const cashOut = monthEntries
+        .filter(e => (e.type === 'COGS' || isOpExEntry(e)) && e.status === 'Settled')
+        .reduce((sum, e) => sum + e.amount, 0);
+
+      const { monthLabel, shortMonth } = formatMonthLabels(monthKey, monthKey === currentMonthKey);
+
+      return {
+        monthKey,
+        monthLabel,
+        shortMonth,
+        wholesaleRevenue: wholesaleRev,
+        retailRevenue: retailRev,
+        totalRevenue: totRev,
+        cogs: cogsTotal,
+        grossProfit: grossProf,
+        grossMarginPct: parseFloat(grossMargin.toFixed(1)),
+        opEx: opExTotal,
+        netProfit: netProf,
+        netMarginPct: parseFloat(netMargin.toFixed(1)),
+        cashInflow: cashIn,
+        cashOutflow: cashOut,
+        netCashFlow: cashIn - cashOut,
+        orderCount: monthOrders.length,
+        retailTicketCount: monthRetail.length
+      };
+    });
   }, [orders, retailSales, purchaseOrders, financialEntries]);
-
-  // Combined Monthly Dataset
-  const allMonthlyData = useMemo(() => {
-    return [...HISTORICAL_MONTHLY_DATA, currentMonthSummary];
-  }, [currentMonthSummary]);
 
   // Filtered dataset based on range selector
   const displayedData = useMemo(() => {
     if (timeRange === '3m') {
       return allMonthlyData.slice(-3);
     }
-    return allMonthlyData; // 6m / YTD
+    return allMonthlyData.slice(-6); // 6m / YTD
   }, [allMonthlyData, timeRange]);
 
   // High-level Trailing Totals
@@ -288,41 +245,34 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
     };
   }, [displayedData]);
 
-  // OpEx Category Breakdown data for Pie chart
+  // OpEx Category Breakdown data for Pie chart (100% live from financialEntries)
   const opexBreakdownData = useMemo(() => {
-    const categories: Record<string, number> = {
-      'Logistics & Reefer Freight': 0,
-      'Cold Storage Utilities': 0,
-      'Labor & Cutting Crew': 0,
-      'Packaging & Dry Ice': 0,
-      'Quality & HACCP Compliance': 0
-    };
+    const now = new Date();
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const activeMonthKeys = new Set(displayedData.map(m => m.monthKey));
 
-    // Aggregate from entries if available
+    const categories: Record<string, number> = {};
+
     financialEntries
-      .filter(e => e.type === 'OpEx')
+      .filter(
+        e =>
+          e.type === 'OpEx' &&
+          !isReversalLedgerEntry(e) &&
+          activeMonthKeys.has(getMonthKey(e.date, currentMonthKey))
+      )
       .forEach(e => {
-        if (categories[e.category] !== undefined) {
-          categories[e.category] += e.amount;
-        } else {
-          categories['Logistics & Reefer Freight'] += e.amount;
-        }
+        const cat = e.category || 'Operating Expense';
+        categories[cat] = (categories[cat] || 0) + e.amount;
       });
 
-    // Fallbacks if empty
-    if (categories['Logistics & Reefer Freight'] === 0) {
-      categories['Logistics & Reefer Freight'] = 3250;
-      categories['Cold Storage Utilities'] = 4100;
-      categories['Labor & Cutting Crew'] = 6800;
-      categories['Packaging & Dry Ice'] = 1950;
-      categories['Quality & HACCP Compliance'] = 1200;
-    }
-
-    return Object.entries(categories).map(([name, value]) => ({
-      name,
-      value
-    }));
-  }, [financialEntries]);
+    return Object.entries(categories)
+      .filter(([, value]) => value > 0)
+      .sort(([, a], [, b]) => b - a)
+      .map(([name, value]) => ({
+        name,
+        value
+      }));
+  }, [financialEntries, displayedData]);
 
   // Product category revenue share data
   const categoryRevenueData = useMemo(() => [
@@ -397,7 +347,7 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
   };
 
   // Palette colors for OpEx Donut
-  const OPEX_COLORS = ['#3b82f6', '#06b6d4', '#6366f1', '#f59e0b', '#ec4899'];
+  const OPEX_COLORS = ['#3b82f6', '#06b6d4', '#6366f1', '#f59e0b', '#ec4899', '#10b981', '#8b5cf6', '#f43f5e'];
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -482,9 +432,10 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
           <div className="text-2xl font-black text-slate-900 font-mono-code">
             {formatCurrency(aggregateMetrics.totalRev)}
           </div>
-          <div className="flex items-center gap-1 text-xs text-emerald-600 font-bold pt-1 border-t border-slate-100">
-            <ArrowUpRight className="w-3.5 h-3.5" />
-            <span>+18.4% seasonal run-rate increase</span>
+          <div className="flex items-center gap-1.5 text-xs text-slate-600 font-semibold pt-1 border-t border-slate-100">
+            <span>
+              {displayedData.reduce((s, m) => s + m.orderCount, 0)} wholesale orders • {displayedData.reduce((s, m) => s + m.retailTicketCount, 0)} retail tickets
+            </span>
           </div>
         </div>
 
@@ -539,7 +490,9 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
           </div>
           <div className="text-xs text-slate-500 pt-1 border-t border-slate-100 flex items-center justify-between">
             <span>Inflow vs Outflow:</span>
-            <span className="text-emerald-700 font-bold font-mono-code">+{formatCurrency(aggregateMetrics.totalCashIn - aggregateMetrics.totalCashOut)}</span>
+            <span className={`font-bold font-mono-code ${aggregateMetrics.netCash >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+              {aggregateMetrics.netCash >= 0 ? `+${formatCurrency(aggregateMetrics.netCash)}` : formatCurrency(aggregateMetrics.netCash)}
+            </span>
           </div>
         </div>
       </div>
@@ -681,14 +634,14 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
           <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
             <div>
               <div className="text-slate-400">Total Period Net Cash</div>
-              <div className="font-mono-code font-black text-slate-900 text-sm">
-                +{formatCurrency(aggregateMetrics.netCash)}
+              <div className={`font-mono-code font-black text-sm ${aggregateMetrics.netCash >= 0 ? 'text-slate-900' : 'text-rose-700'}`}>
+                {aggregateMetrics.netCash >= 0 ? `+${formatCurrency(aggregateMetrics.netCash)}` : formatCurrency(aggregateMetrics.netCash)}
               </div>
             </div>
             <div className="text-right">
               <div className="text-slate-400">Avg Monthly Inflow</div>
               <div className="font-mono-code font-bold text-emerald-600 text-sm">
-                {formatCurrency(aggregateMetrics.totalCashIn / displayedData.length)}
+                {formatCurrency(displayedData.length > 0 ? aggregateMetrics.totalCashIn / displayedData.length : 0)}
               </div>
             </div>
           </div>
@@ -709,48 +662,58 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
-            <div className="sm:col-span-6 h-52">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={opexBreakdownData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={45}
-                    outerRadius={75}
-                    paddingAngle={4}
-                    dataKey="value"
-                  >
-                    {opexBreakdownData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={OPEX_COLORS[index % OPEX_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip 
-                    formatter={(value: any) => [formatCurrency(Number(value)), 'Expense']}
-                    contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', color: '#fff', fontSize: '11px' }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
+          {opexBreakdownData.length === 0 ? (
+            <div className="h-52 flex flex-col items-center justify-center text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 px-6">
+              <PieIcon className="w-8 h-8 text-slate-300 mb-2" />
+              <div className="text-xs font-bold text-slate-700">No operating expenses recorded yet</div>
+              <p className="text-[11px] text-slate-500 mt-1 max-w-xs">
+                Use Record Expense to log freight, cold storage utilities, packaging, or crew labor costs.
+              </p>
             </div>
-
-            <div className="sm:col-span-6 space-y-2 text-xs">
-              {opexBreakdownData.map((item, idx) => (
-                <div key={item.name} className="flex items-center justify-between p-1.5 rounded-xl hover:bg-slate-50">
-                  <div className="flex items-center gap-2">
-                    <span 
-                      className="w-2.5 h-2.5 rounded-full shrink-0" 
-                      style={{ backgroundColor: OPEX_COLORS[idx % OPEX_COLORS.length] }} 
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
+              <div className="sm:col-span-6 h-52">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={opexBreakdownData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={45}
+                      outerRadius={75}
+                      paddingAngle={4}
+                      dataKey="value"
+                    >
+                      {opexBreakdownData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={OPEX_COLORS[index % OPEX_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip 
+                      formatter={(value: any) => [formatCurrency(Number(value)), 'Expense']}
+                      contentStyle={{ backgroundColor: '#0f172a', borderRadius: '12px', color: '#fff', fontSize: '11px' }}
                     />
-                    <span className="text-slate-700 font-medium truncate max-w-[140px]">{item.name}</span>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="sm:col-span-6 space-y-2 text-xs">
+                {opexBreakdownData.map((item, idx) => (
+                  <div key={item.name} className="flex items-center justify-between p-1.5 rounded-xl hover:bg-slate-50">
+                    <div className="flex items-center gap-2">
+                      <span 
+                        className="w-2.5 h-2.5 rounded-full shrink-0" 
+                        style={{ backgroundColor: OPEX_COLORS[idx % OPEX_COLORS.length] }} 
+                      />
+                      <span className="text-slate-700 font-medium truncate max-w-[140px]">{item.name}</span>
+                    </div>
+                    <span className="font-mono-code font-bold text-slate-900">
+                      {formatCurrency(item.value)}
+                    </span>
                   </div>
-                  <span className="font-mono-code font-bold text-slate-900">
-                    {formatCurrency(item.value)}
-                  </span>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Seafood Category Contribution - 6 cols */}
@@ -853,7 +816,7 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
                   </td>
                   <td className="py-3.5 px-4 text-right font-bold">
                     <span className={row.netCashFlow >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
-                      +{formatCurrency(row.netCashFlow)}
+                      {row.netCashFlow >= 0 ? `+${formatCurrency(row.netCashFlow)}` : formatCurrency(row.netCashFlow)}
                     </span>
                   </td>
                 </tr>
@@ -887,7 +850,7 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
                   {formatCurrency(aggregateMetrics.totalNet)}
                 </td>
                 <td className="py-3.5 px-4 text-right text-emerald-300">
-                  +{formatCurrency(aggregateMetrics.netCash)}
+                  {aggregateMetrics.netCash >= 0 ? `+${formatCurrency(aggregateMetrics.netCash)}` : formatCurrency(aggregateMetrics.netCash)}
                 </td>
               </tr>
             </tfoot>

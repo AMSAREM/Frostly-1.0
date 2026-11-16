@@ -19,10 +19,14 @@ import {
   Wallet,
   Calendar,
   Search,
-  BarChart3
+  BarChart3,
+  Trash2,
+  X,
+  Pencil
 } from 'lucide-react';
 import { 
   FinancialLedgerEntry, 
+  FinancialEntryCategory,
   ClientOrder, 
   RetailTransaction, 
   PurchaseOrderLanding, 
@@ -33,6 +37,9 @@ import {
 } from '../types';
 import { formatCurrency as defaultFormatCurrency } from '../utils/formatters';
 import { FinancialReportsView } from './FinancialReportsView';
+import { isReversalLedgerEntry } from '../repositories/financialRepository';
+import { ExportDropdown } from './common/ExportDropdown';
+import { exportExpensesToExcel, exportExpensesToPdf } from '../utils/exportEngine';
 
 interface FinancialsViewProps {
   financialEntries?: FinancialLedgerEntry[];
@@ -46,6 +53,26 @@ interface FinancialsViewProps {
   onRecordPayment: (type: 'AR' | 'AP', entityId: string, amount: number, refId: string) => void;
   onAddExpense?: (expense: Omit<FinancialLedgerEntry, 'id'>) => void;
   onSaveAdjustmentAccount?: (account: InventoryAdjustmentAccount) => void;
+  onClearReversalEntries?: () => Promise<{
+    deletedCount: number;
+    source: string;
+    requiresSqlMigration?: boolean;
+    error?: string;
+  }>;
+  onDeleteFinancialEntries?: (entryIds: string[]) => Promise<{
+    deletedCount: number;
+    source: string;
+    requiresSqlMigration?: boolean;
+    error?: string;
+  }>;
+  onUpdateExpense?: (expense: FinancialLedgerEntry) => Promise<{
+    updatedEntry: FinancialLedgerEntry;
+    source: string;
+    requiresSqlMigration?: boolean;
+    error?: string;
+  }>;
+  companyName?: string;
+  currencySymbol?: string;
   formatCurrency?: (amount: number) => string;
 }
 
@@ -61,11 +88,45 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
   onRecordPayment,
   onAddExpense,
   onSaveAdjustmentAccount,
+  onClearReversalEntries,
+  onDeleteFinancialEntries,
+  onUpdateExpense,
+  companyName = 'Amansocean Seafoods',
+  currencySymbol = '$',
   formatCurrency = defaultFormatCurrency,
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'receivables' | 'payables' | 'ledger' | 'adjustments'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'receivables' | 'payables' | 'expenses' | 'ledger' | 'adjustments'>('overview');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [expenseCategoryFilter, setExpenseCategoryFilter] = useState<string>('all');
+  const [expenseSearch, setExpenseSearch] = useState<string>('');
+  const [expenseDateFrom, setExpenseDateFrom] = useState<string>('');
+  const [expenseDateTo, setExpenseDateTo] = useState<string>('');
+  const [isClearingReversals, setIsClearingReversals] = useState<boolean>(false);
+  const [confirmClearReversals, setConfirmClearReversals] = useState<boolean>(false);
+  const [isDeletingEntries, setIsDeletingEntries] = useState<boolean>(false);
+  const [confirmDeleteFiltered, setConfirmDeleteFiltered] = useState<boolean>(false);
+  const [confirmDeleteEntryId, setConfirmDeleteEntryId] = useState<string | null>(null);
+  const [editingExpense, setEditingExpense] = useState<FinancialLedgerEntry | null>(null);
+  const [editExpDate, setEditExpDate] = useState<string>('');
+  const [editExpCategory, setEditExpCategory] = useState<FinancialEntryCategory>('Logistics & Reefer Freight');
+  const [editExpDescription, setEditExpDescription] = useState<string>('');
+  const [editExpEntity, setEditExpEntity] = useState<string>('');
+  const [editExpAmount, setEditExpAmount] = useState<string>('');
+  const [editExpPaymentMethod, setEditExpPaymentMethod] = useState<string>('Bank Transfer');
+  const [editExpReference, setEditExpReference] = useState<string>('');
+  const [editExpStatus, setEditExpStatus] = useState<'Settled' | 'Pending' | 'Overdue'>('Settled');
+  const [editExpNotes, setEditExpNotes] = useState<string>('');
+  const [isSavingExpenseEdit, setIsSavingExpenseEdit] = useState<boolean>(false);
+  const [editExpenseError, setEditExpenseError] = useState<string | null>(null);
+  const [expenseActionStatus, setExpenseActionStatus] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+  } | null>(null);
+  const [reversalClearStatus, setReversalClearStatus] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+  } | null>(null);
   const [isAddExpenseModalOpen, setIsAddExpenseModalOpen] = useState<boolean>(false);
   const [isAddAccountModalOpen, setIsAddAccountModalOpen] = useState<boolean>(false);
   const [selectedEntityForPayment, setSelectedEntityForPayment] = useState<{
@@ -113,9 +174,60 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
   const grossProfit = totalRevenue - totalCOGS;
   const grossMarginPct = totalRevenue > 0 ? ((grossProfit / totalRevenue) * 100) : 0;
 
-  const totalOpEx = financialEntries
-    .filter(e => e.type === 'OpEx')
+  const isOperatingExpenseEntry = (e: FinancialLedgerEntry) =>
+    e.type === 'OpEx' && !isReversalLedgerEntry(e);
+
+  const opexEntries = financialEntries.filter(isOperatingExpenseEntry);
+  const reversalEntries = financialEntries.filter(isReversalLedgerEntry);
+
+  const totalOpEx = opexEntries.reduce((sum, e) => sum + e.amount, 0);
+
+  const opexCategoryRows = Object.entries(
+    opexEntries.reduce<Record<string, { amount: number; count: number }>>((acc, entry) => {
+      const categoryName = entry.category || 'Operating Expense';
+      if (!acc[categoryName]) {
+        acc[categoryName] = { amount: 0, count: 0 };
+      }
+      acc[categoryName].amount += entry.amount;
+      acc[categoryName].count += 1;
+      return acc;
+    }, {})
+  )
+    .filter(([, data]) => data.amount > 0)
+    .sort(([, a], [, b]) => b.amount - a.amount);
+
+  const expenseCategories = Array.from(
+    new Set(opexEntries.map(e => e.category || 'Operating Expense'))
+  ).sort();
+
+  const filteredExpenses = opexEntries
+    .filter(entry => {
+      const cat = entry.category || 'Operating Expense';
+      const matchesCat = expenseCategoryFilter === 'all' || cat === expenseCategoryFilter;
+      const q = expenseSearch.trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        (entry.description || '').toLowerCase().includes(q) ||
+        (entry.entityName || '').toLowerCase().includes(q) ||
+        (entry.referenceId || '').toLowerCase().includes(q) ||
+        (entry.voucherNumber || '').toLowerCase().includes(q) ||
+        cat.toLowerCase().includes(q) ||
+        (entry.paymentMethod || '').toLowerCase().includes(q) ||
+        (entry.notes || '').toLowerCase().includes(q);
+      const matchesFrom = !expenseDateFrom || entry.date >= expenseDateFrom;
+      const matchesTo = !expenseDateTo || entry.date <= expenseDateTo;
+      return matchesCat && matchesSearch && matchesFrom && matchesTo;
+    })
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  const filteredExpenseTotal = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const filteredSettledExpenseTotal = filteredExpenses
+    .filter(e => e.status === 'Settled')
     .reduce((sum, e) => sum + e.amount, 0);
+  const filteredPendingExpenseTotal = filteredExpenses
+    .filter(e => e.status !== 'Settled')
+    .reduce((sum, e) => sum + e.amount, 0);
+  const topOpexCategory = opexCategoryRows[0];
 
   const netOperatingProfit = grossProfit - totalOpEx;
   const netMarginPct = totalRevenue > 0 ? ((netOperatingProfit / totalRevenue) * 100) : 0;
@@ -128,13 +240,170 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
     const matchesCategory = 
       filterCategory === 'all' || 
       entry.type.toLowerCase() === filterCategory.toLowerCase() ||
-      (filterCategory === 'adjustment' && entry.category === 'Inventory Adjustment');
-    const matchesSearch = entry.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          entry.entityName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          entry.referenceId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          entry.category.toLowerCase().includes(searchQuery.toLowerCase());
+      (filterCategory === 'adjustment' && entry.category === 'Inventory Adjustment') ||
+      (filterCategory === 'reversals' && isReversalLedgerEntry(entry));
+    const q = searchQuery.toLowerCase();
+    const matchesSearch = (entry.description || '').toLowerCase().includes(q) ||
+                          (entry.entityName || '').toLowerCase().includes(q) ||
+                          (entry.referenceId || '').toLowerCase().includes(q) ||
+                          (entry.category || '').toLowerCase().includes(q);
     return matchesCategory && matchesSearch;
   });
+
+  const handleClearReversalsClick = async () => {
+    if (!onClearReversalEntries || isClearingReversals) return;
+    setIsClearingReversals(true);
+    setConfirmClearReversals(false);
+    setReversalClearStatus(null);
+    try {
+      const res = await onClearReversalEntries();
+      if (res.requiresSqlMigration) {
+        setReversalClearStatus({
+          type: 'warning',
+          message:
+            res.error ||
+            'Supabase SQL setup required: run supabase/CLEAR_REVERSALS_FINANCIAL_LEDGER.sql in your Supabase SQL Editor to purge immutable reversal rows and install the RPC, then click Clear Reversals again.'
+        });
+      } else if (res.error) {
+        setReversalClearStatus({
+          type: 'error',
+          message: res.error
+        });
+      } else {
+        setReversalClearStatus({
+          type: 'success',
+          message:
+            res.deletedCount > 0
+              ? `Cleared ${res.deletedCount} reversal entry(s) from ${
+                  res.source === 'supabase_rpc' ? 'Supabase General Financial Ledger' : 'local ledger cache'
+                }.`
+              : 'No reversal entries remain in Supabase General Financial Ledger.'
+        });
+        if (filterCategory === 'reversals') {
+          setFilterCategory('all');
+        }
+      }
+    } catch (err: any) {
+      setReversalClearStatus({
+        type: 'error',
+        message: err?.message || 'Failed to clear reversal entries.'
+      });
+    } finally {
+      setIsClearingReversals(false);
+    }
+  };
+
+  const handleDeleteEntriesClick = async (entryIds: string[]) => {
+    if (!onDeleteFinancialEntries || isDeletingEntries || entryIds.length === 0) return;
+    setIsDeletingEntries(true);
+    setConfirmDeleteFiltered(false);
+    setConfirmDeleteEntryId(null);
+    setReversalClearStatus(null);
+    try {
+      const res = await onDeleteFinancialEntries(entryIds);
+      const statusPayload = res.requiresSqlMigration
+        ? {
+            type: 'warning' as const,
+            message: `Supabase SQL migration required (${res.error || 'insert-only trigger'}). Run supabase/DELETE_AMOAKO_INSPIREMEN_LEDGER.sql in your Supabase SQL Editor to delete matching entries and install the RPC, then retry.`
+          }
+        : res.error
+        ? {
+            type: 'error' as const,
+            message: res.error
+          }
+        : {
+            type: 'success' as const,
+            message: `Deleted ${res.deletedCount} entry(s) from ${
+              res.source === 'supabase_rpc' ? 'Supabase General Financial Ledger' : 'local ledger cache'
+            }.`
+          };
+      setReversalClearStatus(statusPayload);
+      setExpenseActionStatus(statusPayload);
+    } catch (err: any) {
+      const errPayload = {
+        type: 'error' as const,
+        message: err?.message || 'Failed to delete selected ledger entries.'
+      };
+      setReversalClearStatus(errPayload);
+      setExpenseActionStatus(errPayload);
+    } finally {
+      setIsDeletingEntries(false);
+    }
+  };
+
+  const handleOpenEditExpense = (entry: FinancialLedgerEntry) => {
+    setEditingExpense(entry);
+    setEditExpDate(entry.date || new Date().toISOString().split('T')[0]);
+    setEditExpCategory(entry.category || 'Logistics & Reefer Freight');
+    setEditExpDescription(entry.description || '');
+    setEditExpEntity(entry.entityName || '');
+    setEditExpAmount(String(entry.amount ?? ''));
+    setEditExpPaymentMethod(entry.paymentMethod || 'Bank Transfer');
+    setEditExpReference(entry.voucherNumber || entry.referenceId || '');
+    setEditExpStatus((entry.status as 'Settled' | 'Pending' | 'Overdue') || 'Settled');
+    setEditExpNotes(entry.notes || '');
+    setEditExpenseError(null);
+  };
+
+  const handleSaveExpenseEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingExpense || !onUpdateExpense || isSavingExpenseEdit) return;
+
+    const parsedAmount = parseFloat(editExpAmount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      setEditExpenseError('Expense amount must be greater than zero.');
+      return;
+    }
+    if (!editExpDescription.trim()) {
+      setEditExpenseError('Please provide a description or memo for this expense.');
+      return;
+    }
+
+    setIsSavingExpenseEdit(true);
+    setEditExpenseError(null);
+    try {
+      const updated: FinancialLedgerEntry = {
+        ...editingExpense,
+        date: editExpDate || editingExpense.date,
+        type: editExpCategory === 'COGS (Catch Intake)' ? 'COGS' : 'OpEx',
+        category: editExpCategory,
+        description: editExpDescription.trim(),
+        entityName: editExpEntity.trim() || 'Operational Vendor',
+        amount: Number(parsedAmount.toFixed(2)),
+        paymentMethod: editExpPaymentMethod.trim() || 'Bank Transfer',
+        referenceId: editExpReference.trim() || editingExpense.referenceId,
+        voucherNumber: editExpReference.trim() || editingExpense.voucherNumber,
+        status: editExpStatus,
+        notes: editExpNotes.trim() || undefined,
+      };
+
+      const res = await onUpdateExpense(updated);
+      if (res.requiresSqlMigration) {
+        setEditExpenseError(
+          `Supabase SQL migration required (${res.error || 'insert-only trigger'}). Run supabase/migrations/034_update_financial_ledger_expense_rpc.sql in Supabase SQL Editor first.`
+        );
+        return;
+      }
+      if (res.error) {
+        setEditExpenseError(res.error);
+        return;
+      }
+
+      const statusPayload = {
+        type: 'success' as const,
+        message: `Expense "${res.updatedEntry.description}" updated (${
+          res.source === 'supabase_rpc' ? 'synced to Supabase' : 'saved to local cache'
+        }).`
+      };
+      setExpenseActionStatus(statusPayload);
+      setReversalClearStatus(statusPayload);
+      setEditingExpense(null);
+    } catch (err: any) {
+      setEditExpenseError(err?.message || 'Failed to save expense changes.');
+    } finally {
+      setIsSavingExpenseEdit(false);
+    }
+  };
 
   const handleOpenPaymentModal = (type: 'AR' | 'AP', entityId: string, entityName: string, refId: string, balance: number) => {
     setSelectedEntityForPayment({ type, entityId, entityName, refId, balance });
@@ -280,6 +549,23 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
               )}
             </button>
             <button
+              id="fin-tab-expenses"
+              onClick={() => setActiveTab('expenses')}
+              className={`px-2.5 sm:px-3.5 lg:px-4 py-1.5 sm:py-2 min-h-[34px] sm:min-h-[36px] rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 select-none active:scale-[0.98] ${
+                activeTab === 'expenses'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Receipt className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-rose-600" />
+              <span>Expense Ledger</span>
+              {opexEntries.length > 0 && (
+                <span className="px-1.5 py-0.5 text-[9px] sm:text-[10px] bg-rose-50 text-rose-700 rounded-full font-extrabold border border-rose-100">
+                  {opexEntries.length}
+                </span>
+              )}
+            </button>
+            <button
               id="fin-tab-adjustments"
               onClick={() => setActiveTab('adjustments')}
               className={`px-2.5 sm:px-3.5 lg:px-4 py-1.5 sm:py-2 min-h-[34px] sm:min-h-[36px] rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 select-none active:scale-[0.98] ${
@@ -299,13 +585,18 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
             <button
               id="fin-tab-ledger"
               onClick={() => setActiveTab('ledger')}
-              className={`px-2.5 sm:px-3.5 lg:px-4 py-1.5 sm:py-2 min-h-[34px] sm:min-h-[36px] rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 select-none active:scale-[0.98] ${
+              className={`px-2.5 sm:px-3.5 lg:px-4 py-1.5 sm:py-2 min-h-[34px] sm:min-h-[36px] rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 select-none active:scale-[0.98] ${
                 activeTab === 'ledger'
                   ? 'bg-white text-slate-900 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Ledger Transactions
+              <span>Ledger Transactions</span>
+              {reversalEntries.length > 0 && (
+                <span className="px-1.5 py-0.5 text-[9px] sm:text-[10px] bg-amber-100 text-amber-800 rounded-full font-extrabold">
+                  {reversalEntries.length} rev
+                </span>
+              )}
             </button>
           </div>
 
@@ -468,18 +759,34 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
                   <span>Operating Expenses (OpEx)</span>
                   <span className="text-rose-700">-{formatCurrency(totalOpEx)}</span>
                 </div>
-                <div className="px-4 py-2.5 flex justify-between text-slate-600 pl-8">
-                  <span>Reefer Logistics & Freight</span>
-                  <span className="font-mono-code text-rose-600">-{formatCurrency(3250)}</span>
-                </div>
-                <div className="px-4 py-2.5 flex justify-between text-slate-600 pl-8">
-                  <span>Super-Cryo Deep Freeze Utilities & Power</span>
-                  <span className="font-mono-code text-rose-600">-{formatCurrency(4100)}</span>
-                </div>
-                <div className="px-4 py-2.5 flex justify-between text-slate-600 pl-8">
-                  <span>Processing Labor & Fillet Trimming Wages</span>
-                  <span className="font-mono-code text-rose-600">-{formatCurrency(6800)}</span>
-                </div>
+                {opexCategoryRows.length === 0 ? (
+                  <div className="px-4 py-2.5 flex justify-between text-slate-400 italic pl-8">
+                    <span>No operating expenses recorded yet</span>
+                    <span className="font-mono-code">{formatCurrency(0)}</span>
+                  </div>
+                ) : (
+                  opexCategoryRows.map(([category, data]) => (
+                    <button
+                      key={category}
+                      type="button"
+                      onClick={() => {
+                        setExpenseCategoryFilter(category);
+                        setExpenseSearch('');
+                        setActiveTab('expenses');
+                      }}
+                      className="w-full px-4 py-2.5 flex justify-between items-center text-slate-600 pl-8 hover:bg-slate-50 transition-colors cursor-pointer text-left"
+                      title="Click to inspect operating expense history for this category"
+                    >
+                      <span>
+                        {category}{' '}
+                        <span className="text-[11px] text-slate-400 font-medium">
+                          ({data.count} {data.count === 1 ? 'entry' : 'entries'})
+                        </span>
+                      </span>
+                      <span className="font-mono-code text-rose-600">-{formatCurrency(data.amount)}</span>
+                    </button>
+                  ))
+                )}
 
                 {/* Net Profit Row */}
                 <div className="bg-slate-900 px-4 py-3.5 font-bold text-base text-white flex justify-between">
@@ -780,16 +1087,399 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
         </div>
       )}
 
+      {/* Operating Expense Ledger & History Tab */}
+      {activeTab === 'expenses' && (
+        <div className="space-y-5">
+          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-5">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-100">
+                    <Receipt className="w-4 h-4" />
+                  </span>
+                  <h2 className="text-lg font-bold text-slate-900">Operating Expense Ledger & History</h2>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Supabase Source of Truth
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Full disbursement history for freight, cold storage utilities, packaging, cutting labor, and port fees.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                <ExportDropdown
+                  label="Export Expenses"
+                  variant="secondary"
+                  onExportExcel={() =>
+                    exportExpensesToExcel({
+                      expenses: filteredExpenses,
+                      companyName,
+                      currencySymbol
+                    })
+                  }
+                  onExportPdf={() =>
+                    exportExpensesToPdf({
+                      expenses: filteredExpenses,
+                      companyName,
+                      currencySymbol
+                    })
+                  }
+                />
+                <button
+                  type="button"
+                  onClick={() => setIsAddExpenseModalOpen(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Record Expense</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Expense KPI Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="p-4 rounded-2xl bg-rose-50/60 border border-rose-100">
+                <span className="text-[11px] font-bold text-rose-700 uppercase tracking-wider block">
+                  Total Filtered OpEx
+                </span>
+                <div className="text-xl font-black text-rose-700 font-mono-code mt-1">
+                  {formatCurrency(filteredExpenseTotal)}
+                </div>
+                <span className="text-[11px] text-rose-500">
+                  {filteredExpenses.length} {filteredExpenses.length === 1 ? 'entry' : 'entries'} shown
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                  Top Expense Category
+                </span>
+                <div className="text-sm font-black text-slate-900 mt-1.5 truncate">
+                  {topOpexCategory ? topOpexCategory[0] : 'No OpEx recorded'}
+                </div>
+                <span className="text-[11px] text-slate-500 font-mono-code">
+                  {topOpexCategory && totalOpEx > 0
+                    ? `${formatCurrency(topOpexCategory[1].amount)} (${((topOpexCategory[1].amount / totalOpEx) * 100).toFixed(1)}%)`
+                    : formatCurrency(0)}
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-100">
+                <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">
+                  Settled Disbursements
+                </span>
+                <div className="text-xl font-black text-emerald-700 font-mono-code mt-1">
+                  {formatCurrency(filteredSettledExpenseTotal)}
+                </div>
+                <span className="text-[11px] text-emerald-600">Paid & posted</span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-100">
+                <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider block">
+                  Pending / Accrued
+                </span>
+                <div className="text-xl font-black text-amber-700 font-mono-code mt-1">
+                  {formatCurrency(filteredPendingExpenseTotal)}
+                </div>
+                <span className="text-[11px] text-amber-600">Awaiting settlement</span>
+              </div>
+            </div>
+
+            {/* Category Breakdown Filter Pills */}
+            {opexCategoryRows.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2.5">
+                {opexCategoryRows.map(([cat, info]) => {
+                  const isSelected = expenseCategoryFilter === cat;
+                  const sharePct = totalOpEx > 0 ? (info.amount / totalOpEx) * 100 : 0;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setExpenseCategoryFilter(prev => (prev === cat ? 'all' : cat))}
+                      className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-slate-900 border-slate-900 text-white shadow-xs'
+                          : 'bg-slate-50/80 border-slate-200 hover:bg-slate-100 text-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-[11px] font-bold truncate ${isSelected ? 'text-slate-200' : 'text-slate-600'}`}>
+                          {cat}
+                        </span>
+                        <span className={`text-[10px] font-mono-code font-bold ${isSelected ? 'text-rose-300' : 'text-slate-400'}`}>
+                          {sharePct.toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className={`text-sm font-black font-mono-code mt-1 ${isSelected ? 'text-white' : 'text-slate-900'}`}>
+                        {formatCurrency(info.amount)}
+                      </div>
+                      <div className={`text-[10px] mt-0.5 ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                        {info.count} {info.count === 1 ? 'expense' : 'expenses'}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Filter Toolbar */}
+            <div className="flex flex-wrap items-center gap-2.5 pt-1">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search vendor, memo, voucher #, or category..."
+                  value={expenseSearch}
+                  onChange={(e) => setExpenseSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900"
+                />
+              </div>
+
+              <select
+                value={expenseCategoryFilter}
+                onChange={(e) => setExpenseCategoryFilter(e.target.value)}
+                className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-700 cursor-pointer"
+              >
+                <option value="all">All OpEx Categories ({opexEntries.length})</option>
+                {expenseCategories.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+
+              <div className="flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                <input
+                  type="date"
+                  value={expenseDateFrom}
+                  onChange={(e) => setExpenseDateFrom(e.target.value)}
+                  aria-label="Expense date from"
+                  className="px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-700"
+                />
+                <span className="text-xs text-slate-400">to</span>
+                <input
+                  type="date"
+                  value={expenseDateTo}
+                  onChange={(e) => setExpenseDateTo(e.target.value)}
+                  aria-label="Expense date to"
+                  className="px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-700"
+                />
+              </div>
+
+              {(expenseCategoryFilter !== 'all' || expenseSearch || expenseDateFrom || expenseDateTo) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpenseCategoryFilter('all');
+                    setExpenseSearch('');
+                    setExpenseDateFrom('');
+                    setExpenseDateTo('');
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
+
+            {expenseActionStatus && (
+              <div
+                className={`flex items-start justify-between gap-3 p-3.5 rounded-2xl border text-xs ${
+                  expenseActionStatus.type === 'success'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    : expenseActionStatus.type === 'warning'
+                    ? 'bg-amber-50 border-amber-200 text-amber-900'
+                    : 'bg-rose-50 border-rose-200 text-rose-900'
+                }`}
+              >
+                <div className="flex items-start gap-2.5">
+                  {expenseActionStatus.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  )}
+                  <p className="font-medium leading-relaxed">{expenseActionStatus.message}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setExpenseActionStatus(null)}
+                  className="text-slate-400 hover:text-slate-700 cursor-pointer shrink-0"
+                  aria-label="Dismiss status message"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Expense History Table */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider border-y border-slate-200">
+                  <tr>
+                    <th className="py-3 px-4">Date</th>
+                    <th className="py-3 px-4">Ref / Voucher #</th>
+                    <th className="py-3 px-4">Category</th>
+                    <th className="py-3 px-4">Vendor / Payee</th>
+                    <th className="py-3 px-4">Description & Memo</th>
+                    <th className="py-3 px-4">Payment Method</th>
+                    <th className="py-3 px-4 text-center">Status</th>
+                    <th className="py-3 px-4 text-right">Amount</th>
+                    {(onUpdateExpense || onDeleteFinancialEntries) && (
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredExpenses.length === 0 ? (
+                    <tr>
+                      <td colSpan={(onUpdateExpense || onDeleteFinancialEntries) ? 9 : 8} className="py-12 px-4 text-center">
+                        <div className="max-w-sm mx-auto space-y-2.5">
+                          <div className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                            <Receipt className="w-5 h-5" />
+                          </div>
+                          <div className="text-sm font-bold text-slate-700">
+                            {opexEntries.length === 0
+                              ? 'No operating expenses recorded in Supabase yet'
+                              : 'No expenses match your current filters'}
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            {opexEntries.length === 0
+                              ? 'Record freight, cold storage, ice, packaging, or labor disbursements to build your expense ledger.'
+                              : 'Try clearing your search or date range filters.'}
+                          </p>
+                          {opexEntries.length === 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setIsAddExpenseModalOpen(true)}
+                              className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold cursor-pointer mt-1"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Record First Expense</span>
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredExpenses.map(entry => (
+                      <tr key={entry.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3.5 px-4 font-mono-code text-slate-600 whitespace-nowrap">
+                          {entry.date}
+                        </td>
+                        <td className="py-3.5 px-4 font-mono-code font-bold text-slate-900 whitespace-nowrap">
+                          {entry.voucherNumber || entry.referenceId || entry.id}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-100 whitespace-nowrap">
+                            {entry.category}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 font-medium text-slate-700">
+                          {entry.entityName || 'Operational Vendor'}
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-800">
+                          <div className="font-medium">{entry.description}</div>
+                          {entry.notes && (
+                            <div className="text-[11px] text-slate-400 mt-0.5">{entry.notes}</div>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-600 whitespace-nowrap">
+                          {entry.paymentMethod}
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            entry.status === 'Settled'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {entry.status}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono-code font-bold text-rose-700 whitespace-nowrap">
+                          -{formatCurrency(entry.amount)}
+                        </td>
+                        {(onUpdateExpense || onDeleteFinancialEntries) && (
+                          <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                            {confirmDeleteEntryId === entry.id ? (
+                              <div className="inline-flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteEntriesClick([entry.id])}
+                                  disabled={isDeletingEntries}
+                                  className="px-2 py-1 text-[10px] font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg cursor-pointer disabled:opacity-60"
+                                >
+                                  {isDeletingEntries ? '...' : 'Delete'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteEntryId(null)}
+                                  disabled={isDeletingEntries}
+                                  className="px-2 py-1 text-[10px] font-bold text-slate-500 hover:text-slate-800 rounded-lg cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="inline-flex items-center gap-1">
+                                {onUpdateExpense && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditExpense(entry)}
+                                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                                    title="Edit this expense"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                {onDeleteFinancialEntries && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteEntryId(entry.id)}
+                                    disabled={isDeletingEntries}
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                                    title="Delete this expense"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                {filteredExpenses.length > 0 && (
+                  <tfoot className="bg-slate-900 text-white font-bold text-xs">
+                    <tr>
+                      <td colSpan={7} className="py-3 px-4 text-right uppercase tracking-wider text-slate-300">
+                        Total Filtered Operating Expenses ({filteredExpenses.length}{' '}
+                        {filteredExpenses.length === 1 ? 'entry' : 'entries'})
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono-code text-sm text-rose-300 font-black whitespace-nowrap">
+                        -{formatCurrency(filteredExpenseTotal)}
+                      </td>
+                      {(onUpdateExpense || onDeleteFinancialEntries) && <td />}
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Ledger Tab */}
       {activeTab === 'ledger' && (
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-bold text-slate-900">General Financial Ledger</h2>
               <p className="text-xs text-slate-500">Chronological transaction logs, disbursements, and receipts.</p>
             </div>
 
-            {/* Filter and Search */}
+            {/* Filter, Search & Reversal Cleanup */}
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative">
                 <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
@@ -812,9 +1502,112 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
                 <option value="cogs">COGS (Catch Intake)</option>
                 <option value="opex">Operating Expenses (OpEx)</option>
                 <option value="adjustment">Inventory Adjustment Accounts</option>
+                <option value="reversals">Reversal Entries ({reversalEntries.length})</option>
               </select>
+
+              {onClearReversalEntries && reversalEntries.length > 0 && !confirmClearReversals && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmClearReversals(true)}
+                  disabled={isClearingReversals}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl transition-colors cursor-pointer disabled:opacity-60"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clear Reversals ({reversalEntries.length})</span>
+                </button>
+              )}
+
+              {onClearReversalEntries && confirmClearReversals && (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-50 border border-rose-300">
+                  <span className="text-[11px] font-bold text-rose-800">
+                    Purge {reversalEntries.length} reversal{reversalEntries.length === 1 ? '' : 's'} from Supabase?
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleClearReversalsClick}
+                    disabled={isClearingReversals}
+                    className="px-2.5 py-1 text-[11px] font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg cursor-pointer disabled:opacity-60"
+                  >
+                    {isClearingReversals ? 'Purging...' : 'Confirm'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClearReversals(false)}
+                    disabled={isClearingReversals}
+                    className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 rounded-lg cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+
+              {onDeleteFinancialEntries && searchQuery.trim().length > 0 && filteredLedger.length > 0 && !confirmDeleteFiltered && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteFiltered(true)}
+                  disabled={isDeletingEntries}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-slate-900 hover:bg-rose-700 text-white rounded-xl transition-colors cursor-pointer disabled:opacity-60"
+                  title="Delete all ledger rows currently matching your search query from Supabase"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete Matching ({filteredLedger.length})</span>
+                </button>
+              )}
+
+              {onDeleteFinancialEntries && confirmDeleteFiltered && (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-50 border border-rose-300">
+                  <span className="text-[11px] font-bold text-rose-800">
+                    Delete {filteredLedger.length} matching row{filteredLedger.length === 1 ? '' : 's'} from Supabase?
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteEntriesClick(filteredLedger.map(e => e.id))}
+                    disabled={isDeletingEntries}
+                    className="px-2.5 py-1 text-[11px] font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg cursor-pointer disabled:opacity-60"
+                  >
+                    {isDeletingEntries ? 'Deleting...' : 'Confirm Delete'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteFiltered(false)}
+                    disabled={isDeletingEntries}
+                    className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 rounded-lg cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
             </div>
           </div>
+
+          {reversalClearStatus && (
+            <div
+              className={`flex items-start justify-between gap-3 p-3.5 rounded-2xl border text-xs ${
+                reversalClearStatus.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : reversalClearStatus.type === 'warning'
+                  ? 'bg-amber-50 border-amber-200 text-amber-900'
+                  : 'bg-rose-50 border-rose-200 text-rose-900'
+              }`}
+            >
+              <div className="flex items-start gap-2.5">
+                {reversalClearStatus.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                )}
+                <p className="font-medium leading-relaxed">{reversalClearStatus.message}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReversalClearStatus(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer shrink-0"
+                aria-label="Dismiss status message"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
@@ -827,52 +1620,113 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
                   <th className="py-3 px-4">Category</th>
                   <th className="py-3 px-4 text-right">Amount</th>
                   <th className="py-3 px-4 text-center">Status</th>
+                  {(onDeleteFinancialEntries || onUpdateExpense) && (
+                    <th className="py-3 px-4 text-right">Action</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredLedger.map(entry => (
-                  <tr key={entry.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3.5 px-4 font-mono-code text-slate-600 whitespace-nowrap">
-                      {entry.date}
-                    </td>
-                    <td className="py-3.5 px-4 font-mono-code font-bold text-slate-900">
-                      {entry.referenceId}
-                    </td>
-                    <td className="py-3.5 px-4 font-medium text-slate-800">
-                      {entry.description}
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-600">
-                      {entry.entityName}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                        entry.category === 'Inventory Adjustment'
-                          ? 'bg-violet-50 text-violet-700 border border-violet-200'
-                          : entry.type === 'Income'
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : entry.type === 'COGS'
-                          ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                          : 'bg-slate-100 text-slate-700 border border-slate-200'
-                      }`}>
-                        {entry.category}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 text-right font-mono-code font-bold">
-                      <span className={entry.type === 'Income' ? 'text-emerald-600' : 'text-slate-900'}>
-                        {entry.type === 'Income' ? '+' : '-'}{formatCurrency(entry.amount)}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 text-center">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        entry.status === 'Settled'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-amber-100 text-amber-800'
-                      }`}>
-                        {entry.status}
-                      </span>
+                {filteredLedger.length === 0 ? (
+                  <tr>
+                    <td colSpan={(onDeleteFinancialEntries || onUpdateExpense) ? 8 : 7} className="py-10 px-4 text-center text-slate-400 font-medium">
+                      No financial ledger entries match your current filter.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  filteredLedger.map(entry => (
+                    <tr key={entry.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-3.5 px-4 font-mono-code text-slate-600 whitespace-nowrap">
+                        {entry.date}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono-code font-bold text-slate-900">
+                        {entry.referenceId}
+                      </td>
+                      <td className="py-3.5 px-4 font-medium text-slate-800">
+                        {entry.description}
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-600">
+                        {entry.entityName}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          isReversalLedgerEntry(entry)
+                            ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                            : entry.category === 'Inventory Adjustment'
+                            ? 'bg-violet-50 text-violet-700 border border-violet-200'
+                            : entry.type === 'Income'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : entry.type === 'COGS'
+                            ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                            : 'bg-slate-100 text-slate-700 border border-slate-200'
+                        }`}>
+                          {entry.category}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono-code font-bold">
+                        <span className={entry.type === 'Income' && !isReversalLedgerEntry(entry) ? 'text-emerald-600' : 'text-slate-900'}>
+                          {entry.type === 'Income' && !isReversalLedgerEntry(entry) ? '+' : '-'}{formatCurrency(entry.amount)}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          entry.status === 'Settled'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {entry.status}
+                        </span>
+                      </td>
+                      {(onDeleteFinancialEntries || onUpdateExpense) && (
+                        <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                          {confirmDeleteEntryId === entry.id ? (
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteEntriesClick([entry.id])}
+                                disabled={isDeletingEntries}
+                                className="px-2 py-1 text-[10px] font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg cursor-pointer disabled:opacity-60"
+                              >
+                                {isDeletingEntries ? '...' : 'Delete'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteEntryId(null)}
+                                disabled={isDeletingEntries}
+                                className="px-2 py-1 text-[10px] font-bold text-slate-500 hover:text-slate-800 rounded-lg cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center gap-1">
+                              {onUpdateExpense && entry.type === 'OpEx' && !isReversalLedgerEntry(entry) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditExpense(entry)}
+                                  className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                                  title="Edit this operating expense"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {onDeleteFinancialEntries && (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteEntryId(entry.id)}
+                                  disabled={isDeletingEntries}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                                  title="Delete this entry from Supabase ledger"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -1159,6 +2013,203 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
                   className="flex-1 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-xs cursor-pointer"
                 >
                   Save Expense
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Operating Expense Modal */}
+      {editingExpense && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+          onClick={() => !isSavingExpenseEdit && setEditingExpense(null)}
+        >
+          <div
+            className="bg-white max-w-lg w-full rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4 my-auto max-h-[92vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100">
+                  <Pencil className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Edit Operating Expense</h3>
+                  <p className="text-[11px] text-slate-500 font-mono-code">
+                    Entry ID: {editingExpense.id}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isSavingExpenseEdit && setEditingExpense(null)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {editExpenseError && (
+              <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{editExpenseError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveExpenseEditSubmit} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Expense Category</label>
+                  <select
+                    value={editExpCategory}
+                    onChange={(e) => setEditExpCategory(e.target.value as FinancialEntryCategory)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 cursor-pointer"
+                  >
+                    <option value="Logistics & Reefer Freight">Logistics & Reefer Freight</option>
+                    <option value="Cold Storage Utilities">Cold Storage Utilities & Cryo-Gas</option>
+                    <option value="Packaging & Ice">Packaging, Dry Ice & Cartons</option>
+                    <option value="Labor & Cutting Crew">Labor & Cutting Crew Wages</option>
+                    <option value="Dock Fees & Port Taxes">Dock Fees & Port Taxes</option>
+                    <option value="COGS (Catch Intake)">COGS (Catch Intake)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Expense Amount ({currencySymbol})</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={editExpAmount}
+                    onChange={(e) => {
+                      setEditExpAmount(e.target.value);
+                      setEditExpenseError(null);
+                    }}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono-code font-bold text-slate-900"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Description / Memo</label>
+                <input
+                  type="text"
+                  value={editExpDescription}
+                  onChange={(e) => {
+                    setEditExpDescription(e.target.value);
+                    setEditExpenseError(null);
+                  }}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Vendor / Payee</label>
+                  <input
+                    type="text"
+                    value={editExpEntity}
+                    onChange={(e) => setEditExpEntity(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Expense Date</label>
+                  <input
+                    type="date"
+                    value={editExpDate}
+                    onChange={(e) => setEditExpDate(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Payment Method</label>
+                  <select
+                    value={editExpPaymentMethod}
+                    onChange={(e) => setEditExpPaymentMethod(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 cursor-pointer"
+                  >
+                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="Bank Transfer (ACH / SEPA)">Bank Transfer (ACH / SEPA)</option>
+                    <option value="Corporate ACH / Direct">Corporate ACH / Direct</option>
+                    <option value="Cash on Dock">Cash on Dock</option>
+                    <option value="Company Card">Company Card</option>
+                    <option value="Mobile Money">Mobile Money</option>
+                    <option value="Cheque">Cheque</option>
+                    {editExpPaymentMethod &&
+                      ![
+                        'Bank Transfer',
+                        'Bank Transfer (ACH / SEPA)',
+                        'Corporate ACH / Direct',
+                        'Cash on Dock',
+                        'Company Card',
+                        'Mobile Money',
+                        'Cheque'
+                      ].includes(editExpPaymentMethod) && (
+                        <option value={editExpPaymentMethod}>{editExpPaymentMethod}</option>
+                      )}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Ref / Voucher #</label>
+                  <input
+                    type="text"
+                    value={editExpReference}
+                    onChange={(e) => setEditExpReference(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono-code text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Status</label>
+                  <select
+                    value={editExpStatus}
+                    onChange={(e) => setEditExpStatus(e.target.value as 'Settled' | 'Pending' | 'Overdue')}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 cursor-pointer"
+                  >
+                    <option value="Settled">Settled</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Overdue">Overdue</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Notes (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="Optional audit note..."
+                  value={editExpNotes}
+                  onChange={(e) => setEditExpNotes(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingExpense(null)}
+                  disabled={isSavingExpenseEdit}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingExpenseEdit}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-xs cursor-pointer disabled:opacity-60"
+                >
+                  {isSavingExpenseEdit ? 'Saving Changes...' : 'Update Expense'}
                 </button>
               </div>
             </form>

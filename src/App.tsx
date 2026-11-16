@@ -73,7 +73,7 @@ import { batchRepository } from './repositories/batchRepository';
 import { customerRepository } from './repositories/customerRepository';
 import { orderRepository } from './repositories/orderRepository';
 import { supplierRepository } from './repositories/supplierRepository';
-import { financialRepository } from './repositories/financialRepository';
+import { financialRepository, isReversalLedgerEntry } from './repositories/financialRepository';
 import { purchaseOrderRepository } from './repositories/purchaseOrderRepository';
 import { productRepository, retailTransactionRepository } from './repositories/retailRepository';
 import { settingsRepository } from './repositories/settingsRepository';
@@ -2330,17 +2330,17 @@ export default function App() {
       return entry;
     }));
 
-    // 3. Add Reversal Entry in financial ledger
+    // 3. Add Reversal Entry in financial ledger (reverses Income cash receipt, never OpEx; positive amount per DB check constraint)
     const cust = customers.find(c => c.id === customerId);
     const reversalEntry: FinancialLedgerEntry = {
       id: `FIN-REV-${Date.now().toString().slice(-4)}`,
       date: new Date().toISOString().split('T')[0],
-      type: 'OpEx',
-      category: 'Logistics & Reefer Freight',
+      type: 'Income',
+      category: 'Revenue (Wholesale)',
       description: `Payment Reversal / Void - ${cust?.name || customerId} (${reason})`,
       referenceId: `REV-${paymentEntryId}`,
       entityName: cust?.name || 'Customer Account',
-      amount: amount,
+      amount: Math.abs(amount),
       paymentMethod: 'Adjustment / Void',
       status: 'Settled',
       customerId: customerId,
@@ -2357,6 +2357,118 @@ export default function App() {
       message: `Payment voided for ${cust?.name || customerId}. Reason: ${reason}`,
       urgency: 'medium'
     });
+  };
+
+  // Clear Reversal Entries from Supabase General Financial Ledger
+  const handleClearReversalEntries = async () => {
+    const res = await financialRepository.clearReversalEntries();
+
+    if (res.requiresSqlMigration) {
+      addNotification({
+        type: 'system',
+        title: 'Supabase SQL Migration Required to Delete Ledger Reversals',
+        message: 'financial_ledger_entries is protected by an immutability trigger. Run supabase/CLEAR_REVERSALS_FINANCIAL_LEDGER.sql in Supabase SQL Editor, then click Clear Reversals again.',
+        urgency: 'high'
+      });
+      return res;
+    }
+
+    if (res.source === 'supabase_rpc') {
+      try {
+        const fresh = await financialRepository.getEntries(isTenantUser ? [] : undefined);
+        setFinancialEntries(fresh || []);
+      } catch {
+        setFinancialEntries(prev => prev.filter(e => !isReversalLedgerEntry(e)));
+      }
+    } else {
+      setFinancialEntries(prev => prev.filter(e => !isReversalLedgerEntry(e)));
+    }
+
+    addNotification({
+      type: 'system',
+      title: `Cleared ${res.deletedCount} Reversal Entry(s)`,
+      message:
+        res.source === 'supabase_rpc'
+          ? 'All reversal rows were removed from Supabase financial_ledger_entries.'
+          : 'Reversal entries removed from local workspace cache.',
+      urgency: 'low'
+    });
+
+    return res;
+  };
+
+  // Delete specific nuisance / erroneous entries from Supabase General Financial Ledger
+  const handleDeleteFinancialEntries = async (entryIds: string[]) => {
+    const res = await financialRepository.deleteEntriesByIds(entryIds);
+
+    if (res.requiresSqlMigration) {
+      addNotification({
+        type: 'system',
+        title: 'Supabase SQL Migration Required to Delete Ledger Entries',
+        message: 'financial_ledger_entries is protected by enforce_insert_only_compliance(). Run supabase/DELETE_AMOAKO_INSPIREMEN_LEDGER.sql in Supabase SQL Editor first.',
+        urgency: 'high'
+      });
+      return res;
+    }
+
+    const idSet = new Set(entryIds);
+    if (res.source === 'supabase_rpc') {
+      try {
+        const fresh = await financialRepository.getEntries(isTenantUser ? [] : undefined);
+        setFinancialEntries(fresh || []);
+      } catch {
+        setFinancialEntries(prev => prev.filter(e => !idSet.has(e.id)));
+      }
+    } else {
+      setFinancialEntries(prev => prev.filter(e => !idSet.has(e.id)));
+    }
+
+    addNotification({
+      type: 'system',
+      title: `Deleted ${res.deletedCount} Financial Entry(s)`,
+      message:
+        res.source === 'supabase_rpc'
+          ? 'Selected ledger rows were removed from Supabase financial_ledger_entries.'
+          : 'Selected ledger rows were removed from local workspace cache.',
+      urgency: 'low'
+    });
+
+    return res;
+  };
+
+  // Edit / Update an Operating Expense in Supabase financial_ledger_entries
+  const handleUpdateExpense = async (updatedExpense: FinancialLedgerEntry) => {
+    const res = await financialRepository.updateExpenseEntry(updatedExpense);
+
+    if (res.requiresSqlMigration) {
+      addNotification({
+        type: 'system',
+        title: 'Supabase SQL Migration Required to Edit Expenses',
+        message: 'financial_ledger_entries is protected by enforce_insert_only_compliance(). Run supabase/migrations/034_update_financial_ledger_expense_rpc.sql in Supabase SQL Editor first.',
+        urgency: 'high'
+      });
+      return res;
+    }
+
+    if (res.source === 'supabase_rpc') {
+      try {
+        const fresh = await financialRepository.getEntries(isTenantUser ? [] : undefined);
+        setFinancialEntries(fresh || []);
+      } catch {
+        setFinancialEntries(prev => prev.map(e => (e.id === updatedExpense.id ? res.updatedEntry : e)));
+      }
+    } else {
+      setFinancialEntries(prev => prev.map(e => (e.id === updatedExpense.id ? res.updatedEntry : e)));
+    }
+
+    addNotification({
+      type: 'system',
+      title: `Expense Updated: ${formatAppCurrency(res.updatedEntry.amount)}`,
+      message: `${res.updatedEntry.category} (${res.updatedEntry.description}) updated.`,
+      urgency: 'low'
+    });
+
+    return res;
   };
 
   // Custom Expense Handler
@@ -2591,6 +2703,11 @@ export default function App() {
             onRecordPayment={handleRecordPayment}
             onAddExpense={handleAddExpense}
             onSaveAdjustmentAccount={handleSaveAdjustmentAccount}
+            onClearReversalEntries={handleClearReversalEntries}
+            onDeleteFinancialEntries={handleDeleteFinancialEntries}
+            onUpdateExpense={handleUpdateExpense}
+            companyName={companyName}
+            currencySymbol={settings.currency || 'GHS'}
             formatCurrency={formatAppCurrency}
           />
         )}

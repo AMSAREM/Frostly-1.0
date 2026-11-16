@@ -107,7 +107,7 @@ export function buildCustomerLedger(
           type: 'Reversal',
           referenceId: pmt.referenceId || pmt.id,
           description: pmt.description || 'Payment Void / Reversal',
-          debit: pmt.amount,
+          debit: Math.abs(pmt.amount),
           credit: 0,
           paymentMethod: pmt.paymentMethod || 'Adjustment',
           status: 'Reversed',
