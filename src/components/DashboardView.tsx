@@ -39,6 +39,13 @@ import {
   FinancialLedgerEntry 
 } from '../types';
 import { formatCurrency, formatWeight, formatTemp } from '../utils/formatters';
+import {
+  calculateEnterpriseFinancials,
+  calculateVaultValuation,
+  getOrderRevenue,
+  getRetailNetRevenue,
+  isOrderActive,
+} from '../utils/financialMetrics';
 
 interface DashboardViewProps {
   batches: InventoryBatch[];
@@ -78,29 +85,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   companyName
 }) => {
   const handleOpenOrder = onOpenNewOrder || onOpenNewOrderModal || (() => {});
-  // Aggregate Core Metrics
-  const totalStockKg = batches.reduce((sum, b) => sum + b.availableWeightKg, 0);
-  const totalStockValueUSD = batches.reduce((sum, b) => sum + b.availableWeightKg * b.wholesalePricePerKg, 0);
 
-  // Financials
-  const totalWholesaleRevenue = orders.reduce((sum, o) => sum + (o.adjustedTotalUSD || o.quotedTotalUSD), 0);
-  const totalRetailRevenue = retailSales.reduce((sum, r) => sum + r.totalAmount, 0);
-  const grossRevenue = totalWholesaleRevenue + totalRetailRevenue;
+  // Aggregate Core Metrics & Vault Valuation
+  const vault = calculateVaultValuation(batches);
+  const totalStockKg = vault.availableWeightKg;
+  const totalStockValueUSD = vault.wholesaleMarketValueUSD;
+  const totalStockCostUSD = vault.costBasisUSD;
 
-  const totalCOGS = purchaseOrders.reduce((sum, po) => sum + po.totalCostUSD, 0);
-  const grossProfit = grossRevenue - totalCOGS;
-  const grossMarginPct = grossRevenue > 0 ? (grossProfit / grossRevenue) * 100 : 0;
+  // GAAP-Aligned Enterprise Financials (excludes Voided/Cancelled orders, Refunded retail & tax)
+  const fin = calculateEnterpriseFinancials({
+    orders,
+    retailSales,
+    batches,
+    products,
+    purchaseOrders,
+    financialEntries,
+    customers,
+    suppliers,
+  });
 
-  const totalAR = customers.reduce((sum, c) => sum + c.outstandingBalanceUSD, 0);
-  const totalAP = suppliers.reduce((sum, s) => sum + s.outstandingPayableUSD, 0);
+  const grossRevenue = fin.totalRevenue;
+  const grossProfit = fin.grossProfit;
+  const grossMarginPct = fin.grossMarginPct;
+
+  const totalAR = fin.totalAR;
+  const totalAP = fin.totalAP;
 
   // Executive Overview Widget Calculations
   // 1. Total Active Inventory: Available unexpired inventory batches
-  const activeBatches = batches.filter(b => b.availableWeightKg > 0);
-  const activeBatchesCount = activeBatches.length;
-  const activeInventoryWeightKg = activeBatches.reduce((sum, b) => sum + b.availableWeightKg, 0);
-  const activeInventoryValueUSD = activeBatches.reduce((sum, b) => sum + (b.availableWeightKg * b.wholesalePricePerKg), 0);
-  const allocatedWeightKg = batches.reduce((sum, b) => sum + (b.allocatedWeightKg || 0), 0);
+  const activeBatchesCount = vault.activeBatchesCount;
+  const activeInventoryWeightKg = vault.availableWeightKg;
+  const activeInventoryValueUSD = vault.wholesaleMarketValueUSD;
+  const allocatedWeightKg = vault.allocatedWeightKg;
 
   // 2. Monthly Revenue Target Progress: Month-to-date sales vs target
   const now = new Date();
@@ -108,39 +124,43 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const currentMonth = now.getMonth();
   const daysInCurrentMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
   const currentDayOfMonth = now.getDate();
-  const monthProratedRatio = Math.max(0.05, currentDayOfMonth / daysInCurrentMonth);
 
-  const mtdWholesaleRevenue = orders.filter(o => {
-    if (!o.orderDate) return false;
-    const d = new Date(o.orderDate);
-    return !isNaN(d.getTime()) && d.getFullYear() === currentYear && d.getMonth() === currentMonth;
-  }).reduce((sum, o) => sum + (o.adjustedTotalUSD || o.quotedTotalUSD || 0), 0);
+  const mtdWholesaleRevenue = orders
+    .filter(o => {
+      if (!isOrderActive(o) || !o.orderDate) return false;
+      const d = new Date(o.orderDate);
+      return !isNaN(d.getTime()) && d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+    })
+    .reduce((sum, o) => sum + getOrderRevenue(o), 0);
 
-  const mtdRetailRevenue = retailSales.filter(r => {
-    if (!r.timestamp) return false;
-    const d = new Date(r.timestamp);
-    return !isNaN(d.getTime()) && d.getFullYear() === currentYear && d.getMonth() === currentMonth;
-  }).reduce((sum, r) => sum + (r.totalAmount || 0), 0);
+  const mtdRetailRevenue = retailSales
+    .filter(r => {
+      if (r.status === 'Refunded') return false;
+      const rawDate = r.timestamp || r.date;
+      if (!rawDate) return false;
+      const d = new Date(rawDate);
+      return !isNaN(d.getTime()) && d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+    })
+    .reduce((sum, r) => sum + getRetailNetRevenue(r), 0);
 
-  // If order/sales dates are across sample periods or unanchored, fall back gracefully to total revenue
-  const effectiveMonthRevenue = (mtdWholesaleRevenue + mtdRetailRevenue) > 0 
-    ? (mtdWholesaleRevenue + mtdRetailRevenue) 
+  // If order/sales dates are across prior periods, use total recognized revenue for target pacing
+  const effectiveMonthRevenue = (mtdWholesaleRevenue + mtdRetailRevenue) > 0
+    ? (mtdWholesaleRevenue + mtdRetailRevenue)
     : grossRevenue;
 
-  // Monthly Revenue Target baseline: 120% of current revenue or benchmark $25,000 / GHS benchmark
   const monthlyRevenueTarget = Math.max(25000, Math.ceil((effectiveMonthRevenue * 1.25) / 5000) * 5000);
-  const revenueTargetProgressPct = monthlyRevenueTarget > 0 
+  const revenueTargetProgressPct = monthlyRevenueTarget > 0
     ? Math.min(100, Math.round((effectiveMonthRevenue / monthlyRevenueTarget) * 100))
     : 0;
 
   // 3. Pending Order Value: Active orders pending fulfillment / transit / delivery
-  const pendingOrders = orders.filter(o => 
-    o.status !== 'Delivered' && o.status !== 'Cancelled' && o.status !== 'Voided'
-  );
+  const pendingOrders = orders.filter(o => isOrderActive(o) && o.status !== 'Delivered');
   const pendingOrdersCount = pendingOrders.length;
-  const pendingOrdersValueUSD = pendingOrders.reduce((sum, o) => sum + (o.adjustedTotalUSD || o.quotedTotalUSD || 0), 0);
-  const pendingOrdersWeightKg = pendingOrders.reduce((sum, o) => 
-    sum + o.items.reduce((itemSum, item) => itemSum + (item.actualWeighedKg || item.requestedWeightKg || 0), 0), 0
+  const pendingOrdersValueUSD = pendingOrders.reduce((sum, o) => sum + getOrderRevenue(o), 0);
+  const pendingOrdersWeightKg = pendingOrders.reduce(
+    (sum, o) =>
+      sum + o.items.reduce((itemSum, item) => itemSum + (item.actualWeighedKg ?? item.requestedWeightKg ?? 0), 0),
+    0
   );
 
   const displayCompanyName = companyName || 'Commercial Cold-Chain Operations';
@@ -258,7 +278,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   {formatWeight(activeInventoryWeightKg, useImperial)}
                 </div>
                 <div className="text-xs sm:text-[13px] font-semibold text-indigo-200 font-mono-code mt-1 tabular-nums break-words">
-                  Valued at {formatCurrency(activeInventoryValueUSD)}
+                  Cost basis {formatCurrency(totalStockCostUSD)} • Mkt {formatCurrency(activeInventoryValueUSD)}
                 </div>
               </div>
             </div>
@@ -507,10 +527,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {formatWeight(totalStockKg, useImperial)}
             </div>
             <div className="flex items-center justify-between gap-1 mt-2.5 sm:mt-3 pt-2.5 sm:pt-3 border-t border-slate-100 text-[11px] sm:text-xs">
-              <span className="inline-flex items-center gap-1 font-medium text-slate-700 bg-slate-100 px-1.5 sm:px-2 py-0.5 rounded-md border border-slate-200/80 shrink-0">
-                {formatCurrency(totalStockValueUSD)}
+              <span className="inline-flex items-center gap-1 font-medium text-slate-700 bg-slate-100 px-1.5 sm:px-2 py-0.5 rounded-md border border-slate-200/80 shrink-0" title={`Wholesale market value: ${formatCurrency(totalStockValueUSD)}`}>
+                Cost {formatCurrency(totalStockCostUSD)}
               </span>
-              <span className="text-slate-400 text-[10px] sm:text-[11px] truncate text-right">{batches.length} Lots</span>
+              <span className="text-slate-400 text-[10px] sm:text-[11px] truncate text-right">{vault.activeBatches.length} Lots</span>
             </div>
           </div>
         </div>

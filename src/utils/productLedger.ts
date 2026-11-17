@@ -8,6 +8,7 @@ import {
   ProductLedgerEntry,
   ProductLedgerSummary
 } from '../types';
+import { isOrderActive } from './financialMetrics';
 
 /**
  * Builds a chronological perpetual Product Movement Ledger (Stock Card)
@@ -86,7 +87,7 @@ export function buildProductLedger(
 
   // 2. Retail POS Counter Transactions
   retailSales.forEach(sale => {
-    if (!sale.items || sale.items.length === 0) return;
+    if (sale.status === 'Refunded' || !sale.items || sale.items.length === 0) return;
     const dateStr = sale.date ? sale.date.split(' ')[0] : new Date().toISOString().split('T')[0];
 
     sale.items.forEach((item, idx) => {
@@ -132,7 +133,7 @@ export function buildProductLedger(
   // 3. Wholesale Client Orders
   orders.forEach(order => {
     if (!order.items || order.items.length === 0) return;
-    if (order.status === 'Cancelled') return;
+    if (!isOrderActive(order)) return;
     const dateStr = order.orderDate || new Date().toISOString().split('T')[0];
 
     order.items.forEach((item, idx) => {
@@ -218,9 +219,10 @@ export function buildProductLedger(
     }
   });
 
-  // 5. Purchase Order Receipts
+  // 5. Purchase Order Receipts (only add POs whose lot isn't already represented in linkedBatches to prevent double-counting intake)
   purchaseOrders.forEach(po => {
     if (po.status !== 'Received & In Stock') return;
+    if (po.lotAssignedId && linkedBatchIds.has(po.lotAssignedId)) return;
     const dateStr = po.deliveryDate || po.orderDate || new Date().toISOString().split('T')[0];
 
     (po.speciesItems || []).forEach((pi, idx) => {
@@ -275,7 +277,7 @@ export function buildProductLedger(
 
   // If impliedOpening > 0 and no initial opening movement existed, inject opening balance
   if (impliedOpening > 0 && rawMovements.length === 0) {
-    const openingDate = '2026-01-01';
+    const openingDate = new Date().toISOString().split('T')[0];
     rawMovements.unshift({
       date: openingDate,
       sortKey: new Date(openingDate).getTime(),
@@ -349,6 +351,7 @@ export function buildProductLedger(
   let wholesaleQty = 0;
   let wholesaleRev = 0;
   let totalRev = 0;
+  let totalSoldCogs = 0;
   let netAdj = 0;
 
   entriesChronological.forEach(e => {
@@ -359,16 +362,18 @@ export function buildProductLedger(
       retailQty += e.quantityOut;
       retailRev += (e.revenueUSD || 0);
       totalRev += (e.revenueUSD || 0);
+      totalSoldCogs += (e.totalValuationUSD || (e.quantityOut * product.costPricePerUnit));
     } else if (e.channel === 'Wholesale B2B') {
       wholesaleQty += e.quantityOut;
       wholesaleRev += (e.revenueUSD || 0);
       totalRev += (e.revenueUSD || 0);
+      totalSoldCogs += (e.totalValuationUSD || (e.quantityOut * product.costPricePerUnit));
     } else if (e.channel === 'Cold Vault Audit') {
       netAdj += e.netChange;
     }
   });
 
-  const totalCogs = totalOutward * product.costPricePerUnit;
+  const totalCogs = totalSoldCogs;
   const grossMarginUSD = totalRev - totalCogs;
   const grossMarginPct = totalRev > 0 ? (grossMarginUSD / totalRev) * 100 : 0;
 

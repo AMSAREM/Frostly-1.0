@@ -29,7 +29,9 @@ import {
   Building2,
   Camera,
   Upload,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Trash2,
+  RotateCcw
 } from 'lucide-react';
 import { 
   InventoryBatch, 
@@ -38,57 +40,78 @@ import {
   StorageZone, 
   RetailWholesaleProduct,
   InventoryAdjustmentAccount,
-  InventoryStockAdjustment
+  InventoryStockAdjustment,
+  ClientOrder,
+  PurchaseOrderLanding
 } from '../types';
-import { formatCurrency, formatWeight, formatTemp } from '../utils/formatters';
+import { formatCurrency as defaultFormatCurrency, formatWeight, formatTemp } from '../utils/formatters';
 import { SPECIES_CATALOG } from '../data/mockData';
 import { InventoryExplainerBanner } from './Inventory/InventoryExplainerBanner';
 import { LotDetailsModal } from './Inventory/LotDetailsModal';
 import { StockAdjustmentModal, StockAdjustmentData } from './Inventory/StockAdjustmentModal';
 import { AdjustmentAccountsModal } from './Inventory/AdjustmentAccountsModal';
 import { BatchImageUploadModal } from './Inventory/BatchImageUploadModal';
+import { DeleteBatchModal, DeleteBatchOptions } from './Inventory/DeleteBatchModal';
 import { ExportDropdown } from './common/ExportDropdown';
 import { exportInventoryToExcel, exportInventoryToPdf } from '../utils/exportEngine';
 
 interface InventoryLedgerViewProps {
   batches: InventoryBatch[];
   products?: RetailWholesaleProduct[];
+  orders?: ClientOrder[];
+  purchaseOrders?: PurchaseOrderLanding[];
   adjustmentAccounts?: InventoryAdjustmentAccount[];
   stockAdjustments?: InventoryStockAdjustment[];
   companyName?: string;
   currencySymbol?: string;
+  formatCurrency?: (amount: number) => string;
   onOpenPassport: (batch: InventoryBatch) => void;
   onOpenNewBatch: () => void;
   onUpdateBatch?: (updatedBatch: InventoryBatch, adjustmentData?: StockAdjustmentData) => void;
+  onDeleteBatch?: (batchId: string, options: DeleteBatchOptions) => Promise<void> | void;
   onSaveAdjustmentAccount?: (account: InventoryAdjustmentAccount) => void;
   defaultAdjustmentAccountCode?: string;
   onNavigateToRetail?: () => void;
   onReconcileCatalog?: () => void;
+  onRefreshFromSupabase?: () => Promise<void> | void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   useImperial: boolean;
 }
 
-type QuickFilterStatus = 'all' | 'retail_cuts' | 'in_stock' | 'low_stock' | 'fresh' | 'super_cryo' | 'live';
+type QuickFilterStatus = 'all' | 'retail_cuts' | 'in_stock' | 'low_stock' | 'fresh' | 'super_cryo' | 'live' | 'decommissioned';
+
+const isBatchDecommissioned = (batch: InventoryBatch): boolean =>
+  Boolean(batch.notes && batch.notes.includes('[DECOMMISSIONED'));
 
 export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
   batches = [],
   products = [],
+  orders = [],
+  purchaseOrders = [],
   adjustmentAccounts = [],
   stockAdjustments = [],
   companyName,
-  currencySymbol = '$',
+  currencySymbol = 'GHS',
+  formatCurrency: propFormatCurrency,
   onOpenPassport,
   onOpenNewBatch,
   onUpdateBatch,
+  onDeleteBatch,
   onSaveAdjustmentAccount,
   defaultAdjustmentAccountCode = '5150',
   onNavigateToRetail,
   onReconcileCatalog,
+  onRefreshFromSupabase,
   searchQuery,
   setSearchQuery,
   useImperial
 }) => {
+  const formatCurrency = useMemo(
+    () => propFormatCurrency || ((amt: number) => defaultFormatCurrency(amt, currencySymbol)),
+    [propFormatCurrency, currencySymbol]
+  );
+
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedZone, setSelectedZone] = useState<string>('All');
   const [selectedGrade, setSelectedGrade] = useState<string>('All');
@@ -96,11 +119,26 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [sortBy, setSortBy] = useState<'date' | 'weight' | 'value' | 'name'>('date');
 
-  // Modal states for inspecting and adjusting lots
+  // Modal states for inspecting, adjusting, and deleting lots
   const [inspectingBatch, setInspectingBatch] = useState<InventoryBatch | null>(null);
   const [adjustingBatch, setAdjustingBatch] = useState<InventoryBatch | null>(null);
+  const [deletingBatch, setDeletingBatch] = useState<InventoryBatch | null>(null);
   const [uploadingImageBatch, setUploadingImageBatch] = useState<InventoryBatch | null>(null);
   const [isAdjustmentAccountsModalOpen, setIsAdjustmentAccountsModalOpen] = useState(false);
+  const [isRefreshingSupabase, setIsRefreshingSupabase] = useState(false);
+
+  const handleRefreshSupabaseClick = async () => {
+    if (!onRefreshFromSupabase || isRefreshingSupabase) return;
+    setIsRefreshingSupabase(true);
+    try {
+      await onRefreshFromSupabase();
+    } finally {
+      setIsRefreshingSupabase(false);
+    }
+  };
+
+  const activeBatches = useMemo(() => batches.filter(b => !isBatchDecommissioned(b)), [batches]);
+  const decommissionedCount = batches.length - activeBatches.length;
 
   const categories: ('All' | SpeciesCategory)[] = ['All', 'Pelagic', 'Salmonid', 'Crustacean', 'Mollusk', 'Groundfish'];
 
@@ -147,6 +185,13 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
       const matchesCategory = selectedCategory === 'All' || b.category === selectedCategory;
       const matchesZone = selectedZone === 'All' || b.storageZone === selectedZone;
       const matchesGrade = selectedGrade === 'All' || b.grade === selectedGrade;
+      const isDecommissioned = isBatchDecommissioned(b);
+
+      if (quickFilter === 'decommissioned') {
+        return matchesSearch && matchesCategory && matchesZone && matchesGrade && isDecommissioned;
+      }
+
+      if (isDecommissioned) return false;
 
       let matchesQuick = true;
       if (quickFilter === 'retail_cuts') {
@@ -177,20 +222,20 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
     });
   }, [filteredBatches, sortBy]);
 
-  // Summary Metrics
-  const totalAvailableWeight = batches.reduce((s, b) => s + b.availableWeightKg, 0);
-  const totalAllocatedWeight = batches.reduce((s, b) => s + (b.allocatedWeightKg || 0), 0);
-  const totalIntakeWeight = batches.reduce((s, b) => s + b.initialWeightKg, 0);
-  const totalValuation = batches.reduce((s, b) => s + (b.availableWeightKg * b.wholesalePricePerKg), 0);
-  const totalCostBasis = batches.reduce((s, b) => s + (b.availableWeightKg * (b.costPerKg || 0)), 0);
+  // Summary Metrics (exclude decommissioned lots from active inventory metrics)
+  const totalAvailableWeight = activeBatches.reduce((s, b) => s + b.availableWeightKg, 0);
+  const totalAllocatedWeight = activeBatches.reduce((s, b) => s + (b.allocatedWeightKg || 0), 0);
+  const totalIntakeWeight = activeBatches.reduce((s, b) => s + b.initialWeightKg, 0);
+  const totalValuation = activeBatches.reduce((s, b) => s + (b.availableWeightKg * b.wholesalePricePerKg), 0);
+  const totalCostBasis = activeBatches.reduce((s, b) => s + (b.availableWeightKg * (b.costPerKg || 0)), 0);
   const totalProfit = totalValuation - totalCostBasis;
   const profitMarginPct = totalValuation > 0 ? (totalProfit / totalValuation) * 100 : 0;
 
-  const superCryoCount = batches.filter(b => b.storageZone.includes('-60')).length;
-  const commercialFrozenCount = batches.filter(b => b.storageZone.includes('-22')).length;
-  const freshCount = batches.filter(b => b.storageZone.includes('Fresh') || b.storageZone.includes('Slush')).length;
-  const liveCount = batches.filter(b => b.storageZone.includes('Live')).length;
-  const lowStockCount = batches.filter(b => b.availableWeightKg > 0 && b.availableWeightKg < 50).length;
+  const superCryoCount = activeBatches.filter(b => b.storageZone.includes('-60')).length;
+  const commercialFrozenCount = activeBatches.filter(b => b.storageZone.includes('-22')).length;
+  const freshCount = activeBatches.filter(b => b.storageZone.includes('Fresh') || b.storageZone.includes('Slush')).length;
+  const liveCount = activeBatches.filter(b => b.storageZone.includes('Live')).length;
+  const lowStockCount = activeBatches.filter(b => b.availableWeightKg > 0 && b.availableWeightKg < 50).length;
 
   const handleSaveStockAdjustment = (updatedBatch: InventoryBatch, adjustmentData?: StockAdjustmentData) => {
     if (onUpdateBatch) {
@@ -224,7 +269,7 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
                 Bulk Catch Vault & Cold Storage
               </span>
               <span className="text-xs text-slate-500 font-mono">
-                {batches.length} Landed Catch Lots
+                {activeBatches.length} Landed Catch Lots
               </span>
             </div>
             <h1 className="text-2xl font-heading font-extrabold text-slate-900 tracking-tight mt-1.5">
@@ -239,20 +284,33 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
             <ExportDropdown
               label="Export Inventory"
               onExportExcel={() => exportInventoryToExcel({
-                batches,
+                batches: activeBatches,
                 products,
                 companyName: companyName || 'Amansocean Seafoods',
-                currencySymbol: currencySymbol || '$'
+                currencySymbol: currencySymbol || 'GHS'
               })}
               onExportPdf={() => exportInventoryToPdf({
-                batches,
+                batches: activeBatches,
                 products,
                 companyName: companyName || 'Amansocean Seafoods',
-                currencySymbol: currencySymbol || '$'
+                currencySymbol: currencySymbol || 'GHS'
               })}
               excelTooltip="Export full vault lot master with HACCP logs & cold zones (.xlsx)"
               pdfTooltip="Generate certified cold-chain custody report (.pdf)"
             />
+
+            {onRefreshFromSupabase && (
+              <button
+                type="button"
+                onClick={handleRefreshSupabaseClick}
+                disabled={isRefreshingSupabase}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200 transition-colors shadow-2xs cursor-pointer disabled:opacity-60"
+                title="Reload inventory lots directly from Supabase"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 text-indigo-600 ${isRefreshingSupabase ? 'animate-spin' : ''}`} />
+                <span>{isRefreshingSupabase ? 'Syncing...' : 'Sync Supabase'}</span>
+              </button>
+            )}
 
             <button
               onClick={() => setIsAdjustmentAccountsModalOpen(true)}
@@ -525,17 +583,18 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
           {/* Quick status tabs */}
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
             {[
-              { id: 'all', label: 'All Lots', count: batches.length },
+              { id: 'all', label: 'All Lots', count: activeBatches.length },
               { 
                 id: 'retail_cuts', 
                 label: '🛒 Retail Catalog Lots', 
-                count: batches.filter(b => b.isRetailCutLot || Boolean(b.linkedProductId) || Boolean(b.productSku) || b.id.includes('LOT-RET')).length 
+                count: activeBatches.filter(b => b.isRetailCutLot || Boolean(b.linkedProductId) || Boolean(b.productSku) || b.id.includes('LOT-RET')).length 
               },
-              { id: 'in_stock', label: 'In Stock', count: batches.filter(b => b.availableWeightKg > 0).length },
+              { id: 'in_stock', label: 'In Stock', count: activeBatches.filter(b => b.availableWeightKg > 0).length },
               { id: 'low_stock', label: 'Low Stock (<50kg)', count: lowStockCount },
               { id: 'super_cryo', label: 'Super-Cryo (-60°C)', count: superCryoCount },
               { id: 'fresh', label: 'Fresh Slush Ice', count: freshCount },
               { id: 'live', label: 'Live Tanks', count: liveCount },
+              ...(decommissionedCount > 0 ? [{ id: 'decommissioned', label: 'Decommissioned', count: decommissionedCount }] : []),
             ].map(tab => (
               <button
                 key={tab.id}
@@ -590,7 +649,7 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
           </span>
           {categories.map((cat) => {
             const isSelected = selectedCategory === cat;
-            const count = cat === 'All' ? batches.length : batches.filter(b => b.category === cat).length;
+            const count = cat === 'All' ? activeBatches.length : activeBatches.filter(b => b.category === cat).length;
             return (
               <button
                 key={cat}
@@ -893,6 +952,17 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
                   >
                     <QrCode className="w-4 h-4" />
                   </button>
+
+                  {onDeleteBatch && (
+                    <button
+                      type="button"
+                      onClick={() => setDeletingBatch(batch)}
+                      className="p-1.5 rounded-full hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                      title="Write Off / Delete Inventory Lot"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -1036,6 +1106,16 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
                           >
                             <QrCode className="w-4 h-4" />
                           </button>
+                          {onDeleteBatch && (
+                            <button
+                              type="button"
+                              onClick={() => setDeletingBatch(batch)}
+                              className="p-1.5 rounded-full hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                              title="Write Off / Delete Inventory Lot"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1047,7 +1127,7 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
         </div>
       )}
 
-      {/* 5. Modals for Inspecting and Adjusting Lots */}
+      {/* 5. Modals for Inspecting, Adjusting, and Deleting Lots */}
       {inspectingBatch && (
         <LotDetailsModal
           batch={inspectingBatch}
@@ -1060,6 +1140,10 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
             setInspectingBatch(null);
             setAdjustingBatch(b);
           }}
+          onOpenDelete={onDeleteBatch ? (b) => {
+            setInspectingBatch(null);
+            setDeletingBatch(b);
+          } : undefined}
           onNavigateToRetail={onNavigateToRetail}
           onUpdateBatch={handleSaveBatchImage}
           onOpenImageUpload={(b) => setUploadingImageBatch(b)}
@@ -1084,6 +1168,22 @@ export const InventoryLedgerView: React.FC<InventoryLedgerViewProps> = ({
           adjustmentAccounts={adjustmentAccounts}
           defaultAccountCode={defaultAdjustmentAccountCode}
           formatCurrency={formatCurrency}
+        />
+      )}
+
+      {deletingBatch && onDeleteBatch && (
+        <DeleteBatchModal
+          batch={deletingBatch}
+          orders={orders}
+          purchaseOrders={purchaseOrders}
+          products={products}
+          adjustmentAccounts={adjustmentAccounts}
+          defaultAccountCode={defaultAdjustmentAccountCode}
+          useImperial={useImperial}
+          currencySymbol={currencySymbol}
+          formatCurrency={formatCurrency}
+          onClose={() => setDeletingBatch(null)}
+          onConfirmDelete={onDeleteBatch}
         />
       )}
 

@@ -67,7 +67,16 @@ export const NewBatchModal: React.FC<NewBatchModalProps> = ({
   const [vesselReg, setVesselReg] = useState('');
   const [captainName, setCaptainName] = useState('');
   const [landingPort, setLandingPort] = useState('');
+  const computeDefaultExpiry = (baseDate: string, sp: Species): string => {
+    const parsed = new Date(baseDate);
+    const baseMs = isNaN(parsed.getTime()) ? Date.now() : parsed.getTime();
+    const isFresh = sp.defaultZone.includes('Fresh') || sp.defaultZone.includes('Live');
+    const offsetDays = isFresh ? Math.max(1, sp.shelfLifeFreshDays || 7) : Math.max(30, (sp.shelfLifeFrozenMonths || 12) * 30);
+    return new Date(baseMs + offsetDays * 86400000).toISOString().split('T')[0];
+  };
+
   const [harvestDate, setHarvestDate] = useState(new Date().toISOString().split('T')[0]);
+  const [expiryDate, setExpiryDate] = useState(() => computeDefaultExpiry(new Date().toISOString().split('T')[0], selectedSpecies));
   const [faoArea, setFaoArea] = useState(selectedSpecies.faoZones[0] || 'FAO 61');
   const [gearType, setGearType] = useState(selectedSpecies.gearTypes[0] || 'Pelagic Longline');
   const [grade, setGrade] = useState<QualityGrade>(selectedSpecies.availableGrades[0] || 'Grade #1');
@@ -130,6 +139,7 @@ export const NewBatchModal: React.FC<NewBatchModalProps> = ({
       setWholesalePrice(sp.standardPricePerKg);
       setCostPerKg(Number((sp.standardPricePerKg * 0.65).toFixed(2)));
       setCoreTemp(sp.defaultZone.includes('-60') ? -59.2 : sp.defaultZone.includes('-22') ? -22.0 : 1.2);
+      setExpiryDate(computeDefaultExpiry(harvestDate, sp));
     }
   };
 
@@ -168,8 +178,8 @@ export const NewBatchModal: React.FC<NewBatchModalProps> = ({
       inspectionStatus: 'Passed',
       histaminePpm: Number(histaminePpm),
       coreTempCelsius: Number(coreTemp),
-      receivedDate: new Date().toISOString().split('T')[0],
-      expiryDate: '2027-08-20',
+      receivedDate: harvestDate,
+      expiryDate,
       qrCodeSeed: `FROST-PASS-${lotId}-${Date.now()}`,
       notes,
       imageUrl: imageUrl.trim() || undefined
@@ -268,6 +278,17 @@ export const NewBatchModal: React.FC<NewBatchModalProps> = ({
                 required
                 value={harvestDate}
                 onChange={(e) => setHarvestDate(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Expiry / Best-Before Date</label>
+              <input
+                type="date"
+                required
+                value={expiryDate}
+                onChange={(e) => setExpiryDate(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-indigo-500"
               />
             </div>

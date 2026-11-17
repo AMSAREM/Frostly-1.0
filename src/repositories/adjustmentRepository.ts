@@ -116,8 +116,8 @@ export class StockAdjustmentRepository extends BaseRepository<InventoryStockAdju
     // 3. Update the Adjustment Account balance
     if (adjustment.adjustmentAccountId || adjustment.adjustmentAccountCode) {
       const accId = adjustment.adjustmentAccountId || adjustment.adjustmentAccountCode;
-      // Negative variance (loss) increases shrinkage/COGS balance
-      const accountVariance = Math.abs(adjustment.valuationVarianceUSD);
+      // Negative variance (loss) increases shrinkage/COGS balance; positive variance (found stock) offsets it
+      const accountVariance = Number((-adjustment.valuationVarianceUSD).toFixed(2));
       await adjustmentAccountRepository.updateBalance(accId, accountVariance);
     }
 

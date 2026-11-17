@@ -42,15 +42,30 @@ import {
   RetailTransaction, 
   PurchaseOrderLanding, 
   Customer, 
-  Supplier 
+  Supplier,
+  InventoryBatch,
+  RetailWholesaleProduct
 } from '../types';
 import { isReversalLedgerEntry } from '../repositories/financialRepository';
+import {
+  calculateCashInflowForEntries,
+  calculateCashOutflowForEntries,
+  calculateCategoryRevenueBreakdown,
+  calculateInventoryAdjustmentImpact,
+  calculateOrderCOGS,
+  calculateRetailSaleCOGS,
+  getOrderRevenue,
+  getRetailNetRevenue,
+  isOrderActive,
+} from '../utils/financialMetrics';
 
 interface FinancialReportsViewProps {
   financialEntries: FinancialLedgerEntry[];
   orders: ClientOrder[];
   retailSales: RetailTransaction[];
   purchaseOrders: PurchaseOrderLanding[];
+  batches?: InventoryBatch[];
+  products?: RetailWholesaleProduct[];
   customers: Customer[];
   suppliers: Supplier[];
   formatCurrency: (amount: number) => string;
@@ -108,6 +123,8 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
   orders = [],
   retailSales = [],
   purchaseOrders = [],
+  batches = [],
+  products = [],
   customers = [],
   suppliers = [],
   formatCurrency
@@ -135,34 +152,33 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
 
     return sortedKeys.map(monthKey => {
       const monthOrders = orders.filter(
-        o => o.status !== 'Cancelled' && getMonthKey(o.orderDate, currentMonthKey) === monthKey
+        o => isOrderActive(o) && getMonthKey(o.orderDate, currentMonthKey) === monthKey
       );
       const wholesaleRev = monthOrders.reduce(
-        (sum, o) => sum + (o.adjustedTotalUSD || o.quotedTotalUSD),
+        (sum, o) => sum + getOrderRevenue(o),
         0
       );
 
       const monthRetail = retailSales.filter(
-        r => getMonthKey(r.date, currentMonthKey) === monthKey
+        r => r.status !== 'Refunded' && getMonthKey(r.date, currentMonthKey) === monthKey
       );
-      const retailRev = monthRetail.reduce((sum, r) => sum + r.totalAmount, 0);
+      const retailRev = monthRetail.reduce((sum, r) => sum + getRetailNetRevenue(r), 0);
       const totRev = wholesaleRev + retailRev;
 
-      const monthPOs = purchaseOrders.filter(
-        po => getMonthKey(po.orderDate || po.deliveryDate, currentMonthKey) === monthKey
+      const wholesaleCogs = monthOrders.reduce(
+        (sum, o) => sum + calculateOrderCOGS(o, batches, products),
+        0
       );
-      const poCogs = monthPOs.reduce((sum, po) => sum + po.totalCostUSD, 0);
+      const retailCogs = monthRetail.reduce(
+        (sum, r) => sum + calculateRetailSaleCOGS(r, products),
+        0
+      );
 
       const monthEntries = financialEntries.filter(
         e => getMonthKey(e.date, currentMonthKey) === monthKey
       );
-      const invAdjLoss = monthEntries
-        .filter(e => e.category === 'Inventory Adjustment' && e.type === 'COGS')
-        .reduce((sum, e) => sum + e.amount, 0);
-      const invAdjGain = monthEntries
-        .filter(e => e.category === 'Inventory Adjustment' && e.type === 'Income')
-        .reduce((sum, e) => sum + e.amount, 0);
-      const cogsTotal = poCogs + (invAdjLoss - invAdjGain);
+      const { netInventoryAdjustmentCost } = calculateInventoryAdjustmentImpact(monthEntries);
+      const cogsTotal = wholesaleCogs + retailCogs + netInventoryAdjustmentCost;
 
       const grossProf = totRev - cogsTotal;
       const grossMargin = totRev > 0 ? (grossProf / totRev) * 100 : 0;
@@ -177,14 +193,8 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
       const netProf = grossProf - opExTotal;
       const netMargin = totRev > 0 ? (netProf / totRev) * 100 : 0;
 
-      const cashIn =
-        monthEntries
-          .filter(e => e.type === 'Income' && e.status === 'Settled')
-          .reduce((sum, e) => sum + (isReversalLedgerEntry(e) ? -Math.abs(e.amount) : e.amount), 0) + retailRev;
-
-      const cashOut = monthEntries
-        .filter(e => (e.type === 'COGS' || isOpExEntry(e)) && e.status === 'Settled')
-        .reduce((sum, e) => sum + e.amount, 0);
+      const cashIn = calculateCashInflowForEntries(monthEntries, monthRetail);
+      const cashOut = calculateCashOutflowForEntries(monthEntries);
 
       const { monthLabel, shortMonth } = formatMonthLabels(monthKey, monthKey === currentMonthKey);
 
@@ -208,7 +218,7 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
         retailTicketCount: monthRetail.length
       };
     });
-  }, [orders, retailSales, purchaseOrders, financialEntries]);
+  }, [orders, retailSales, purchaseOrders, batches, products, financialEntries]);
 
   // Filtered dataset based on range selector
   const displayedData = useMemo(() => {
@@ -274,13 +284,17 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
       }));
   }, [financialEntries, displayedData]);
 
-  // Product category revenue share data
-  const categoryRevenueData = useMemo(() => [
-    { name: 'Pelagic (Bluefin & Yellowfin)', value: 48, color: '#3b82f6' },
-    { name: 'Salmonid (Wild & Fjord Salmon)', value: 27, color: '#10b981' },
-    { name: 'Crustacean (King Crab & Lobster)', value: 18, color: '#f59e0b' },
-    { name: 'Mollusk & Scallops', value: 7, color: '#8b5cf6' }
-  ], []);
+  // Product category revenue share data computed live from active wholesale + retail sales
+  const categoryRevenueData = useMemo(
+    () =>
+      calculateCategoryRevenueBreakdown({
+        orders,
+        retailSales,
+        batches,
+        products,
+      }),
+    [orders, retailSales, batches, products]
+  );
 
   // Custom Chart Tooltips
   const CustomPnLTooltip = ({ active, payload, label }: any) => {
@@ -724,30 +738,42 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({
               <p className="text-xs text-slate-500">Share of sales generated across cold-chain categories</p>
             </div>
             <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-100">
-              4 Primary Species Groups
+              {categoryRevenueData.length} Active Groups
             </span>
           </div>
 
-          <div className="space-y-3 pt-1">
-            {categoryRevenueData.map(cat => (
-              <div key={cat.name} className="space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="font-bold text-slate-800">{cat.name}</span>
-                  <span className="font-mono-code font-extrabold text-slate-900">{cat.value}%</span>
+          {categoryRevenueData.length === 0 ? (
+            <div className="h-44 flex flex-col items-center justify-center text-center bg-slate-50/70 rounded-2xl border border-dashed border-slate-200 px-6">
+              <Layers className="w-8 h-8 text-slate-300 mb-2" />
+              <div className="text-xs font-bold text-slate-700">No active category sales recorded yet</div>
+              <p className="text-[11px] text-slate-500 mt-1 max-w-xs">
+                Complete a retail POS sale or wholesale order to track revenue mix across species categories.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3 pt-1">
+              {categoryRevenueData.map(cat => (
+                <div key={cat.name} className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="font-bold text-slate-800">{cat.name}</span>
+                    <span className="font-mono-code font-extrabold text-slate-900">
+                      {cat.value.toFixed(1)}% ({formatCurrency(cat.revenue)})
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                    <div 
+                      className="h-2.5 rounded-full transition-all duration-500" 
+                      style={{ width: `${Math.min(100, cat.value)}%`, backgroundColor: cat.color }} 
+                    />
+                  </div>
                 </div>
-                <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
-                  <div 
-                    className="h-2.5 rounded-full transition-all duration-500" 
-                    style={{ width: `${cat.value}%`, backgroundColor: cat.color }} 
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
           <div className="p-3 bg-slate-50 rounded-2xl text-[11px] text-slate-600 flex items-center justify-between mt-2">
-            <span>Pelagic Hon-Maguro and Sashimi grade Salmon maintain the highest volume turnover.</span>
-            <span className="text-emerald-700 font-bold font-mono-code">Avg 52.4% Gross Margin</span>
+            <span>Net ex-tax category share across wholesale &amp; retail channels.</span>
+            <span className="text-emerald-700 font-bold font-mono-code">Avg {aggregateMetrics.avgMargin.toFixed(1)}% Gross Margin</span>
           </div>
         </div>
       </div>

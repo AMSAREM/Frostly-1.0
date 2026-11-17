@@ -135,7 +135,7 @@ export const TraceabilityPassportModal: React.FC<TraceabilityPassportModalProps>
               <div className="p-3.5 rounded-xl bg-white border border-slate-200">
                 <div className="text-slate-500 font-medium">Landing Port & Date</div>
                 <div className="font-bold text-slate-900 mt-0.5">{batch.landingPort}</div>
-                <div className="text-[11px] text-slate-500 mt-0.5">Landed: {batch.landingPort ? `${batch.harvestDate}` : 'Recent'}</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">Landed: {batch.harvestDate || '—'}</div>
               </div>
 
               <div className="p-3.5 rounded-xl bg-white border border-slate-200">

@@ -20,6 +20,7 @@ import { EditQuoteModal } from './components/Modals/EditQuoteModal';
 import { DeleteOrderModal } from './components/Modals/DeleteOrderModal';
 import { RecordExpenseModal } from './components/Modals/RecordExpenseModal';
 import { TenantOnboardingScreen } from './components/TenantOnboardingScreen';
+import { DeleteBatchOptions } from './components/Inventory/DeleteBatchModal';
 
 import { PWAInstallModal } from './components/PWAInstallModal';
 import { PWAStatusBanner } from './components/PWAStatusBanner';
@@ -69,11 +70,23 @@ import {
 } from './types';
 import { formatCurrency } from './utils/formatters';
 import { getSpeciesIdFromName, getSpeciesTaxonomy } from './utils/speciesHelper';
+import { isOrderActive, isOrderPaid } from './utils/financialMetrics';
+import {
+  applyOrderAllocationDeltas,
+  applyRetailSaleStockDeductions,
+  computeOrderCustomerFinancialDelta,
+  doesBatchMatchProduct,
+  validateOrderLotAvailability,
+} from './utils/inventorySync';
 import { batchRepository } from './repositories/batchRepository';
 import { customerRepository } from './repositories/customerRepository';
 import { orderRepository } from './repositories/orderRepository';
 import { supplierRepository } from './repositories/supplierRepository';
-import { financialRepository, isReversalLedgerEntry } from './repositories/financialRepository';
+import {
+  financialRepository,
+  isReversalLedgerEntry,
+  isInventoryAdjustmentLedgerEntry,
+} from './repositories/financialRepository';
 import { purchaseOrderRepository } from './repositories/purchaseOrderRepository';
 import { productRepository, retailTransactionRepository } from './repositories/retailRepository';
 import { settingsRepository } from './repositories/settingsRepository';
@@ -89,6 +102,7 @@ import {
   isSubscriptionLockedOut
 } from './data/auth';
 import { User } from '@supabase/supabase-js';
+import { isSupabaseConfigured } from './utils/supabase';
 
 export default function App() {
   // Single authoritative source of truth for session and staff profile from AuthGate
@@ -162,16 +176,18 @@ export default function App() {
     }).catch(() => {});
   }, [activeTab]);
 
-  // Safe tenant-scoped local storage load helper
-  // Newly created or active tenant workspaces are initialized completely clean without demo data
+  // Safe tenant-scoped inventory state: when Supabase is configured, hydrate strictly from Supabase inventory_batches
   const [batches, setBatches] = useState<InventoryBatch[]>(() => {
     try {
+      if (isSupabaseConfigured) {
+        return [];
+      }
       if (activeOrgId) {
         return batchRepository.getLocalCache([], activeOrgId);
       }
       return batchRepository.getLocalCache(INITIAL_BATCHES);
     } catch {
-      return activeOrgId ? [] : INITIAL_BATCHES;
+      return (isSupabaseConfigured || activeOrgId) ? [] : INITIAL_BATCHES;
     }
   });
 
@@ -213,12 +229,15 @@ export default function App() {
 
   const [products, setProducts] = useState<RetailWholesaleProduct[]>(() => {
     try {
+      if (isSupabaseConfigured) {
+        return [];
+      }
       if (activeOrgId) {
         return productRepository.getLocalCache([], activeOrgId);
       }
       return productRepository.getLocalCache(INITIAL_PRODUCTS);
     } catch {
-      return activeOrgId ? [] : INITIAL_PRODUCTS;
+      return (isSupabaseConfigured || activeOrgId) ? [] : INITIAL_PRODUCTS;
     }
   });
 
@@ -391,7 +410,7 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
     const currentOrgId = staffProfile?.organization_id;
-    const fallbackList = isTenantUser ? [] : undefined;
+    const fallbackList = (isSupabaseConfigured || isTenantUser) ? [] : undefined;
 
     batchRepository.getBatches(fallbackList).then(fresh => {
       if (isMounted) {
@@ -399,8 +418,16 @@ export default function App() {
         setBatches(deduplicated);
         setIsBatchesHydrated(true);
       }
-      // Drains offline sync queue immediately if network and session are active
-      syncManager.flushAll().catch(console.warn);
+      // Drains offline sync queue immediately if network and session are active, then re-verify live inventory against Supabase
+      syncManager.flushAll()
+        .then(async () => {
+          if (!isMounted || !isSupabaseConfigured) return;
+          const liveBatches = await batchRepository.getBatches([]);
+          if (isMounted) {
+            setBatches(deduplicateBatches(liveBatches || []));
+          }
+        })
+        .catch(console.warn);
     }).catch(err => {
       console.warn('[App] Batch repository load error:', err);
       if (isMounted) {
@@ -505,6 +532,12 @@ export default function App() {
   }, [session?.user?.id, staffProfile?.organization_id, isTenantUser]);
 
   // Scoped Tenant Cache Effects - Keep repository caches strictly scoped by tenant
+  useEffect(() => {
+    if (isBatchesHydrated) {
+      batchRepository.setLocalCache(batches, staffProfile?.organization_id);
+    }
+  }, [batches, isBatchesHydrated, staffProfile?.organization_id]);
+
   useEffect(() => {
     orderRepository.setLocalCache(orders, staffProfile?.organization_id);
   }, [orders, staffProfile?.organization_id]);
@@ -760,34 +793,116 @@ export default function App() {
     };
   };
 
-  // Auto-reconcile catalog products and inventory lots to maintain strict 1:1 bidirectional parity
-  const lastReconcileKeyRef = useRef<string>('');
+  // Sync metadata/weights/prices only between ALREADY-EXISTING Supabase batches and products without inventing phantom items
+  const syncExistingLinkedInventoryAndProducts = (
+    currentProducts: RetailWholesaleProduct[],
+    currentBatches: InventoryBatch[]
+  ): {
+    updatedProducts: RetailWholesaleProduct[];
+    updatedBatches: InventoryBatch[];
+    changedProducts: RetailWholesaleProduct[];
+    changedBatches: InventoryBatch[];
+  } => {
+    const workingBatches = currentBatches.map(b => ({ ...b }));
+    const workingProducts = currentProducts.map(p => ({ ...p }));
+    const matchedProductIds = new Set<string>();
+    const matchedBatchIds = new Set<string>();
+    const changedProducts: RetailWholesaleProduct[] = [];
+    const changedBatches: InventoryBatch[] = [];
+
+    const tryPair = (batch: InventoryBatch, matchedProduct: RetailWholesaleProduct) => {
+      matchedProductIds.add(matchedProduct.id);
+      matchedBatchIds.add(batch.id);
+
+      let prodChanged = false;
+      let batchChanged = false;
+
+      if (matchedProduct.linkedBatchId !== batch.id) {
+        matchedProduct.linkedBatchId = batch.id;
+        prodChanged = true;
+      }
+      if (batch.linkedProductId !== matchedProduct.id) {
+        batch.linkedProductId = matchedProduct.id;
+        batchChanged = true;
+      }
+      if (matchedProduct.sku && batch.productSku !== matchedProduct.sku) {
+        batch.productSku = matchedProduct.sku;
+        batchChanged = true;
+      }
+      if (Math.abs((matchedProduct.stockKg || 0) - (batch.availableWeightKg || 0)) > 0.05) {
+        matchedProduct.stockKg = Number(batch.availableWeightKg) || 0;
+        prodChanged = true;
+      }
+      if (batch.wholesalePricePerKg > 0 && Math.abs((matchedProduct.wholesalePricePerUnit || 0) - (batch.wholesalePricePerKg || 0)) > 0.05) {
+        matchedProduct.wholesalePricePerUnit = batch.wholesalePricePerKg;
+        prodChanged = true;
+      }
+      if (batch.costPerKg > 0 && Math.abs((matchedProduct.costPricePerUnit || 0) - (batch.costPerKg || 0)) > 0.05) {
+        matchedProduct.costPricePerUnit = batch.costPerKg;
+        prodChanged = true;
+      }
+
+      if (prodChanged) changedProducts.push(matchedProduct);
+      if (batchChanged) changedBatches.push(batch);
+    };
+
+    for (const batch of workingBatches) {
+      const batchSkuClean = (batch.productSku || '').toLowerCase().trim();
+      const matchedProduct = workingProducts.find(p => {
+        if (matchedProductIds.has(p.id)) return false;
+        const prodSkuClean = (p.sku || '').toLowerCase().trim();
+        const detProdBatchId = `LOT-RET-${(p.sku || p.id).toUpperCase().replace(/[^A-Z0-9-]/g, '')}`;
+        return (
+          (p.linkedBatchId && p.linkedBatchId === batch.id) ||
+          (batch.linkedProductId && batch.linkedProductId === p.id) ||
+          (batchSkuClean && prodSkuClean && batchSkuClean === prodSkuClean) ||
+          batch.id === detProdBatchId ||
+          batch.id === `LOT-RET-${p.id.replace('prod-', '')}` ||
+          batch.id === `LOT-RET-${p.id}` ||
+          p.id === `prod-${batch.id}`
+        );
+      });
+      if (matchedProduct) tryPair(batch, matchedProduct);
+    }
+
+    for (const batch of workingBatches) {
+      if (matchedBatchIds.has(batch.id)) continue;
+      const matchedProduct = workingProducts.find(
+        p => !matchedProductIds.has(p.id) && p.speciesId === batch.speciesId && p.grade === batch.grade
+      );
+      if (matchedProduct) tryPair(batch, matchedProduct);
+    }
+
+    return { updatedProducts: workingProducts, updatedBatches: workingBatches, changedProducts, changedBatches };
+  };
+
+  const lastLinkSyncKeyRef = useRef<string>('');
 
   useEffect(() => {
-    // CRITICAL: Block reconciliation until BOTH inventory batches and products have finished hydrating
     if (!isBatchesHydrated || !isProductsHydrated) return;
 
     const currentKey = `${batches.length}_${products.length}`;
-    if (lastReconcileKeyRef.current !== currentKey || batches.length !== products.length) {
-      const { updatedBatches, updatedProducts, newLots, newProducts } = reconcileCatalogWithInventory(products, batches);
+    if (lastLinkSyncKeyRef.current !== currentKey) {
+      lastLinkSyncKeyRef.current = currentKey;
+      const { updatedProducts, updatedBatches, changedProducts, changedBatches } =
+        syncExistingLinkedInventoryAndProducts(products, batches);
 
-      if (newLots.length > 0 || newProducts.length > 0 || updatedBatches.length !== batches.length || updatedProducts.length !== products.length) {
-        setBatches(updatedBatches);
+      if (changedProducts.length > 0) {
         setProducts(updatedProducts);
-
-        newLots.forEach(lot => {
-          batchRepository.save(lot, false).catch(err => {
-            console.warn('[App] batchRepository auto-reconcile save error:', err);
-          });
-        });
-
-        newProducts.forEach(prod => {
+        changedProducts.forEach(prod => {
           productRepository.save(prod, false).catch(err => {
-            console.warn('[App] productRepository auto-reconcile save error:', err);
+            console.warn('[App] productRepository link sync save error:', err);
           });
         });
       }
-      lastReconcileKeyRef.current = `${updatedBatches.length}_${updatedProducts.length}`;
+      if (changedBatches.length > 0) {
+        setBatches(updatedBatches);
+        changedBatches.forEach(batch => {
+          batchRepository.save(batch, false).catch(err => {
+            console.warn('[App] batchRepository link sync save error:', err);
+          });
+        });
+      }
     }
   }, [products, isBatchesHydrated, isProductsHydrated, batches]);
 
@@ -1020,12 +1135,12 @@ export default function App() {
         if (result.financialEntry) {
           setFinancialEntries(prev => [result.financialEntry!, ...prev]);
         }
-        // Update account balance in local state
+        // Update account balance in local state (negative variance/loss increases expense balance; positive recovery offsets it)
         setAdjustmentAccounts(prev => prev.map(acc => {
           if (acc.accountCode === adjustmentData.adjustmentAccountCode) {
             return {
               ...acc,
-              balanceUSD: Number(((acc.balanceUSD || 0) + Math.abs(adjustmentData.valuationVarianceUSD)).toFixed(2))
+              balanceUSD: Number(((acc.balanceUSD || 0) - adjustmentData.valuationVarianceUSD).toFixed(2))
             };
           }
           return acc;
@@ -1043,6 +1158,179 @@ export default function App() {
       type: 'system',
       title: `Stock Calibrated: Lot ${updatedBatch.id}`,
       message: `Stock updated to ${updatedBatch.availableWeightKg} kg (${deltaWeight >= 0 ? '+' : ''}${deltaWeight.toFixed(1)} kg) [Acc ${adjustmentData?.adjustmentAccountCode || '5150'}].`,
+      urgency: 'low'
+    });
+  };
+
+  // Financially Compliant Inventory Batch Disposal / Deletion Handler
+  const handleDeleteBatch = async (batchId: string, options: DeleteBatchOptions) => {
+    const targetBatch = batches.find(b => b.id === batchId);
+    if (!targetBatch) return;
+
+    const allocatedKg = Math.max(0, Number(targetBatch.allocatedWeightKg) || 0);
+    if (allocatedKg > 0.001) {
+      throw new Error(`Lot ${batchId} has ${allocatedKg.toFixed(1)} kg reserved for active orders. Fulfill or void those orders first.`);
+    }
+
+    const availableKg = Math.max(0, Number(targetBatch.availableWeightKg) || 0);
+    const unitCost = Math.max(0, Number(targetBatch.costPerKg) || 0);
+    const costBasisValue = Number((availableKg * unitCost).toFixed(2));
+    const today = new Date().toISOString().split('T')[0];
+
+    const skuClean = (targetBatch.productSku || '').toLowerCase().trim();
+    const linkedProduct = products.find(p => {
+      const prodSkuClean = (p.sku || '').toLowerCase().trim();
+      const detBatchId = `LOT-RET-${(p.sku || p.id).toUpperCase().replace(/[^A-Z0-9-]/g, '')}`;
+      return (
+        (p.linkedBatchId && p.linkedBatchId === targetBatch.id) ||
+        (targetBatch.linkedProductId && targetBatch.linkedProductId === p.id) ||
+        (skuClean && prodSkuClean && skuClean === prodSkuClean) ||
+        targetBatch.id === detBatchId ||
+        targetBatch.id === `LOT-RET-${p.id.replace('prod-', '')}` ||
+        targetBatch.id === `LOT-RET-${p.id}` ||
+        p.id === `prod-${targetBatch.id}`
+      );
+    });
+
+    if (options.mode === 'write_off_and_decommission') {
+      const decommissionTag = `[DECOMMISSIONED ${today} | ${options.reason}${options.notes ? `: ${options.notes}` : ''} | Acc ${options.adjustmentAccountCode}]`;
+      const updatedNotes = targetBatch.notes
+        ? (targetBatch.notes.includes('[DECOMMISSIONED') ? targetBatch.notes : `${targetBatch.notes} | ${decommissionTag}`)
+        : decommissionTag;
+
+      const decommissionedBatch: InventoryBatch = {
+        ...targetBatch,
+        availableWeightKg: 0,
+        notes: updatedNotes
+      };
+
+      setBatches(prev => prev.map(b => b.id === targetBatch.id ? decommissionedBatch : b));
+      await batchRepository.save(decommissionedBatch, false);
+
+      if (availableKg > 0.001) {
+        const newAdjustment: InventoryStockAdjustment = {
+          id: `ADJ-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          batchId: targetBatch.id,
+          speciesName: targetBatch.speciesName,
+          previousWeightKg: Number(availableKg.toFixed(2)),
+          newWeightKg: 0,
+          deltaWeightKg: Number((-availableKg).toFixed(2)),
+          unitCostUSD: unitCost,
+          valuationVarianceUSD: Number((-costBasisValue).toFixed(2)),
+          reason: options.reason,
+          adjustmentAccountId: options.adjustmentAccountId,
+          adjustmentAccountCode: options.adjustmentAccountCode,
+          adjustmentAccountName: options.adjustmentAccountName,
+          notes: options.notes || 'Lot written off and decommissioned',
+          createdBy: staffProfile?.email || staffProfile?.full_name || 'Staff User',
+          createdAt: new Date().toISOString()
+        };
+
+        setStockAdjustments(prev => [newAdjustment, ...prev]);
+
+        const result = await stockAdjustmentRepository.recordAdjustment(newAdjustment, costBasisValue > 0);
+        if (result.financialEntry) {
+          setFinancialEntries(prev => [result.financialEntry!, ...prev]);
+        }
+        if (costBasisValue > 0) {
+          setAdjustmentAccounts(prev => prev.map(acc => {
+            if (acc.accountCode === options.adjustmentAccountCode) {
+              return {
+                ...acc,
+                balanceUSD: Number(((acc.balanceUSD || 0) + costBasisValue).toFixed(2))
+              };
+            }
+            return acc;
+          }));
+        }
+      }
+
+      if (linkedProduct) {
+        const archivedProduct: RetailWholesaleProduct = {
+          ...linkedProduct,
+          stockKg: 0,
+          isAvailableForRetail: false,
+          isAvailableForWholesale: false,
+          linkedBatchId: targetBatch.id
+        };
+        setProducts(prev => prev.map(p => p.id === linkedProduct.id ? archivedProduct : p));
+        await productRepository.save(archivedProduct, false);
+      }
+
+      addNotification({
+        type: 'system',
+        title: `Lot Decommissioned: ${targetBatch.id}`,
+        message: availableKg > 0
+          ? `${availableKg.toFixed(1)} kg written off (${formatAppCurrency(costBasisValue)} posted to [${options.adjustmentAccountCode}]). Lot archived for traceability.`
+          : `Zero-stock lot ${targetBatch.id} archived as Decommissioned.`,
+        urgency: 'low'
+      });
+      return;
+    }
+
+    // Permanent deletion path: 'write_off_and_delete' or 'void_erroneous_entry'
+    if (options.mode === 'write_off_and_delete' && availableKg > 0.001 && costBasisValue > 0) {
+      const writeOffAdjustment: InventoryStockAdjustment = {
+        id: `ADJ-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        batchId: targetBatch.id,
+        speciesName: targetBatch.speciesName,
+        previousWeightKg: Number(availableKg.toFixed(2)),
+        newWeightKg: 0,
+        deltaWeightKg: Number((-availableKg).toFixed(2)),
+        unitCostUSD: unitCost,
+        valuationVarianceUSD: Number((-costBasisValue).toFixed(2)),
+        reason: options.reason,
+        adjustmentAccountId: options.adjustmentAccountId,
+        adjustmentAccountCode: options.adjustmentAccountCode,
+        adjustmentAccountName: options.adjustmentAccountName,
+        notes: options.notes || `Inventory Write-Off & Removal: Lot ${targetBatch.id}`,
+        createdBy: staffProfile?.email || staffProfile?.full_name || 'Staff User',
+        createdAt: new Date().toISOString()
+      };
+
+      setStockAdjustments(prev => [writeOffAdjustment, ...prev]);
+      const adjResult = await stockAdjustmentRepository.recordAdjustment(writeOffAdjustment, true);
+      if (adjResult.financialEntry) {
+        setFinancialEntries(prev => [adjResult.financialEntry!, ...prev]);
+      }
+
+      setAdjustmentAccounts(prev => prev.map(acc => {
+        if (acc.accountCode === options.adjustmentAccountCode) {
+          return {
+            ...acc,
+            balanceUSD: Number(((acc.balanceUSD || 0) + costBasisValue).toFixed(2))
+          };
+        }
+        return acc;
+      }));
+    }
+
+    await batchRepository.delete(targetBatch.id);
+    setBatches(prev => prev.filter(b => b.id !== targetBatch.id));
+
+    if (linkedProduct) {
+      if (options.removeLinkedProduct) {
+        await productRepository.delete(linkedProduct.id);
+        setProducts(prev => prev.filter(p => p.id !== linkedProduct.id));
+      } else {
+        const unlinkedProduct: RetailWholesaleProduct = {
+          ...linkedProduct,
+          stockKg: 0,
+          linkedBatchId: undefined
+        };
+        setProducts(prev => prev.map(p => p.id === linkedProduct.id ? unlinkedProduct : p));
+        await productRepository.save(unlinkedProduct, false);
+      }
+    }
+
+    addNotification({
+      type: 'system',
+      title: options.mode === 'write_off_and_delete'
+        ? `Inventory Written Off & Removed: ${targetBatch.id}`
+        : `Erroneous Inventory Lot Purged: ${targetBatch.id}`,
+      message: options.mode === 'write_off_and_delete' && costBasisValue > 0
+        ? `${availableKg.toFixed(1)} kg (${formatAppCurrency(costBasisValue)}) expensed to [${options.adjustmentAccountCode}] in Financial Ledger.`
+        : `Lot ${targetBatch.id} (${targetBatch.speciesName}) permanently removed from Cold Storage Inventory.`,
       urgency: 'low'
     });
   };
@@ -1071,39 +1359,92 @@ export default function App() {
     });
   };
 
-  // Add Order Handler
-  const handleAddOrder = (newOrder: ClientOrder) => {
-    setOrders(prev => [newOrder, ...prev]);
-    orderRepository.saveOrderWithItems(newOrder).catch(err => {
-      console.warn('[App] orderRepository save error:', err);
-    });
-    
-    // Update customer spend and balance if matched
-    const isCreditOrder = newOrder.paymentStatus !== 'Paid';
-    const orderVal = newOrder.adjustedTotalUSD || newOrder.quotedTotalUSD;
+  // Helper: sync linked catalog product stockKg when inventory batches change
+  const syncLinkedProductsWithBatches = (changedBatches: InventoryBatch[]) => {
+    if (!changedBatches.length) return;
+    setProducts(prev =>
+      prev.map(prod => {
+        const matchedBatch = changedBatches.find(b => doesBatchMatchProduct(b, prod));
+        if (!matchedBatch || Math.abs(prod.stockKg - matchedBatch.availableWeightKg) < 0.01) {
+          return prod;
+        }
+        const updatedProd: RetailWholesaleProduct = {
+          ...prod,
+          stockKg: Number(matchedBatch.availableWeightKg.toFixed(2)),
+          linkedBatchId: matchedBatch.id,
+        };
+        productRepository.save(updatedProd, false).catch(err => {
+          console.warn('[App] productRepository sync on batch delta error:', err);
+        });
+        return updatedProd;
+      })
+    );
+  };
 
-    setCustomers(prev => prev.map(cust => {
-      const isMatch = (newOrder.customerId && cust.id === newOrder.customerId) ||
-        cust.name.toLowerCase() === newOrder.clientName.toLowerCase() ||
-        cust.companyName.toLowerCase() === newOrder.clientName.toLowerCase();
+  // Helper: apply delta to matching customer's financials and persist to Supabase
+  const applyCustomerOrderDelta = (
+    orderRef: Pick<ClientOrder, 'customerId' | 'clientName'>,
+    ordersCountDelta: number,
+    totalSpendDelta: number,
+    outstandingBalanceDelta: number
+  ) => {
+    if (ordersCountDelta === 0 && Math.abs(totalSpendDelta) < 0.001 && Math.abs(outstandingBalanceDelta) < 0.001) {
+      return;
+    }
+    const targetNameLower = (orderRef.clientName || '').toLowerCase().trim();
+    setCustomers(prev =>
+      prev.map(cust => {
+        const isMatch =
+          (orderRef.customerId && cust.id === orderRef.customerId) ||
+          cust.name.toLowerCase().trim() === targetNameLower ||
+          cust.companyName.toLowerCase().trim() === targetNameLower;
 
-      if (isMatch) {
-        const newTotalCount = cust.totalOrdersCount + 1;
-        const newTotalSpend = cust.totalSpendUSD + orderVal;
-        const newBalance = isCreditOrder ? cust.outstandingBalanceUSD + orderVal : cust.outstandingBalanceUSD;
+        if (!isMatch) return cust;
+
+        const newTotalCount = Math.max(0, cust.totalOrdersCount + ordersCountDelta);
+        const newTotalSpend = Math.max(0, Number((cust.totalSpendUSD + totalSpendDelta).toFixed(2)));
+        const newBalance = Math.max(0, Number((cust.outstandingBalanceUSD + outstandingBalanceDelta).toFixed(2)));
 
         customerRepository.updateFinancials(cust.id, newBalance, newTotalSpend, newTotalCount).catch(err => {
-          console.warn('[App] customerRepository updateFinancials on order failed:', err);
+          console.warn('[App] customerRepository updateFinancials failed:', err);
         });
         return {
           ...cust,
           totalOrdersCount: newTotalCount,
           totalSpendUSD: newTotalSpend,
-          outstandingBalanceUSD: newBalance
+          outstandingBalanceUSD: newBalance,
         };
-      }
-      return cust;
-    }));
+      })
+    );
+  };
+
+  // Add Order Handler
+  const handleAddOrder = (newOrder: ClientOrder) => {
+    const availability = validateOrderLotAvailability(newOrder.items, batches);
+    if (!availability.valid) {
+      addNotification({
+        type: 'system',
+        title: 'Insufficient Lot Stock',
+        message: availability.error || 'Requested weight exceeds available cold storage inventory.',
+        urgency: 'high'
+      });
+      throw new Error(availability.error);
+    }
+
+    setOrders(prev => [newOrder, ...prev]);
+    orderRepository.saveOrderWithItems(newOrder).catch(err => {
+      console.warn('[App] orderRepository save error:', err);
+    });
+
+    const isCreditOrder = !isOrderPaid(newOrder);
+    const orderVal = newOrder.adjustedTotalUSD || newOrder.quotedTotalUSD;
+    const custDelta = computeOrderCustomerFinancialDelta(undefined, newOrder);
+    applyCustomerOrderDelta(
+      newOrder,
+      custDelta.ordersCountDelta,
+      custDelta.totalSpendDelta,
+      custDelta.outstandingBalanceDelta
+    );
 
     // Add Income ledger entry
     const newFinEntry: FinancialLedgerEntry = {
@@ -1118,32 +1459,31 @@ export default function App() {
       entityName: newOrder.clientName,
       amount: orderVal,
       paymentMethod: isCreditOrder ? `Credit Sale (${newOrder.paymentTerms || 'Net-30'})` : 'Paid on Order',
-      status: isCreditOrder ? 'Pending' : 'Settled'
+      status: isCreditOrder ? 'Pending' : 'Settled',
+      customerId: newOrder.customerId,
     };
     setFinancialEntries(prev => [newFinEntry, ...prev]);
     financialRepository.addEntry(newFinEntry).catch(err => {
       console.warn('[App] financialRepository addEntry error for order:', err);
     });
 
-    // Update inventory batches: allocate weight through batchRepository
-    newOrder.items.forEach(item => {
-      if (!item.lotId) return;
-      const targetBatch = batches.find(b => b.id === item.lotId);
-      if (targetBatch) {
-        const newAllocated = targetBatch.allocatedWeightKg + item.requestedWeightKg;
-        const newAvailable = Math.max(0, targetBatch.initialWeightKg - newAllocated);
-        // All batch mutations MUST go through batchRepository
-        batchRepository.updateWeights(targetBatch.id, newAvailable, newAllocated)
-          .then(updated => {
-            if (updated) {
-              setBatches(prev => prev.map(b => b.id === updated.id ? updated : b));
-            }
-          })
-          .catch(err => {
-            console.warn('[App] Error updating batch weight in repository:', err);
-          });
-      }
-    });
+    // Allocate weight using delta on availableWeightKg so prior POS sales & adjustments are preserved
+    const { updatedBatches, changedBatches } = applyOrderAllocationDeltas(
+      batches,
+      [],
+      false,
+      newOrder.items,
+      isOrderActive(newOrder)
+    );
+    if (changedBatches.length > 0) {
+      setBatches(updatedBatches);
+      changedBatches.forEach(b => {
+        batchRepository.updateWeights(b.id, b.availableWeightKg, b.allocatedWeightKg).catch(err => {
+          console.warn('[App] Error updating batch weight in repository:', err);
+        });
+      });
+      syncLinkedProductsWithBatches(changedBatches);
+    }
 
     addNotification({
       type: 'order_update',
@@ -1155,49 +1495,67 @@ export default function App() {
 
   // Dynamic Catch-Weight Weigher Save Handler
   const handleSaveWeighedItems = (
-    orderId: string, 
-    updatedItems: ClientOrder['items'], 
+    orderId: string,
+    updatedItems: ClientOrder['items'],
     adjustedTotal: number
   ) => {
-    setOrders(prev => prev.map(order => {
-      if (order.id !== orderId) return order;
-      const updatedOrder: ClientOrder = {
-        ...order,
-        items: updatedItems,
-        adjustedTotalUSD: adjustedTotal,
-        status: order.status === 'Pending Confirmation' ? 'Weighing & Grading' : order.status
-      };
-      orderRepository.saveOrderWithItems(updatedOrder).catch(err => {
-        console.warn('[App] orderRepository save after weighing error:', err);
-      });
-      return updatedOrder;
-    }));
+    const existingOrder = orders.find(o => o.id === orderId);
+    if (!existingOrder) return;
 
-    // Calibrate batch allocations based on exact certified scale weight through batchRepository
-    updatedItems.forEach(item => {
-      if (!item.lotId || item.actualWeighedKg === null) return;
-      const targetBatch = batches.find(b => b.id === item.lotId);
-      if (targetBatch) {
-        const weightDelta = item.actualWeighedKg - item.requestedWeightKg;
-        const newAllocated = Math.max(0, targetBatch.allocatedWeightKg + weightDelta);
-        const newAvailable = Math.max(0, targetBatch.initialWeightKg - newAllocated);
-        // All batch mutations MUST go through batchRepository
-        batchRepository.updateWeights(targetBatch.id, newAvailable, newAllocated)
-          .then(updated => {
-            if (updated) {
-              setBatches(prev => prev.map(b => b.id === updated.id ? updated : b));
-            }
-          })
-          .catch(err => {
-            console.warn('[App] Error calibrating batch weight in repository:', err);
-          });
-      }
+    const updatedOrder: ClientOrder = {
+      ...existingOrder,
+      items: updatedItems,
+      adjustedTotalUSD: adjustedTotal,
+      status: existingOrder.status === 'Pending Confirmation' ? 'Weighing & Grading' : existingOrder.status
+    };
+
+    const availability = validateOrderLotAvailability(updatedItems, batches, existingOrder);
+    if (!availability.valid) {
+      addNotification({
+        type: 'system',
+        title: 'Catch-Weight Exceeds Lot Stock',
+        message: availability.error || 'Weighed quantity exceeds available batch inventory.',
+        urgency: 'high'
+      });
+      return;
+    }
+
+    setOrders(prev => prev.map(o => (o.id === orderId ? updatedOrder : o)));
+    orderRepository.saveOrderWithItems(updatedOrder).catch(err => {
+      console.warn('[App] orderRepository save after weighing error:', err);
     });
+
+    // Apply weight delta relative to previously allocated weight for this order
+    const { updatedBatches, changedBatches } = applyOrderAllocationDeltas(
+      batches,
+      existingOrder.items,
+      isOrderActive(existingOrder),
+      updatedItems,
+      isOrderActive(updatedOrder)
+    );
+    if (changedBatches.length > 0) {
+      setBatches(updatedBatches);
+      changedBatches.forEach(b => {
+        batchRepository.updateWeights(b.id, b.availableWeightKg, b.allocatedWeightKg).catch(err => {
+          console.warn('[App] Error calibrating batch weight in repository:', err);
+        });
+      });
+      syncLinkedProductsWithBatches(changedBatches);
+    }
+
+    // Reconcile customer AR & lifetime spend with calibrated catch-weight invoice total
+    const custDelta = computeOrderCustomerFinancialDelta(existingOrder, updatedOrder);
+    applyCustomerOrderDelta(
+      updatedOrder,
+      custDelta.ordersCountDelta,
+      custDelta.totalSpendDelta,
+      custDelta.outstandingBalanceDelta
+    );
 
     addNotification({
       type: 'order_update',
       title: `Catch-Weight Calibrated: Order ${orderId}`,
-      message: `Yield weighed on certified scale. Adjusted total recalibrated to $${adjustedTotal.toFixed(2)}.`,
+      message: `Yield weighed on certified scale. Adjusted total recalibrated to ${formatAppCurrency(adjustedTotal)}.`,
       urgency: 'low'
     });
   };
@@ -1223,52 +1581,35 @@ export default function App() {
 
   // Payment status update handler
   const handleUpdatePaymentStatus = (orderId: string, status: ClientOrder['paymentStatus']) => {
-    let orderToUpdate: ClientOrder | undefined;
+    const orderToUpdate = orders.find(o => o.id === orderId);
+    if (!orderToUpdate) return;
 
-    setOrders(prev => prev.map(o => {
-      if (o.id !== orderId) return o;
-      orderToUpdate = o;
-      const updated = { ...o, paymentStatus: status };
-      orderRepository.save(updated).catch(err => {
-        console.warn('[App] orderRepository update payment status error:', err);
-      });
-      return updated;
-    }));
+    const updatedOrder: ClientOrder = { ...orderToUpdate, paymentStatus: status };
+    setOrders(prev => prev.map(o => (o.id === orderId ? updatedOrder : o)));
+    orderRepository.save(updatedOrder).catch(err => {
+      console.warn('[App] orderRepository update payment status error:', err);
+    });
 
-    // If marked Paid and previously had a pending credit balance, adjust customer's balance
-    const isNowPaid = status === 'Paid' || status === 'Paid in Full';
-    const wasPaid = orderToUpdate?.paymentStatus === 'Paid' || orderToUpdate?.paymentStatus === 'Paid in Full';
+    const isNowPaid = isOrderPaid({ paymentStatus: status });
+    const wasPaid = isOrderPaid(orderToUpdate);
 
-    if (isNowPaid && orderToUpdate && !wasPaid) {
-      const orderAmount = orderToUpdate.adjustedTotalUSD || orderToUpdate.quotedTotalUSD;
-      const targetClientId = orderToUpdate.customerId;
-      const targetClientName = orderToUpdate.clientName;
+    if (isNowPaid !== wasPaid && isOrderActive(orderToUpdate)) {
+      const custDelta = computeOrderCustomerFinancialDelta(orderToUpdate, updatedOrder);
+      applyCustomerOrderDelta(
+        orderToUpdate,
+        custDelta.ordersCountDelta,
+        custDelta.totalSpendDelta,
+        custDelta.outstandingBalanceDelta
+      );
 
-      setCustomers(prev => prev.map(cust => {
-        const isMatch = (targetClientId && cust.id === targetClientId) ||
-          cust.name.toLowerCase() === targetClientName.toLowerCase() ||
-          cust.companyName.toLowerCase() === targetClientName.toLowerCase();
-
-        if (isMatch) {
-          const newBal = Math.max(0, cust.outstandingBalanceUSD - orderAmount);
-          customerRepository.updateFinancials(cust.id, newBal, cust.totalSpendUSD, cust.totalOrdersCount).catch(err => {
-            console.warn('[App] customerRepository updateFinancials on order mark-paid failed:', err);
-          });
-          return {
-            ...cust,
-            outstandingBalanceUSD: newBal
-          };
-        }
-        return cust;
-      }));
-
-      // Update matching financial entry to Settled
-      setFinancialEntries(prev => prev.map(entry => {
-        if (entry.referenceId === orderId && entry.status === 'Pending') {
-          return { ...entry, status: 'Settled' as const };
-        }
-        return entry;
-      }));
+      setFinancialEntries(prev =>
+        prev.map(entry => {
+          if (entry.referenceId === orderId && entry.type === 'Income') {
+            return { ...entry, status: isNowPaid ? ('Settled' as const) : ('Pending' as const) };
+          }
+          return entry;
+        })
+      );
     }
 
     addNotification({
@@ -1281,13 +1622,50 @@ export default function App() {
 
   // Order Modification / Edit Handler
   const handleSaveOrder = async (updatedOrder: ClientOrder) => {
-    setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
+    const existingOrder = orders.find(o => o.id === updatedOrder.id);
+
+    if (isOrderActive(updatedOrder)) {
+      const availability = validateOrderLotAvailability(updatedOrder.items, batches, existingOrder);
+      if (!availability.valid) {
+        throw new Error(availability.error);
+      }
+    }
+
+    setOrders(prev => prev.map(o => (o.id === updatedOrder.id ? updatedOrder : o)));
+
+    if (existingOrder) {
+      const { updatedBatches, changedBatches } = applyOrderAllocationDeltas(
+        batches,
+        existingOrder.items,
+        isOrderActive(existingOrder),
+        updatedOrder.items,
+        isOrderActive(updatedOrder)
+      );
+      if (changedBatches.length > 0) {
+        setBatches(updatedBatches);
+        changedBatches.forEach(b => {
+          batchRepository.updateWeights(b.id, b.availableWeightKg, b.allocatedWeightKg).catch(err => {
+            console.warn('[App] batchRepository sync on order edit error:', err);
+          });
+        });
+        syncLinkedProductsWithBatches(changedBatches);
+      }
+
+      const custDelta = computeOrderCustomerFinancialDelta(existingOrder, updatedOrder);
+      applyCustomerOrderDelta(
+        updatedOrder,
+        custDelta.ordersCountDelta,
+        custDelta.totalSpendDelta,
+        custDelta.outstandingBalanceDelta
+      );
+    }
+
     try {
       await orderRepository.saveOrderWithItems(updatedOrder);
       addNotification({
         type: 'order_update',
         title: `Order ${updatedOrder.id} Updated`,
-        message: `Order specifications and quote updated for ${updatedOrder.clientName}.`,
+        message: `Order specifications, inventory allocations, and quote updated for ${updatedOrder.clientName}.`,
         urgency: 'low'
       });
     } catch (err: any) {
@@ -1295,46 +1673,106 @@ export default function App() {
     }
   };
 
-  // Estimated Quote Editing Handler (with real-time recalculation)
+  // Estimated Quote Editing Handler (with real-time recalculation & inventory/AR sync)
   const handleSaveQuote = async (orderId: string, updatedItems: OrderLineItem[], newQuotedTotal: number) => {
-    let targetOrder: ClientOrder | undefined;
-    setOrders(prev => prev.map(o => {
-      if (o.id !== orderId) return o;
-      const isWeighed = o.items.some(i => i.actualWeighedKg !== null && i.actualWeighedKg !== undefined);
-      const updated: ClientOrder = {
-        ...o,
-        items: updatedItems,
-        quotedTotalUSD: newQuotedTotal,
-        adjustedTotalUSD: isWeighed ? o.adjustedTotalUSD : newQuotedTotal
-      };
-      targetOrder = updated;
-      return updated;
-    }));
+    const existingOrder = orders.find(o => o.id === orderId);
+    if (!existingOrder) return;
 
-    if (targetOrder) {
-      try {
-        await orderRepository.saveOrderWithItems(targetOrder);
-        addNotification({
-          type: 'order_update',
-          title: `Estimated Quote Updated: ${orderId}`,
-          message: `Quoted total recalculated to ${formatAppCurrency(newQuotedTotal)}.`,
-          urgency: 'low'
-        });
-      } catch (err) {
-        console.warn('[App] Error saving updated quote:', err);
+    if (isOrderActive(existingOrder)) {
+      const availability = validateOrderLotAvailability(updatedItems, batches, existingOrder);
+      if (!availability.valid) {
+        throw new Error(availability.error);
       }
+    }
+
+    const isWeighed = updatedItems.some(i => i.actualWeighedKg !== null && i.actualWeighedKg !== undefined);
+    const updatedOrder: ClientOrder = {
+      ...existingOrder,
+      items: updatedItems,
+      quotedTotalUSD: newQuotedTotal,
+      adjustedTotalUSD: isWeighed
+        ? updatedItems.reduce((s, i) => s + (i.actualWeighedKg ?? i.requestedWeightKg) * i.pricePerKg, 0)
+        : newQuotedTotal
+    };
+
+    setOrders(prev => prev.map(o => (o.id === orderId ? updatedOrder : o)));
+
+    const { updatedBatches, changedBatches } = applyOrderAllocationDeltas(
+      batches,
+      existingOrder.items,
+      isOrderActive(existingOrder),
+      updatedItems,
+      isOrderActive(updatedOrder)
+    );
+    if (changedBatches.length > 0) {
+      setBatches(updatedBatches);
+      changedBatches.forEach(b => {
+        batchRepository.updateWeights(b.id, b.availableWeightKg, b.allocatedWeightKg).catch(err => {
+          console.warn('[App] batchRepository sync on quote edit error:', err);
+        });
+      });
+      syncLinkedProductsWithBatches(changedBatches);
+    }
+
+    const custDelta = computeOrderCustomerFinancialDelta(existingOrder, updatedOrder);
+    applyCustomerOrderDelta(
+      updatedOrder,
+      custDelta.ordersCountDelta,
+      custDelta.totalSpendDelta,
+      custDelta.outstandingBalanceDelta
+    );
+
+    try {
+      await orderRepository.saveOrderWithItems(updatedOrder);
+      addNotification({
+        type: 'order_update',
+        title: `Estimated Quote Updated: ${orderId}`,
+        message: `Quoted total recalculated to ${formatAppCurrency(newQuotedTotal)}.`,
+        urgency: 'low'
+      });
+    } catch (err) {
+      console.warn('[App] Error saving updated quote:', err);
     }
   };
 
-  // Order Deletion Handler
+  // Order Deletion Handler (releases lot allocations and reverses customer AR/spend)
   const handleDeleteOrder = async (orderId: string) => {
+    const existingOrder = orders.find(o => o.id === orderId);
     setOrders(prev => prev.filter(o => o.id !== orderId));
+
+    if (existingOrder) {
+      const { updatedBatches, changedBatches } = applyOrderAllocationDeltas(
+        batches,
+        existingOrder.items || [],
+        isOrderActive(existingOrder),
+        [],
+        false
+      );
+      if (changedBatches.length > 0) {
+        setBatches(updatedBatches);
+        changedBatches.forEach(b => {
+          batchRepository.updateWeights(b.id, b.availableWeightKg, b.allocatedWeightKg).catch(err => {
+            console.warn('[App] batchRepository release on order delete error:', err);
+          });
+        });
+        syncLinkedProductsWithBatches(changedBatches);
+      }
+
+      const custDelta = computeOrderCustomerFinancialDelta(existingOrder, undefined);
+      applyCustomerOrderDelta(
+        existingOrder,
+        custDelta.ordersCountDelta,
+        custDelta.totalSpendDelta,
+        custDelta.outstandingBalanceDelta
+      );
+    }
+
     try {
       await orderRepository.delete(orderId);
       addNotification({
         type: 'order_update',
         title: `Order Deleted`,
-        message: `Order ${orderId} has been successfully deleted.`,
+        message: `Order ${orderId} deleted, stock allocations released, and customer totals reconciled.`,
         urgency: 'low'
       });
     } catch (err) {
@@ -1345,10 +1783,10 @@ export default function App() {
   // Order Void / Cancellation Handler (Customer Section)
   const handleVoidOrder = async (orderId: string, reason: string, voidedBy: string) => {
     const existingOrder = orders.find(o => o.id === orderId);
-    if (!existingOrder) return;
+    if (!existingOrder || !isOrderActive(existingOrder)) return;
 
     const orderAmount = existingOrder.adjustedTotalUSD || existingOrder.quotedTotalUSD || 0;
-    const isPaid = existingOrder.paymentStatus === 'Paid' || existingOrder.paymentStatus === 'Paid in Full';
+    const isPaid = isOrderPaid(existingOrder);
     const nowIso = new Date().toISOString();
 
     // 1. Update Order State
@@ -1361,76 +1799,59 @@ export default function App() {
       voidedBy: voidedBy
     };
 
-    setOrders(prev => prev.map(o => o.id === orderId ? updatedOrder : o));
+    setOrders(prev => prev.map(o => (o.id === orderId ? updatedOrder : o)));
     try {
       await orderRepository.saveOrderWithItems(updatedOrder);
     } catch (err) {
       console.warn('[App] Error saving voided order:', err);
     }
 
-    // 2. Restore Allocated Inventory Lot Weights back to batch storage
+    // 2. Restore Allocated Inventory Lot Weights back to batch storage & sync linked products
     if (existingOrder.items && existingOrder.items.length > 0) {
-      setBatches(prev => {
-        return prev.map(batch => {
-          const matchingItem = existingOrder.items.find(i => i.lotId === batch.id);
-          if (matchingItem) {
-            const weightToRestore = matchingItem.actualWeighedKg ?? matchingItem.requestedWeightKg ?? 0;
-            if (weightToRestore > 0) {
-              const newAvailable = Number((batch.availableWeightKg + weightToRestore).toFixed(2));
-              const newAllocated = Math.max(0, Number(((batch.allocatedWeightKg || 0) - weightToRestore).toFixed(2)));
-              const updatedBatch = {
-                ...batch,
-                availableWeightKg: newAvailable,
-                allocatedWeightKg: newAllocated
-              };
-              batchRepository.save(updatedBatch, false).catch(err => console.warn('[App] batchRepository restore error:', err));
-              return updatedBatch;
-            }
-          }
-          return batch;
+      const { updatedBatches, changedBatches } = applyOrderAllocationDeltas(
+        batches,
+        existingOrder.items,
+        true,
+        [],
+        false
+      );
+      if (changedBatches.length > 0) {
+        setBatches(updatedBatches);
+        changedBatches.forEach(b => {
+          batchRepository.save(b, false).catch(err => console.warn('[App] batchRepository restore error:', err));
         });
-      });
+        syncLinkedProductsWithBatches(changedBatches);
+      }
     }
 
-    // 3. Reverse Customer Outstanding Balance (if order was unpaid/on credit)
-    if (!isPaid && orderAmount > 0) {
-      setCustomers(prev => {
-        return prev.map(c => {
-          const isMatchingCust = (existingOrder.customerId && c.id === existingOrder.customerId) ||
-            c.name.toLowerCase() === existingOrder.clientName.toLowerCase() ||
-            c.companyName.toLowerCase() === existingOrder.clientName.toLowerCase();
+    // 3. Reconcile Customer Spend & Outstanding Balance
+    const custDelta = computeOrderCustomerFinancialDelta(existingOrder, updatedOrder);
+    applyCustomerOrderDelta(
+      existingOrder,
+      custDelta.ordersCountDelta,
+      custDelta.totalSpendDelta,
+      custDelta.outstandingBalanceDelta
+    );
 
-          if (isMatchingCust) {
-            const newBal = Math.max(0, Number((c.outstandingBalanceUSD - orderAmount).toFixed(2)));
-            const updatedCust = {
-              ...c,
-              outstandingBalanceUSD: newBal
-            };
-            customerRepository.save(updatedCust, false).catch(err => console.warn('[App] customerRepository update error:', err));
-            return updatedCust;
-          }
-          return c;
-        });
-      });
-
-      // 4. Record Counter Ledger Entry in Financials
+    // 4. Record Positive-Amount Counter Ledger Entry (DB requires CHECK (amount >= 0); FIN-REV-* prefix marks reversal)
+    if (orderAmount > 0) {
       const financialEntry: FinancialLedgerEntry = {
-        id: `FIN-VOID-${Date.now()}`,
+        id: `FIN-REV-VOID-${Date.now()}`,
         date: nowIso.split('T')[0],
         type: 'Income',
         category: 'Revenue (Wholesale)',
-        description: `Void Order #${existingOrder.id}: ${reason} (Authorized by ${voidedBy})`,
+        description: `Void Order #${existingOrder.id}${isPaid ? ' (Paid Refund/Credit)' : ''}: ${reason} (Authorized by ${voidedBy})`,
         entityName: existingOrder.clientName,
-        amount: -orderAmount,
-        paymentMethod: existingOrder.paymentTerms ? `Credit Reversal (${existingOrder.paymentTerms})` : 'Order Void',
+        amount: Math.abs(orderAmount),
+        paymentMethod: isPaid ? 'Refund / Credit Reversal' : (existingOrder.paymentTerms ? `Credit Reversal (${existingOrder.paymentTerms})` : 'Order Void'),
         status: 'Settled',
-        referenceId: existingOrder.id,
+        referenceId: `REV-${existingOrder.id}`,
         customerId: existingOrder.customerId,
         notes: `Void authorized by ${voidedBy}: ${reason}`
       };
       setFinancialEntries(prev => [financialEntry, ...prev]);
       try {
-        await financialRepository.save(financialEntry, true);
+        await financialRepository.addEntry(financialEntry);
       } catch (err) {
         console.warn('[App] financialRepository void entry error:', err);
       }
@@ -1440,7 +1861,7 @@ export default function App() {
     addNotification({
       type: 'order_update',
       title: `Order #${orderId} Voided`,
-      message: `Order marked as voided by ${voidedBy}. Reason: ${reason}. Lot allocations restored & customer receivables adjusted.`,
+      message: `Order marked as voided by ${voidedBy}. Reason: ${reason}. Lot allocations restored & customer financials reconciled.`,
       urgency: 'medium'
     });
   };
@@ -1530,6 +1951,37 @@ export default function App() {
       type: 'order_update',
       title: `New Harvester Supplier Added`,
       message: `${newSup.name} (${newSup.portLocation}) registered.`,
+      urgency: 'low'
+    });
+  };
+
+  const handleUpdateSupplier = async (updatedSupplier: Supplier) => {
+    const previous = suppliers.find(s => s.id === updatedSupplier.id);
+    await supplierRepository.save(updatedSupplier, false);
+
+    setSuppliers(prev => prev.map(s => (s.id === updatedSupplier.id ? updatedSupplier : s)));
+
+    // Keep supplierName consistent across purchase orders if renamed
+    if (previous && previous.name !== updatedSupplier.name) {
+      const affectedPOs = purchaseOrders.filter(po => po.supplierId === updatedSupplier.id);
+      if (affectedPOs.length > 0) {
+        setPurchaseOrders(prev =>
+          prev.map(po =>
+            po.supplierId === updatedSupplier.id ? { ...po, supplierName: updatedSupplier.name } : po
+          )
+        );
+        affectedPOs.forEach(po => {
+          purchaseOrderRepository
+            .save({ ...po, supplierName: updatedSupplier.name }, false)
+            .catch(err => console.warn('[App] PO supplierName sync error:', err));
+        });
+      }
+    }
+
+    addNotification({
+      type: 'order_update',
+      title: `Supplier Updated`,
+      message: `${updatedSupplier.name} profile and remittance settings saved.`,
       urgency: 'low'
     });
   };
@@ -1727,6 +2179,155 @@ export default function App() {
     });
   };
 
+  const handleUpdatePurchaseOrder = async (updatedPO: PurchaseOrderLanding) => {
+    const existingPO = purchaseOrders.find(p => p.id === updatedPO.id);
+    if (!existingPO) return;
+
+    const oldWeight = (existingPO.speciesItems || []).reduce((s, item) => s + (Number(item.weightKg) || 0), 0);
+    const newWeight = (updatedPO.speciesItems || []).reduce((s, item) => s + (Number(item.weightKg) || 0), 0);
+    const newItem = updatedPO.speciesItems[0];
+    const deltaWeight = Number((newWeight - oldWeight).toFixed(2));
+
+    const oldCost = Number(existingPO.totalCostUSD) || 0;
+    const newCost = Number(updatedPO.totalCostUSD) || 0;
+    const deltaCost = Number((newCost - oldCost).toFixed(2));
+
+    // Validate weight change against linked inventory batch allocations/sales
+    const linkedBatch = updatedPO.lotAssignedId
+      ? batches.find(b => b.id === updatedPO.lotAssignedId)
+      : undefined;
+    if (linkedBatch && deltaWeight < 0) {
+      const nextAvailable = Number((linkedBatch.availableWeightKg + deltaWeight).toFixed(2));
+      if (nextAvailable < -0.001) {
+        const committedKg = Math.max(0, Number((linkedBatch.initialWeightKg - linkedBatch.availableWeightKg).toFixed(1)));
+        throw new Error(
+          `Cannot reduce PO weight by ${Math.abs(deltaWeight).toFixed(1)} kg because ${committedKg.toFixed(1)} kg from linked Lot ${linkedBatch.id} has already been allocated or depleted.`
+        );
+      }
+    }
+
+    await purchaseOrderRepository.savePurchaseOrderWithItems(updatedPO, false);
+    setPurchaseOrders(prev => prev.map(p => (p.id === updatedPO.id ? updatedPO : p)));
+
+    // Reconcile supplier AP & sourcing totals
+    const isUnpaid = existingPO.paymentStatus !== 'Paid in Full';
+    if (existingPO.supplierId === updatedPO.supplierId) {
+      if (Math.abs(deltaCost) > 0.001 || Math.abs(deltaWeight) > 0.001) {
+        setSuppliers(prev =>
+          prev.map(sup => {
+            if (sup.id !== updatedPO.supplierId) return sup;
+            const updatedSup: Supplier = {
+              ...sup,
+              totalPurchasedUSD: Math.max(0, Number((sup.totalPurchasedUSD + deltaCost).toFixed(2))),
+              outstandingPayableUSD: isUnpaid
+                ? Math.max(0, Number((sup.outstandingPayableUSD + deltaCost).toFixed(2)))
+                : sup.outstandingPayableUSD,
+              totalWeightSuppliedKg: Math.max(0, Number((sup.totalWeightSuppliedKg + deltaWeight).toFixed(2))),
+            };
+            supplierRepository.save(updatedSup, false).catch(err => {
+              console.warn('[App] supplierRepository update totals on PO edit error:', err);
+            });
+            return updatedSup;
+          })
+        );
+      }
+    } else {
+      setSuppliers(prev =>
+        prev.map(sup => {
+          if (sup.id === existingPO.supplierId) {
+            const updatedOldSup: Supplier = {
+              ...sup,
+              totalPurchasedUSD: Math.max(0, Number((sup.totalPurchasedUSD - oldCost).toFixed(2))),
+              outstandingPayableUSD: isUnpaid
+                ? Math.max(0, Number((sup.outstandingPayableUSD - oldCost).toFixed(2)))
+                : sup.outstandingPayableUSD,
+              totalWeightSuppliedKg: Math.max(0, Number((sup.totalWeightSuppliedKg - oldWeight).toFixed(2))),
+            };
+            supplierRepository.save(updatedOldSup, false).catch(err => {
+              console.warn('[App] supplierRepository deduct old supplier on PO reassign error:', err);
+            });
+            return updatedOldSup;
+          }
+          if (sup.id === updatedPO.supplierId) {
+            const updatedNewSup: Supplier = {
+              ...sup,
+              totalPurchasedUSD: Number((sup.totalPurchasedUSD + newCost).toFixed(2)),
+              outstandingPayableUSD: isUnpaid
+                ? Number((sup.outstandingPayableUSD + newCost).toFixed(2))
+                : sup.outstandingPayableUSD,
+              totalWeightSuppliedKg: Number((sup.totalWeightSuppliedKg + newWeight).toFixed(2)),
+            };
+            supplierRepository.save(updatedNewSup, false).catch(err => {
+              console.warn('[App] supplierRepository add new supplier on PO reassign error:', err);
+            });
+            return updatedNewSup;
+          }
+          return sup;
+        })
+      );
+    }
+
+    // Synchronize linked InventoryBatch & RetailWholesaleProduct
+    if (linkedBatch && newItem) {
+      const resolvedSpeciesId = getSpeciesIdFromName(newItem.speciesName);
+      const taxonomy = getSpeciesTaxonomy(resolvedSpeciesId);
+      const nextInitial = Math.max(0.1, Number((linkedBatch.initialWeightKg + deltaWeight).toFixed(2)));
+      const nextAvailable = Math.max(0, Number((linkedBatch.availableWeightKg + deltaWeight).toFixed(2)));
+      const updatedBatch: InventoryBatch = {
+        ...linkedBatch,
+        speciesId: resolvedSpeciesId,
+        speciesName: newItem.speciesName,
+        scientificName: taxonomy.scientificName,
+        category: taxonomy.category,
+        harvestDate: updatedPO.orderDate,
+        landingPort: updatedPO.portLocation,
+        vesselName: updatedPO.vesselName,
+        grade: newItem.grade,
+        storageZone: newItem.storageZone,
+        costPerKg: newItem.costPerKg,
+        initialWeightKg: Math.max(nextInitial, nextAvailable + (linkedBatch.allocatedWeightKg || 0)),
+        availableWeightKg: nextAvailable,
+        notes: updatedPO.notes ?? linkedBatch.notes,
+      };
+
+      setBatches(prev => prev.map(b => (b.id === updatedBatch.id ? updatedBatch : b)));
+      batchRepository.save(updatedBatch, false).catch(err => {
+        console.warn('[App] batchRepository sync on PO edit error:', err);
+      });
+
+      const linkedProd = products.find(
+        p =>
+          p.linkedBatchId === updatedBatch.id ||
+          (updatedBatch.linkedProductId && p.id === updatedBatch.linkedProductId) ||
+          p.id === `prod-${updatedBatch.id}`
+      );
+      if (linkedProd) {
+        const updatedProd: RetailWholesaleProduct = {
+          ...linkedProd,
+          speciesId: resolvedSpeciesId,
+          name: newItem.speciesName,
+          category: taxonomy.category,
+          grade: newItem.grade,
+          stockKg: nextAvailable,
+          costPricePerUnit: newItem.costPerKg,
+          storageZone: newItem.storageZone,
+          origin: updatedPO.portLocation || linkedProd.origin,
+        };
+        setProducts(prev => prev.map(p => (p.id === updatedProd.id ? updatedProd : p)));
+        productRepository.save(updatedProd, false).catch(err => {
+          console.warn('[App] productRepository sync on PO edit error:', err);
+        });
+      }
+    }
+
+    addNotification({
+      type: 'order_update',
+      title: `Purchase Order Updated: ${updatedPO.id}`,
+      message: `${updatedPO.supplierName} (${newItem?.speciesName || 'Catch'}, ${newWeight.toLocaleString()} kg) synchronized to Supabase.`,
+      urgency: 'low'
+    });
+  };
+
   // Retail POS Handlers
   const handleCompleteRetailSale = (sale: RetailTransaction) => {
     setRetailSales(prev => [sale, ...prev]);
@@ -1734,42 +2335,35 @@ export default function App() {
       console.warn('[App] retailTransactionRepository recordSale error:', err);
     });
 
-    // Deduct stock from products & persist to Supabase
-    setProducts(prev => prev.map(prod => {
-      const soldItem = sale.items.find(i => i.productId === prod.id);
-      if (soldItem) {
-        const soldWeight = prod.unit === 'pack' ? soldItem.quantity * 0.5 : soldItem.quantity;
-        const updatedProd = {
-          ...prod,
-          stockKg: Math.max(0, parseFloat((prod.stockKg - soldWeight).toFixed(1)))
-        };
+    // Deduct stock consistently from both Dual Price Book products and linked Inventory Batches
+    const {
+      updatedProducts,
+      changedProducts,
+      updatedBatches,
+      changedBatches,
+    } = applyRetailSaleStockDeductions(products, batches, sale.items);
+
+    if (changedProducts.length > 0) {
+      setProducts(updatedProducts);
+      changedProducts.forEach(updatedProd => {
         productRepository.save(updatedProd, false).catch(err => {
           console.warn('[App] productRepository update stock error:', err);
         });
-        return updatedProd;
-      }
-      return prod;
-    }));
+      });
+    }
 
-    // Deduct sold stock from corresponding inventory batches for ledger accountability
-    setBatches(prev => prev.map(batch => {
-      const soldItem = sale.items.find(i => 
-        (batch.linkedProductId && i.productId === batch.linkedProductId) ||
-        (batch.productSku && i.productName.includes(batch.productSku))
-      );
-      if (soldItem) {
-        const soldWeight = soldItem.unit === 'pack' ? soldItem.quantity * 0.5 : soldItem.quantity;
-        const newAvailable = Math.max(0, parseFloat((batch.availableWeightKg - soldWeight).toFixed(1)));
-        batchRepository.updateWeights(batch.id, newAvailable, batch.allocatedWeightKg).catch(err => {
+    if (changedBatches.length > 0) {
+      setBatches(updatedBatches);
+      changedBatches.forEach(updatedBatch => {
+        batchRepository.updateWeights(
+          updatedBatch.id,
+          updatedBatch.availableWeightKg,
+          updatedBatch.allocatedWeightKg
+        ).catch(err => {
           console.warn('[App] batchRepository updateWeights error during retail sale:', err);
         });
-        return {
-          ...batch,
-          availableWeightKg: newAvailable
-        };
-      }
-      return batch;
-    }));
+      });
+    }
 
     // If billed to Customer Credit Account, update customer ledger and outstanding balance
     const isCreditAccountSale = sale.paymentMethod === 'Customer Credit Account';
@@ -2055,24 +2649,56 @@ export default function App() {
       await productRepository.delete(productId);
       setProducts(prev => prev.filter(p => p.id !== productId));
 
-      // Also clean up linked inventory lot for 1:1 parity accountability
-      setBatches(prev => {
-        const linked = prev.find(b => 
-          b.linkedProductId === productId || 
-          (targetProd?.linkedBatchId && b.id === targetProd.linkedBatchId) ||
-          (targetProd?.sku && b.productSku && b.productSku.toLowerCase().trim() === targetProd.sku.toLowerCase().trim())
-        );
-        if (linked) {
+      // Check linked inventory lot for safe 1:1 parity accountability
+      const linked = batches.find(b => 
+        b.linkedProductId === productId || 
+        (targetProd?.linkedBatchId && b.id === targetProd.linkedBatchId) ||
+        (targetProd?.sku && b.productSku && b.productSku.toLowerCase().trim() === targetProd.sku.toLowerCase().trim())
+      );
+
+      if (linked) {
+        const hasOrderRefs = orders.some(o => o.items?.some(i => i.lotId === linked.id));
+        const hasAllocations = (linked.allocatedWeightKg || 0) > 0.001;
+
+        if (hasOrderRefs || hasAllocations) {
+          // Preserve lot in inventory_batches so fk_order_items_lot and active allocations remain intact; simply unlink catalog ref
+          const unlinkedBatch: InventoryBatch = {
+            ...linked,
+            linkedProductId: undefined
+          };
+          setBatches(prev => prev.map(b => b.id === linked.id ? unlinkedBatch : b));
+          batchRepository.save(unlinkedBatch, false).catch(err => console.warn(err));
+        } else {
+          // Safe to remove unreferenced linked batch; post write-off if stock remains
+          const remainingKg = Math.max(0, Number(linked.availableWeightKg) || 0);
+          const remainingValue = Number((remainingKg * (Number(linked.costPerKg) || 0)).toFixed(2));
+          if (remainingKg > 0.001 && remainingValue > 0) {
+            const finEntry: FinancialLedgerEntry = {
+              id: `FIN-WO-${Date.now().toString().slice(-6)}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`,
+              date: new Date().toISOString().split('T')[0],
+              type: 'COGS',
+              category: 'Inventory Adjustment',
+              description: `Catalog Removal Inventory Write-Off: Lot ${linked.id} (${linked.speciesName}, ${remainingKg.toFixed(1)} kg) [Acc 5150]`,
+              referenceId: linked.id,
+              entityName: 'Internal Cold Vault [Acc 5150]',
+              amount: remainingValue,
+              paymentMethod: 'Adjustment Account 5150',
+              status: 'Settled'
+            };
+            financialRepository.addEntry(finEntry).then(saved => {
+              setFinancialEntries(prev => [saved, ...prev]);
+            }).catch(err => console.warn(err));
+            adjustmentAccountRepository.updateBalance('5150', remainingValue).catch(() => {});
+          }
+          setBatches(prev => prev.filter(b => b.id !== linked.id));
           batchRepository.delete(linked.id).catch(err => console.warn(err));
-          return prev.filter(b => b.id !== linked.id);
         }
-        return prev;
-      });
+      }
 
       addNotification({
         type: 'order_update',
-        title: 'Product & Inventory Lot Removed',
-        message: `${targetProd?.name || 'Product'} removed from both Dual Pricing and Cold Storage Inventory.`,
+        title: 'Product & Inventory Synced',
+        message: `${targetProd?.name || 'Product'} removed from Dual Pricing${linked ? ' and synchronized with Cold Storage Inventory' : ''}.`,
         urgency: 'low'
       });
     } catch (err) {
@@ -2080,23 +2706,49 @@ export default function App() {
     }
   };
 
-  const handleReconcileCatalog = () => {
+  const handleRefreshInventoryFromSupabase = async () => {
+    const fresh = await batchRepository.getBatches([]);
+    const deduplicated = deduplicateBatches(fresh || []);
+    setBatches(deduplicated);
+    setIsBatchesHydrated(true);
+    addNotification({
+      type: 'system',
+      title: 'Inventory Synced with Supabase',
+      message: `Loaded ${deduplicated.length} verified lot(s) directly from Supabase inventory_batches.`,
+      urgency: 'low'
+    });
+  };
+
+  const handleReconcileCatalog = async () => {
     const { updatedBatches, updatedProducts, newLots, newProducts } = reconcileCatalogWithInventory(products, batches);
     let changed = false;
 
     if (newLots.length > 0 || updatedBatches.length !== batches.length) {
-      setBatches(updatedBatches);
-      newLots.forEach(lot => {
-        batchRepository.save(lot, false).catch(err => console.warn(err));
-      });
-      changed = true;
+      const savedLots: InventoryBatch[] = [];
+      for (const lot of newLots) {
+        try {
+          const persisted = await batchRepository.save(lot, true);
+          savedLots.push(persisted);
+        } catch (err) {
+          console.warn('[App] handleReconcileCatalog batch save error:', err);
+        }
+      }
+      if (savedLots.length > 0) {
+        const refreshed = await batchRepository.getBatches([]);
+        setBatches(deduplicateBatches(refreshed));
+        changed = true;
+      }
     }
 
     if (newProducts.length > 0 || updatedProducts.length !== products.length) {
       setProducts(updatedProducts);
-      newProducts.forEach(prod => {
-        productRepository.save(prod, false).catch(err => console.warn(err));
-      });
+      for (const prod of newProducts) {
+        try {
+          await productRepository.save(prod, true);
+        } catch (err) {
+          console.warn('[App] handleReconcileCatalog product save error:', err);
+        }
+      }
       changed = true;
     }
 
@@ -2104,7 +2756,7 @@ export default function App() {
       addNotification({
         type: 'order_update',
         title: 'Catalog & Inventory Synchronized',
-        message: `Parity confirmed: ${updatedProducts.length} Dual Price Products strictly match ${updatedBatches.length} Cold Storage Lots.`,
+        message: `Parity update synced directly to Supabase.`,
         urgency: 'low'
       });
     } else {
@@ -2119,52 +2771,90 @@ export default function App() {
 
   // Universal Payment & Settle Ledger Handler (AR / AP)
   const handleRecordPayment = (
-    type: 'AR' | 'AP', 
-    entityId: string, 
-    amount: number, 
+    type: 'AR' | 'AP',
+    entityId: string,
+    amount: number,
     refId: string,
     paymentMethod: string = 'Bank Wire Transfer',
     notes: string = '',
     specificOrderId?: string
   ) => {
     if (type === 'AR') {
-      // Customer paid receivable
-      setCustomers(prev => prev.map(cust => {
-        if (cust.id === entityId) {
-          const newBal = Math.max(0, cust.outstandingBalanceUSD - amount);
-          customerRepository.updateFinancials(cust.id, newBal, cust.totalSpendUSD, cust.totalOrdersCount).catch(err => {
+      const cust = customers.find(c => c.id === entityId);
+
+      // Update customer receivable balance
+      setCustomers(prev => prev.map(c => {
+        if (c.id === entityId) {
+          const newBal = Math.max(0, Number((c.outstandingBalanceUSD - amount).toFixed(2)));
+          customerRepository.updateFinancials(c.id, newBal, c.totalSpendUSD, c.totalOrdersCount).catch(err => {
             console.warn('[App] customerRepository updateFinancials on AR settlement failed:', err);
           });
           return {
-            ...cust,
+            ...c,
             outstandingBalanceUSD: newBal
           };
         }
-        return cust;
+        return c;
       }));
 
-      // Update Order payment status if order ID passed
-      const targetOrderId = specificOrderId || refId;
+      // Settle matching open order(s) accurately without loose substring matches or premature partial settlement
+      const targetOrderId = specificOrderId || (refId !== entityId ? refId : '');
+      let remainingToAllocate = amount;
+      const settledOrderIds = new Set<string>();
+
       setOrders(prev => prev.map(o => {
-        if (o.id === targetOrderId || o.clientName.toLowerCase().includes(entityId.toLowerCase())) {
-          const updated = { ...o, paymentStatus: 'Paid' as const };
-          orderRepository.save(updated).catch(err => {
-            console.warn('[App] orderRepository save on AR payment failed:', err);
-          });
-          return updated;
+        if (!isOrderActive(o) || isOrderPaid(o)) return o;
+        const orderVal = Number(o.adjustedTotalUSD || o.quotedTotalUSD || 0);
+
+        if (targetOrderId && o.id === targetOrderId) {
+          if (amount + 0.01 >= orderVal) {
+            settledOrderIds.add(o.id);
+            const updated = { ...o, paymentStatus: 'Paid' as const };
+            orderRepository.save(updated).catch(err => {
+              console.warn('[App] orderRepository save on AR payment failed:', err);
+            });
+            return updated;
+          }
+          return o;
+        }
+
+        if (!targetOrderId && cust) {
+          const belongsToCustomer =
+            o.customerId === entityId ||
+            o.clientName.toLowerCase().trim() === cust.name.toLowerCase().trim() ||
+            o.clientName.toLowerCase().trim() === cust.companyName.toLowerCase().trim();
+          if (belongsToCustomer && remainingToAllocate + 0.01 >= orderVal) {
+            remainingToAllocate = Number((remainingToAllocate - orderVal).toFixed(2));
+            settledOrderIds.add(o.id);
+            const updated = { ...o, paymentStatus: 'Paid' as const };
+            orderRepository.save(updated).catch(err => {
+              console.warn('[App] orderRepository save on AR FIFO settlement failed:', err);
+            });
+            return updated;
+          }
         }
         return o;
       }));
 
+      // Retire matching Pending accrual entries in state so cash isn't double-counted
+      if (settledOrderIds.size > 0) {
+        setFinancialEntries(prev =>
+          prev.map(entry =>
+            settledOrderIds.has(entry.referenceId) && entry.status === 'Pending'
+              ? { ...entry, status: 'Settled' as const }
+              : entry
+          )
+        );
+      }
+
       // Log Financial Settlement Entry
-      const cust = customers.find(c => c.id === entityId);
       const receiptNum = `REC-${Date.now().toString().slice(-6)}`;
       const newEntry: FinancialLedgerEntry = {
         id: `FIN-${Date.now().toString().slice(-4)}`,
         date: new Date().toISOString().split('T')[0],
         type: 'Income',
         category: 'Revenue (Wholesale)',
-        description: notes 
+        description: notes
           ? `Customer AR Settlement Received - ${cust?.name || entityId} (${notes})`
           : specificOrderId
           ? `Customer AR Settlement Received - ${cust?.name || entityId} (Order #${specificOrderId})`
@@ -2190,33 +2880,68 @@ export default function App() {
         urgency: 'low'
       });
     } else {
+      const sup = suppliers.find(s => s.id === entityId);
+
       // Settle AP Supplier Bill
-      setSuppliers(prev => prev.map(sup => {
-        if (sup.id === entityId) {
+      setSuppliers(prev => prev.map(s => {
+        if (s.id === entityId) {
           const updatedSup: Supplier = {
-            ...sup,
-            outstandingPayableUSD: Math.max(0, sup.outstandingPayableUSD - amount)
+            ...s,
+            outstandingPayableUSD: Math.max(0, Number((s.outstandingPayableUSD - amount).toFixed(2)))
           };
           supplierRepository.save(updatedSup, false).catch(err => {
             console.warn('[App] supplierRepository save on AP settlement failed:', err);
           });
           return updatedSup;
         }
-        return sup;
+        return s;
       }));
 
-      // Update PO payment status if specific PO provided or matches reference
-      const targetPOId = specificOrderId || refId;
+      // Allocate payout accurately across specific PO or unpaid supplier POs FIFO & persist to Supabase
+      const targetPOId = specificOrderId || (refId !== entityId ? refId : '');
+      let remainingAP = amount;
+      const settledPoIds = new Set<string>();
+
       setPurchaseOrders(prev => prev.map(po => {
-        if (po.id === targetPOId || (!specificOrderId && po.supplierId === entityId && po.paymentStatus !== 'Paid in Full')) {
-          return { ...po, paymentStatus: 'Paid in Full' };
+        if (po.paymentStatus === 'Paid in Full') return po;
+
+        if (targetPOId && po.id === targetPOId) {
+          const nextStatus: PurchaseOrderLanding['paymentStatus'] =
+            amount + 0.01 >= po.totalCostUSD ? 'Paid in Full' : 'Partial Paid';
+          const updatedPO = { ...po, paymentStatus: nextStatus };
+          if (nextStatus === 'Paid in Full') settledPoIds.add(po.id);
+          purchaseOrderRepository.savePurchaseOrderWithItems(updatedPO, false).catch(err => {
+            console.warn('[App] purchaseOrderRepository save on AP settlement failed:', err);
+          });
+          return updatedPO;
+        }
+
+        if (!targetPOId && po.supplierId === entityId && remainingAP > 0.001) {
+          const nextStatus: PurchaseOrderLanding['paymentStatus'] =
+            remainingAP + 0.01 >= po.totalCostUSD ? 'Paid in Full' : 'Partial Paid';
+          remainingAP = Math.max(0, Number((remainingAP - po.totalCostUSD).toFixed(2)));
+          const updatedPO = { ...po, paymentStatus: nextStatus };
+          if (nextStatus === 'Paid in Full') settledPoIds.add(po.id);
+          purchaseOrderRepository.savePurchaseOrderWithItems(updatedPO, false).catch(err => {
+            console.warn('[App] purchaseOrderRepository save on AP FIFO settlement failed:', err);
+          });
+          return updatedPO;
         }
         return po;
       }));
 
-      const sup = suppliers.find(s => s.id === entityId);
-      const voucherNum = refId.startsWith('VOUCH') 
-        ? refId 
+      if (settledPoIds.size > 0) {
+        setFinancialEntries(prev =>
+          prev.map(entry =>
+            settledPoIds.has(entry.referenceId) && entry.status === 'Pending'
+              ? { ...entry, status: 'Settled' as const }
+              : entry
+          )
+        );
+      }
+
+      const voucherNum = refId.startsWith('VOUCH')
+        ? refId
         : `VOUCH-${Date.now().toString().slice(-6)}`;
 
       const newEntry: FinancialLedgerEntry = {
@@ -2391,6 +3116,62 @@ export default function App() {
         res.source === 'supabase_rpc'
           ? 'All reversal rows were removed from Supabase financial_ledger_entries.'
           : 'Reversal entries removed from local workspace cache.',
+      urgency: 'low'
+    });
+
+    return res;
+  };
+
+  // Clear all Inventory Adjustment test entries from Supabase General Financial Ledger & Adjustment Audit Logs
+  const handleClearInventoryAdjustmentEntries = async () => {
+    const res = await financialRepository.clearInventoryAdjustmentEntries();
+
+    if (res.requiresSqlMigration) {
+      addNotification({
+        type: 'system',
+        title: 'Supabase SQL Migration Required to Delete Inventory Adjustment Ledger Entries',
+        message: 'financial_ledger_entries is protected by enforce_insert_only_compliance(). Run supabase/CLEAR_INVENTORY_ADJUSTMENT_LEDGER.sql in Supabase SQL Editor, then retry.',
+        urgency: 'high'
+      });
+      return res;
+    }
+
+    if (res.source === 'supabase_rpc') {
+      try {
+        const fresh = await financialRepository.getEntries(isTenantUser ? [] : undefined);
+        setFinancialEntries(fresh || []);
+      } catch {
+        setFinancialEntries(prev => prev.filter(e => !isInventoryAdjustmentLedgerEntry(e)));
+      }
+      try {
+        const freshAccounts = await adjustmentAccountRepository.getAccounts(
+          isTenantUser ? INITIAL_ADJUSTMENT_ACCOUNTS : INITIAL_ADJUSTMENT_ACCOUNTS
+        );
+        setAdjustmentAccounts(freshAccounts || INITIAL_ADJUSTMENT_ACCOUNTS);
+      } catch {
+        setAdjustmentAccounts(prev => prev.map(acc => ({ ...acc, balanceUSD: 0 })));
+      }
+    } else {
+      setFinancialEntries(prev => prev.filter(e => !isInventoryAdjustmentLedgerEntry(e)));
+      setAdjustmentAccounts(prev => {
+        const reset = prev.map(acc => ({ ...acc, balanceUSD: 0 }));
+        adjustmentAccountRepository.setLocalCache(reset, activeOrgId || undefined);
+        return reset;
+      });
+    }
+
+    setStockAdjustments([]);
+    if (activeOrgId) {
+      stockAdjustmentRepository.setLocalCache([], activeOrgId);
+    }
+
+    addNotification({
+      type: 'system',
+      title: `Cleared ${res.deletedCount} Inventory Adjustment Entry(s)`,
+      message:
+        res.source === 'supabase_rpc'
+          ? 'All Inventory Adjustment ledger rows and audit logs were deleted from Supabase.'
+          : 'All Inventory Adjustment ledger rows were cleared from local workspace cache.',
       urgency: 'low'
     });
 
@@ -2681,7 +3462,9 @@ export default function App() {
             settings={settings}
             financialEntries={financialEntries}
             onAddSupplier={handleAddSupplier}
+            onUpdateSupplier={handleUpdateSupplier}
             onAddPurchaseOrder={handleAddPurchaseOrder}
+            onUpdatePurchaseOrder={handleUpdatePurchaseOrder}
             onRecordPayment={handleRecordPayment}
             onReversePayment={handleReverseSupplierPayment}
             onDeleteSupplier={handleDeleteSupplier}
@@ -2695,6 +3478,8 @@ export default function App() {
             orders={orders}
             purchaseOrders={purchaseOrders}
             retailSales={retailSales}
+            batches={batches}
+            products={products}
             customers={customers}
             suppliers={suppliers}
             financialEntries={financialEntries}
@@ -2704,6 +3489,7 @@ export default function App() {
             onAddExpense={handleAddExpense}
             onSaveAdjustmentAccount={handleSaveAdjustmentAccount}
             onClearReversalEntries={handleClearReversalEntries}
+            onClearInventoryAdjustmentEntries={handleClearInventoryAdjustmentEntries}
             onDeleteFinancialEntries={handleDeleteFinancialEntries}
             onUpdateExpense={handleUpdateExpense}
             companyName={companyName}
@@ -2716,17 +3502,22 @@ export default function App() {
           <InventoryLedgerView
             batches={batches}
             products={products}
+            orders={orders}
+            purchaseOrders={purchaseOrders}
             adjustmentAccounts={adjustmentAccounts}
             stockAdjustments={stockAdjustments}
             companyName={companyName}
-            currencySymbol={settings.currency || '$'}
+            currencySymbol={settings.currency || 'GHS'}
+            formatCurrency={formatAppCurrency}
             onOpenPassport={(b) => setPassportBatch(b)}
             onOpenNewBatch={() => setIsNewBatchModalOpen(true)}
             onUpdateBatch={handleUpdateBatch}
+            onDeleteBatch={handleDeleteBatch}
             onSaveAdjustmentAccount={handleSaveAdjustmentAccount}
             defaultAdjustmentAccountCode={settings.defaultAdjustmentAccountCode || '5150'}
             onNavigateToRetail={() => setActiveTab('retail_wholesale')}
             onReconcileCatalog={handleReconcileCatalog}
+            onRefreshFromSupabase={handleRefreshInventoryFromSupabase}
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
             useImperial={useImperial}

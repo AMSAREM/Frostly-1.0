@@ -3,6 +3,9 @@ import { X, Plus, Trash2, Calculator, Check, AlertCircle, Sparkles } from 'lucid
 import { ClientOrder, OrderLineItem, InventoryBatch, AppSettings } from '../../types';
 import { formatCurrency, formatWeight } from '../../utils/formatters';
 import { evaluateMarginHealth, calculateDynamicWholesalePrice } from '../../utils/pricingEngine';
+import { validateOrderLotAvailability } from '../../utils/inventorySync';
+
+const LB_PER_KG = 2.20462;
 
 interface EditQuoteModalProps {
   order: ClientOrder;
@@ -40,10 +43,11 @@ export const EditQuoteModal: React.FC<EditQuoteModalProps> = ({
 
   const handleWeightChange = (index: number, val: string) => {
     const num = parseFloat(val);
+    const weightKg = isNaN(num) ? 0 : Math.max(0, useImperial ? num / LB_PER_KG : num);
     const updated = [...items];
     updated[index] = {
       ...updated[index],
-      requestedWeightKg: isNaN(num) ? 0 : Math.max(0, num)
+      requestedWeightKg: Number(weightKg.toFixed(3))
     };
     setItems(updated);
   };
@@ -54,10 +58,11 @@ export const EditQuoteModal: React.FC<EditQuoteModalProps> = ({
 
   const handlePriceChange = (index: number, val: string) => {
     const num = parseFloat(val);
+    const priceKg = isNaN(num) ? 0 : Math.max(0, useImperial ? num * LB_PER_KG : num);
     const updated = [...items];
     updated[index] = {
       ...updated[index],
-      pricePerKg: isNaN(num) ? 0 : Math.max(0, num)
+      pricePerKg: Number(priceKg.toFixed(2))
     };
     setItems(updated);
   };
@@ -115,6 +120,12 @@ export const EditQuoteModal: React.FC<EditQuoteModalProps> = ({
     e.preventDefault();
     if (items.length === 0) {
       setError('A quote must contain at least one line item.');
+      return;
+    }
+
+    const availability = validateOrderLotAvailability(items, batches, order);
+    if (!availability.valid) {
+      setError(availability.error || 'Requested weight exceeds available batch stock.');
       return;
     }
 
@@ -224,14 +235,14 @@ export const EditQuoteModal: React.FC<EditQuoteModalProps> = ({
                           type="number"
                           step="0.1"
                           min="0.1"
-                          value={item.requestedWeightKg}
+                          value={useImperial ? Number((item.requestedWeightKg * LB_PER_KG).toFixed(2)) : item.requestedWeightKg}
                           onChange={(e) => handleWeightChange(index, e.target.value)}
                           className="w-full h-8 bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-right"
                         />
                         {isBulkDiscountEnabled && item.requestedWeightKg >= bulkThresholdKg && (
                           <div className="mt-1 flex items-center justify-end gap-1">
                             <span className="px-1 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[9px] font-bold">
-                              &gt;{bulkThresholdKg}kg Bulk
+                              &gt;{formatWeight(bulkThresholdKg, useImperial, 0)} Bulk
                             </span>
                           </div>
                         )}
@@ -251,7 +262,7 @@ export const EditQuoteModal: React.FC<EditQuoteModalProps> = ({
                                 type="number"
                                 step="0.01"
                                 min="0"
-                                value={item.pricePerKg}
+                                value={useImperial ? Number((item.pricePerKg / LB_PER_KG).toFixed(2)) : item.pricePerKg}
                                 onChange={(e) => handlePriceChange(index, e.target.value)}
                                 className={`w-full h-8 bg-slate-50 border rounded-lg px-2 text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500 text-right ${
                                   marginEval.isBelowFloor ? 'border-amber-400 text-amber-900 bg-amber-50/50' : 'border-slate-200 text-slate-800'
@@ -272,10 +283,11 @@ export const EditQuoteModal: React.FC<EditQuoteModalProps> = ({
                                     type="button"
                                     onClick={() => {
                                       const suggested = calculateDynamicWholesalePrice(batchCost, targetMargin);
-                                      handlePriceChange(index, String(suggested));
+                                      const displaySuggested = useImperial ? suggested / LB_PER_KG : suggested;
+                                      handlePriceChange(index, String(Number(displaySuggested.toFixed(2))));
                                     }}
                                     className="text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
-                                    title={`Reset to target ${targetMargin}% margin (${formatCurrency(marginEval.suggestedPrice)}/kg)`}
+                                    title={`Reset to target ${targetMargin}% margin (${formatCurrency(useImperial ? marginEval.suggestedPrice / LB_PER_KG : marginEval.suggestedPrice)}/${useImperial ? 'lb' : 'kg'})`}
                                   >
                                     Recalibrate
                                   </button>

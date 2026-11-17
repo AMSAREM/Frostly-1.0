@@ -32,20 +32,31 @@ import {
   PurchaseOrderLanding, 
   Customer, 
   Supplier,
+  InventoryBatch,
+  RetailWholesaleProduct,
   InventoryAdjustmentAccount,
   InventoryStockAdjustment
 } from '../types';
 import { formatCurrency as defaultFormatCurrency } from '../utils/formatters';
 import { FinancialReportsView } from './FinancialReportsView';
-import { isReversalLedgerEntry } from '../repositories/financialRepository';
+import {
+  isReversalLedgerEntry,
+  isInventoryAdjustmentLedgerEntry,
+} from '../repositories/financialRepository';
 import { ExportDropdown } from './common/ExportDropdown';
 import { exportExpensesToExcel, exportExpensesToPdf } from '../utils/exportEngine';
+import {
+  calculateEnterpriseFinancials,
+  calculateSpeciesMarginBenchmarks,
+} from '../utils/financialMetrics';
 
 interface FinancialsViewProps {
   financialEntries?: FinancialLedgerEntry[];
   orders?: ClientOrder[];
   retailSales?: RetailTransaction[];
   purchaseOrders?: PurchaseOrderLanding[];
+  batches?: InventoryBatch[];
+  products?: RetailWholesaleProduct[];
   customers?: Customer[];
   suppliers?: Supplier[];
   adjustmentAccounts?: InventoryAdjustmentAccount[];
@@ -54,6 +65,12 @@ interface FinancialsViewProps {
   onAddExpense?: (expense: Omit<FinancialLedgerEntry, 'id'>) => void;
   onSaveAdjustmentAccount?: (account: InventoryAdjustmentAccount) => void;
   onClearReversalEntries?: () => Promise<{
+    deletedCount: number;
+    source: string;
+    requiresSqlMigration?: boolean;
+    error?: string;
+  }>;
+  onClearInventoryAdjustmentEntries?: () => Promise<{
     deletedCount: number;
     source: string;
     requiresSqlMigration?: boolean;
@@ -81,6 +98,8 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
   orders = [],
   retailSales = [],
   purchaseOrders = [],
+  batches = [],
+  products = [],
   customers = [],
   suppliers = [],
   adjustmentAccounts = [],
@@ -89,6 +108,7 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
   onAddExpense,
   onSaveAdjustmentAccount,
   onClearReversalEntries,
+  onClearInventoryAdjustmentEntries,
   onDeleteFinancialEntries,
   onUpdateExpense,
   companyName = 'Amansocean Seafoods',
@@ -104,6 +124,8 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
   const [expenseDateTo, setExpenseDateTo] = useState<string>('');
   const [isClearingReversals, setIsClearingReversals] = useState<boolean>(false);
   const [confirmClearReversals, setConfirmClearReversals] = useState<boolean>(false);
+  const [isClearingAdjustments, setIsClearingAdjustments] = useState<boolean>(false);
+  const [confirmClearAdjustments, setConfirmClearAdjustments] = useState<boolean>(false);
   const [isDeletingEntries, setIsDeletingEntries] = useState<boolean>(false);
   const [confirmDeleteFiltered, setConfirmDeleteFiltered] = useState<boolean>(false);
   const [confirmDeleteEntryId, setConfirmDeleteEntryId] = useState<string | null>(null);
@@ -151,36 +173,43 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
   const [newExpenseAmount, setNewExpenseAmount] = useState<string>('');
   const [newExpenseEntity, setNewExpenseEntity] = useState<string>('');
 
-  // Core Financial Aggregations
-  const wholesaleRevenue = orders
-    .filter(o => o.status !== 'Cancelled')
-    .reduce((sum, o) => sum + (o.adjustedTotalUSD || o.quotedTotalUSD), 0);
+  // GAAP-Aligned Core Financial Aggregations
+  const fin = calculateEnterpriseFinancials({
+    orders,
+    retailSales,
+    batches,
+    products,
+    purchaseOrders,
+    financialEntries,
+    customers,
+    suppliers,
+  });
 
-  const retailRevenue = retailSales.reduce((sum, r) => sum + r.totalAmount, 0);
-  const totalRevenue = wholesaleRevenue + retailRevenue;
-
-  // Inventory Adjustment & Valuation Variance Calculations
-  const inventoryAdjustmentEntries = financialEntries.filter(e => e.category === 'Inventory Adjustment');
-  const invAdjustmentLoss = inventoryAdjustmentEntries
-    .filter(e => e.type === 'COGS')
-    .reduce((sum, e) => sum + e.amount, 0);
-  const invAdjustmentGain = inventoryAdjustmentEntries
-    .filter(e => e.type === 'Income')
-    .reduce((sum, e) => sum + e.amount, 0);
-  const netInventoryAdjustmentCost = invAdjustmentLoss - invAdjustmentGain;
-
-  const totalIntakeCOGS = purchaseOrders.reduce((sum, po) => sum + po.totalCostUSD, 0);
-  const totalCOGS = totalIntakeCOGS + netInventoryAdjustmentCost;
-  const grossProfit = totalRevenue - totalCOGS;
-  const grossMarginPct = totalRevenue > 0 ? ((grossProfit / totalRevenue) * 100) : 0;
+  const wholesaleRevenue = fin.wholesaleRevenue;
+  const retailRevenue = fin.retailRevenue;
+  const totalRevenue = fin.totalRevenue;
+  const invAdjustmentLoss = fin.invAdjustmentLoss;
+  const invAdjustmentGain = fin.invAdjustmentGain;
+  const netInventoryAdjustmentCost = fin.netInventoryAdjustmentCost;
+  const soldCOGS = fin.soldCOGS;
+  const totalIntakeSpend = fin.totalIntakeSpend;
+  const totalCOGS = fin.totalCOGS;
+  const grossProfit = fin.grossProfit;
+  const grossMarginPct = fin.grossMarginPct;
 
   const isOperatingExpenseEntry = (e: FinancialLedgerEntry) =>
     e.type === 'OpEx' && !isReversalLedgerEntry(e);
 
   const opexEntries = financialEntries.filter(isOperatingExpenseEntry);
   const reversalEntries = financialEntries.filter(isReversalLedgerEntry);
+  const inventoryAdjustmentEntries = financialEntries.filter(isInventoryAdjustmentLedgerEntry);
 
-  const totalOpEx = opexEntries.reduce((sum, e) => sum + e.amount, 0);
+  const totalOpEx = fin.totalOpEx;
+  const speciesMarginBenchmarks = calculateSpeciesMarginBenchmarks({ batches, products });
+  const currentPeriodLabel = new Date().toLocaleDateString('en-US', {
+    month: 'short',
+    year: 'numeric',
+  });
 
   const opexCategoryRows = Object.entries(
     opexEntries.reduce<Record<string, { amount: number; count: number }>>((acc, entry) => {
@@ -229,18 +258,18 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
     .reduce((sum, e) => sum + e.amount, 0);
   const topOpexCategory = opexCategoryRows[0];
 
-  const netOperatingProfit = grossProfit - totalOpEx;
-  const netMarginPct = totalRevenue > 0 ? ((netOperatingProfit / totalRevenue) * 100) : 0;
+  const netOperatingProfit = fin.netOperatingProfit;
+  const netMarginPct = fin.netMarginPct;
 
-  const totalAccountsReceivable = customers.reduce((sum, c) => sum + c.outstandingBalanceUSD, 0);
-  const totalAccountsPayable = suppliers.reduce((sum, s) => sum + s.outstandingPayableUSD, 0);
+  const totalAccountsReceivable = fin.totalAR;
+  const totalAccountsPayable = fin.totalAP;
 
   // Filtered Ledger entries
   const filteredLedger = financialEntries.filter(entry => {
     const matchesCategory = 
       filterCategory === 'all' || 
       entry.type.toLowerCase() === filterCategory.toLowerCase() ||
-      (filterCategory === 'adjustment' && entry.category === 'Inventory Adjustment') ||
+      (filterCategory === 'adjustment' && isInventoryAdjustmentLedgerEntry(entry)) ||
       (filterCategory === 'reversals' && isReversalLedgerEntry(entry));
     const q = searchQuery.toLowerCase();
     const matchesSearch = (entry.description || '').toLowerCase().includes(q) ||
@@ -290,6 +319,49 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
       });
     } finally {
       setIsClearingReversals(false);
+    }
+  };
+
+  const handleClearAdjustmentsClick = async () => {
+    if (!onClearInventoryAdjustmentEntries || isClearingAdjustments) return;
+    setIsClearingAdjustments(true);
+    setConfirmClearAdjustments(false);
+    setReversalClearStatus(null);
+    try {
+      const res = await onClearInventoryAdjustmentEntries();
+      if (res.requiresSqlMigration) {
+        setReversalClearStatus({
+          type: 'warning',
+          message:
+            res.error ||
+            'Supabase SQL setup required: run supabase/CLEAR_INVENTORY_ADJUSTMENT_LEDGER.sql in your Supabase SQL Editor to purge immutable Inventory Adjustment rows and install the RPC, then retry.'
+        });
+      } else if (res.error) {
+        setReversalClearStatus({
+          type: 'error',
+          message: res.error
+        });
+      } else {
+        setReversalClearStatus({
+          type: 'success',
+          message:
+            res.deletedCount > 0
+              ? `Deleted ${res.deletedCount} Inventory Adjustment entry(s) from ${
+                  res.source === 'supabase_rpc' ? 'Supabase General Financial Ledger' : 'local ledger cache'
+                }.`
+              : 'No Inventory Adjustment entries remain in the General Financial Ledger.'
+        });
+        if (filterCategory === 'adjustment') {
+          setFilterCategory('all');
+        }
+      }
+    } catch (err: any) {
+      setReversalClearStatus({
+        type: 'error',
+        message: err?.message || 'Failed to delete Inventory Adjustment entries.'
+      });
+    } finally {
+      setIsClearingAdjustments(false);
     }
   };
 
@@ -597,6 +669,11 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
                   {reversalEntries.length} rev
                 </span>
               )}
+              {inventoryAdjustmentEntries.length > 0 && (
+                <span className="px-1.5 py-0.5 text-[9px] sm:text-[10px] bg-violet-100 text-violet-800 rounded-full font-extrabold">
+                  {inventoryAdjustmentEntries.length} adj
+                </span>
+              )}
             </button>
           </div>
 
@@ -633,7 +710,7 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
         {/* Cost of Catch (COGS) */}
         <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-2">
           <div className="flex items-center justify-between text-slate-500">
-            <span className="text-xs font-bold uppercase tracking-wider">Cost of Catch (COGS)</span>
+            <span className="text-xs font-bold uppercase tracking-wider">Cost of Goods Sold (COGS)</span>
             <span className="p-2 bg-slate-100 text-slate-600 rounded-xl">
               <Ship className="w-4 h-4" />
             </span>
@@ -642,8 +719,10 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
             {formatCurrency(totalCOGS)}
           </div>
           <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100 text-slate-500">
-            <span>Harvester Landing Payouts</span>
-            <span className="text-emerald-700 font-bold font-mono-code">{purchaseOrders.length} Inward Batches</span>
+            <span>Sold Units &amp; Shrinkage</span>
+            <span className="text-emerald-700 font-bold font-mono-code" title={`Cumulative inward PO intake spend: ${formatCurrency(totalIntakeSpend)}`}>
+              {purchaseOrders.length} Dock Landings
+            </span>
           </div>
         </div>
 
@@ -709,22 +788,22 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
                   <p className="text-xs text-slate-500">Financial summary for the current operating period.</p>
                 </div>
                 <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
-                  Fiscal 2026 Q3
+                  Live Period ({currentPeriodLabel})
                 </span>
               </div>
 
               <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 text-sm">
                 {/* Revenue Section */}
                 <div className="bg-slate-50/80 px-4 py-2.5 font-bold text-xs uppercase tracking-wider text-slate-700 flex justify-between">
-                  <span>Gross Sales & Revenue</span>
+                  <span>Net Sales & Revenue (Ex-Tax)</span>
                   <span>{formatCurrency(totalRevenue)}</span>
                 </div>
                 <div className="px-4 py-2.5 flex justify-between text-slate-700 pl-8">
-                  <span>Wholesale B2B Restaurant & Hotel Orders ({orders.length} orders)</span>
+                  <span>Wholesale B2B Restaurant & Hotel Orders ({fin.activeOrdersCount} active)</span>
                   <span className="font-mono-code font-semibold">{formatCurrency(wholesaleRevenue)}</span>
                 </div>
                 <div className="px-4 py-2.5 flex justify-between text-slate-700 pl-8">
-                  <span>Retail Counter & Point-of-Sale ({retailSales.length} tickets)</span>
+                  <span>Retail Counter & Point-of-Sale ({fin.activeRetailSalesCount} tickets)</span>
                   <span className="font-mono-code font-semibold">{formatCurrency(retailRevenue)}</span>
                 </div>
 
@@ -734,8 +813,8 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
                   <span className="text-rose-700">-{formatCurrency(totalCOGS)}</span>
                 </div>
                 <div className="px-4 py-2.5 flex justify-between text-slate-700 pl-8">
-                  <span>Vessel Landings & Supplier Catch Intake</span>
-                  <span className="font-mono-code font-semibold text-rose-600">-{formatCurrency(totalIntakeCOGS)}</span>
+                  <span>Matched Landed Cost on Fulfilled Wholesale &amp; POS Sales</span>
+                  <span className="font-mono-code font-semibold text-rose-600">-{formatCurrency(soldCOGS)}</span>
                 </div>
                 {netInventoryAdjustmentCost !== 0 && (
                   <div className="px-4 py-2.5 flex justify-between text-slate-700 pl-8">
@@ -800,50 +879,39 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
 
             {/* Margin Analyzer by Species */}
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
-              <h3 className="text-base font-bold text-slate-900">Profit Margin Benchmark by Seafood Category</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-slate-900">Pacific Bluefin Tuna</span>
-                    <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                      56.3% Margin
-                    </span>
-                  </div>
-                  <div className="text-xs text-slate-500 space-y-0.5">
-                    <div>Landing Cost: <strong className="text-slate-700">{formatCurrency(72.00)}/kg</strong></div>
-                    <div>Wholesale: <strong className="text-slate-700">{formatCurrency(110.00)}/kg</strong></div>
-                    <div>Retail Counter: <strong className="text-slate-700">{formatCurrency(165.00)}/kg</strong></div>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-slate-900">Atlantic Salmon (Fjord)</span>
-                    <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                      56.9% Margin
-                    </span>
-                  </div>
-                  <div className="text-xs text-slate-500 space-y-0.5">
-                    <div>Landing Cost: <strong className="text-slate-700">{formatCurrency(15.50)}/kg</strong></div>
-                    <div>Wholesale: <strong className="text-slate-700">{formatCurrency(24.80)}/kg</strong></div>
-                    <div>Retail Counter: <strong className="text-slate-700">{formatCurrency(36.00)}/kg</strong></div>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-slate-900">Red King Crab Legs</span>
-                    <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                      54.7% Margin
-                    </span>
-                  </div>
-                  <div className="text-xs text-slate-500 space-y-0.5">
-                    <div>Landing Cost: <strong className="text-slate-700">{formatCurrency(52.00)}/kg</strong></div>
-                    <div>Wholesale: <strong className="text-slate-700">{formatCurrency(78.00)}/kg</strong></div>
-                    <div>Retail Counter: <strong className="text-slate-700">{formatCurrency(115.00)}/kg</strong></div>
-                  </div>
-                </div>
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-slate-900">Profit Margin Benchmark by Inventory Species</h3>
+                <span className="text-[11px] font-semibold text-slate-500">Live from Supabase Inventory &amp; Price Book</span>
               </div>
+              {speciesMarginBenchmarks.length === 0 ? (
+                <div className="p-6 rounded-2xl bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-500">
+                  Add inventory batches or catalog products to compute live species margin benchmarks.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {speciesMarginBenchmarks.slice(0, 6).map(item => (
+                    <div key={item.speciesName} className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-xs text-slate-900 truncate">{item.speciesName}</span>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                          item.marginPct >= 25
+                            ? 'text-emerald-600 bg-emerald-50'
+                            : item.marginPct >= 10
+                            ? 'text-amber-700 bg-amber-50'
+                            : 'text-rose-700 bg-rose-50'
+                        }`}>
+                          {item.marginPct.toFixed(1)}% Margin
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-500 space-y-0.5">
+                        <div>Landing Cost: <strong className="text-slate-700">{formatCurrency(item.avgCostPerKg)}/kg</strong></div>
+                        <div>Wholesale: <strong className="text-slate-700">{formatCurrency(item.avgWholesalePerKg)}/kg</strong></div>
+                        <div>Retail Counter: <strong className="text-slate-700">{formatCurrency(item.avgRetailPerUnit)}/kg</strong></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -930,6 +998,8 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
           orders={orders}
           retailSales={retailSales}
           purchaseOrders={purchaseOrders}
+          batches={batches}
+          products={products}
           customers={customers}
           suppliers={suppliers}
           formatCurrency={formatCurrency}
@@ -1501,9 +1571,45 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
                 <option value="income">Income / Revenue</option>
                 <option value="cogs">COGS (Catch Intake)</option>
                 <option value="opex">Operating Expenses (OpEx)</option>
-                <option value="adjustment">Inventory Adjustment Accounts</option>
+                <option value="adjustment">Inventory Adjustment ({inventoryAdjustmentEntries.length})</option>
                 <option value="reversals">Reversal Entries ({reversalEntries.length})</option>
               </select>
+
+              {onClearInventoryAdjustmentEntries && inventoryAdjustmentEntries.length > 0 && !confirmClearAdjustments && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmClearAdjustments(true)}
+                  disabled={isClearingAdjustments}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200 rounded-xl transition-colors cursor-pointer disabled:opacity-60"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clear Inventory Adjustments ({inventoryAdjustmentEntries.length})</span>
+                </button>
+              )}
+
+              {onClearInventoryAdjustmentEntries && confirmClearAdjustments && (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-50 border border-rose-300">
+                  <span className="text-[11px] font-bold text-rose-800">
+                    Delete all {inventoryAdjustmentEntries.length} Inventory Adjustment row{inventoryAdjustmentEntries.length === 1 ? '' : 's'} from Supabase?
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleClearAdjustmentsClick}
+                    disabled={isClearingAdjustments}
+                    className="px-2.5 py-1 text-[11px] font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg cursor-pointer disabled:opacity-60"
+                  >
+                    {isClearingAdjustments ? 'Deleting...' : 'Confirm'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClearAdjustments(false)}
+                    disabled={isClearingAdjustments}
+                    className="px-2 py-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 rounded-lg cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
 
               {onClearReversalEntries && reversalEntries.length > 0 && !confirmClearReversals && (
                 <button
@@ -1749,13 +1855,26 @@ export const FinancialsView: React.FC<FinancialsViewProps> = ({
               </p>
             </div>
 
-            <button
-              onClick={() => setIsAddAccountModalOpen(true)}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>New Adjustment Account</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {onClearInventoryAdjustmentEntries && (inventoryAdjustmentEntries.length > 0 || stockAdjustments.length > 0) && (
+                <button
+                  type="button"
+                  onClick={handleClearAdjustmentsClick}
+                  disabled={isClearingAdjustments}
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-60"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>{isClearingAdjustments ? 'Clearing...' : 'Clear Adjustment Data'}</span>
+                </button>
+              )}
+              <button
+                onClick={() => setIsAddAccountModalOpen(true)}
+                className="flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>New Adjustment Account</span>
+              </button>
+            </div>
           </div>
 
           {/* KPI Summary for Adjustments */}

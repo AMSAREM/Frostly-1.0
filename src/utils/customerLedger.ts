@@ -20,38 +20,61 @@ export interface CustomerLedgerSummary {
  * 3. Payment Reversals / Adjustments (if any)
  * 4. Running balance calculated after each transaction
  */
+import { isOrderActive, isOrderPaid } from './financialMetrics';
+
 export function buildCustomerLedger(
   customer: Customer,
   orders: ClientOrder[] = [],
   financialEntries: FinancialLedgerEntry[] = []
 ): { entries: CustomerLedgerEntry[]; summary: CustomerLedgerSummary } {
-  // 1. Filter Orders for this Customer
-  const custOrders = orders.filter(o => 
-    o.customerId === customer.id ||
-    o.clientName.toLowerCase().trim() === customer.name.toLowerCase().trim() ||
-    o.clientName.toLowerCase().trim() === customer.companyName.toLowerCase().trim()
+  const nameLower = customer.name.toLowerCase().trim();
+  const companyLower = customer.companyName.toLowerCase().trim();
+
+  // 1. Filter active Orders for this Customer (exclude Cancelled / Voided from invoice debits)
+  const allCustOrders = orders.filter(
+    o =>
+      o.customerId === customer.id ||
+      o.clientName.toLowerCase().trim() === nameLower ||
+      o.clientName.toLowerCase().trim() === companyLower
   );
+  const custOrders = allCustOrders.filter(isOrderActive);
+  const custOrderIds = new Set(custOrders.map(o => o.id));
+  const voidedOrderIds = new Set(allCustOrders.filter(o => !isOrderActive(o)).map(o => o.id));
 
-  // 2. Filter Financial Entries (Payments / AR Settlements) for this Customer
+  // 2. Filter Financial Entries (Settled AR Payments & Payment Reversals) for this Customer
   const custPayments = financialEntries.filter(entry => {
-    // Direct link by customerId
-    if (entry.customerId && entry.customerId === customer.id) return true;
-    
-    // Direct reference match
-    if (entry.referenceId && entry.referenceId.includes(customer.id)) return true;
+    // Skip void-order counter entries since voided orders are excluded from invoice debits
+    const idUpper = (entry.id || '').toUpperCase();
+    const refStr = entry.referenceId || '';
+    if (idUpper.startsWith('FIN-VOID-') || idUpper.startsWith('FIN-REV-VOID-') || voidedOrderIds.has(refStr) || voidedOrderIds.has(refStr.replace(/^REV-/, ''))) {
+      return false;
+    }
 
-    // Entity name match
+    // Never count unpaid/Pending credit-order accrual rows as cash Payment credits
+    if (entry.status !== 'Settled' && !entry.description.toLowerCase().includes('reversal')) {
+      return false;
+    }
+    if (entry.description.startsWith('Wholesale Credit Order')) {
+      return false;
+    }
+
+    const isDirectCustomerId = Boolean(entry.customerId && entry.customerId === customer.id);
+    const isDirectRef = Boolean(
+      entry.referenceId &&
+        (entry.referenceId === customer.id ||
+          entry.referenceId === `PMT-AR-${customer.id}` ||
+          custOrderIds.has(entry.referenceId) ||
+          custOrderIds.has(entry.referenceId.replace(/^PMT-AR-/, '')))
+    );
+
     const entityLower = (entry.entityName || '').toLowerCase().trim();
-    const nameLower = customer.name.toLowerCase().trim();
-    const companyLower = customer.companyName.toLowerCase().trim();
+    const matchesExactName =
+      entityLower.length > 0 && (entityLower === nameLower || entityLower === companyLower);
 
-    const matchesName = entityLower.length > 0 && (entityLower.includes(nameLower) || nameLower.includes(entityLower));
-    const matchesCompany = entityLower.length > 0 && (entityLower.includes(companyLower) || companyLower.includes(entityLower));
-
-    // Also match reference to any order of this customer
-    const matchesOrderRef = custOrders.some(o => entry.referenceId && entry.referenceId.includes(o.id));
-
-    return (matchesName || matchesCompany || matchesOrderRef) && (entry.type === 'Income' || entry.description.includes('Reversal'));
+    return (
+      (isDirectCustomerId || isDirectRef || matchesExactName) &&
+      (entry.type === 'Income' || entry.description.toLowerCase().includes('reversal'))
+    );
   });
 
   const rawEntries: Array<{
@@ -82,7 +105,7 @@ export function buildCustomerLedger(
         debit: amount,
         credit: 0,
         paymentMethod: order.paymentTerms || 'Net-30 Commercial Credit',
-        status: order.paymentStatus === 'Paid' ? 'Settled' : 'Pending',
+        status: isOrderPaid(order) ? 'Settled' : 'Pending',
         orderId: order.id,
         createdAt: order.orderDate
       }
@@ -129,7 +152,7 @@ export function buildCustomerLedger(
           referenceId: pmt.referenceId || `PMT-${pmt.id}`,
           description: pmt.description || 'AR Payment Settlement Received',
           debit: 0,
-          credit: pmt.amount,
+          credit: Math.abs(pmt.amount),
           paymentMethod: pmt.paymentMethod || 'Bank Wire Transfer',
           status: 'Settled',
           financialEntryId: pmt.id,
@@ -165,8 +188,8 @@ export function buildCustomerLedger(
     ? Math.min(100, Math.round((outstandingBalance / customer.creditLimitUSD) * 1000) / 10)
     : 0;
 
-  const openInvoicesCount = custOrders.filter(o => o.paymentStatus !== 'Paid').length;
-  const paidInvoicesCount = custOrders.filter(o => o.paymentStatus === 'Paid').length;
+  const openInvoicesCount = custOrders.filter(o => !isOrderPaid(o)).length;
+  const paidInvoicesCount = custOrders.filter(o => isOrderPaid(o)).length;
   const paymentsCount = custPayments.filter(p => !p.description.toLowerCase().includes('reversal')).length;
 
   const paymentsSorted = custPayments

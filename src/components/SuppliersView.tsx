@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Ship, 
   Search, 
@@ -31,7 +31,9 @@ import {
   Archive,
   RotateCcw,
   Ban,
-  ShieldAlert
+  ShieldAlert,
+  Edit2,
+  Loader2
 } from 'lucide-react';
 import { 
   Supplier, 
@@ -62,7 +64,9 @@ interface SuppliersViewProps {
   settings?: AppSettings;
   financialEntries?: FinancialLedgerEntry[];
   onAddSupplier: (supplier: Supplier) => void;
+  onUpdateSupplier?: (supplier: Supplier) => Promise<void> | void;
   onAddPurchaseOrder: (po: PurchaseOrderLanding) => void;
+  onUpdatePurchaseOrder?: (po: PurchaseOrderLanding) => Promise<void> | void;
   onRecordPayment: (
     type: 'AR' | 'AP', 
     entityId: string, 
@@ -85,7 +89,9 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
   settings,
   financialEntries = [],
   onAddSupplier,
+  onUpdateSupplier,
   onAddPurchaseOrder,
+  onUpdatePurchaseOrder,
   onRecordPayment,
   onReversePayment,
   onDeleteSupplier,
@@ -171,15 +177,118 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
   const [supTerms, setSupTerms] = useState<any>('Net-15');
   const [supNotes, setSupNotes] = useState('');
 
+  // Edit Supplier Modal State
+  const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
+  const [editSupName, setEditSupName] = useState('');
+  const [editSupContact, setEditSupContact] = useState('');
+  const [editSupType, setEditSupType] = useState<SupplierType>('Fishermen Co-op');
+  const [editSupEmail, setEditSupEmail] = useState('');
+  const [editSupPhone, setEditSupPhone] = useState('');
+  const [editSupPort, setEditSupPort] = useState('');
+  const [editSupCountry, setEditSupCountry] = useState('');
+  const [editSupVessels, setEditSupVessels] = useState('');
+  const [editSupSpecies, setEditSupSpecies] = useState('');
+  const [editSupTerms, setEditSupTerms] = useState<Supplier['paymentTerms']>('Net-15');
+  const [editSupBankRef, setEditSupBankRef] = useState('');
+  const [editSupRating, setEditSupRating] = useState('5.0');
+  const [editSupNotes, setEditSupNotes] = useState('');
+  const [editSupError, setEditSupError] = useState<string | null>(null);
+  const [isSavingSupplier, setIsSavingSupplier] = useState(false);
+
+  // Edit Purchase Order Modal State
+  const [editingPO, setEditingPO] = useState<PurchaseOrderLanding | null>(null);
+  const [editPoSupplierId, setEditPoSupplierId] = useState('');
+  const [editPoVessel, setEditPoVessel] = useState('');
+  const [editPoPort, setEditPoPort] = useState('');
+  const [editPoOrderDate, setEditPoOrderDate] = useState('');
+  const [editPoDeliveryDate, setEditPoDeliveryDate] = useState('');
+  const [editPoPaymentDueDate, setEditPoPaymentDueDate] = useState('');
+  const [editPoReceivedBy, setEditPoReceivedBy] = useState('');
+  const [editPoSpeciesName, setEditPoSpeciesName] = useState('');
+  const [editPoIsAddingNewSpecies, setEditPoIsAddingNewSpecies] = useState(false);
+  const [editPoNewSpeciesInput, setEditPoNewSpeciesInput] = useState('');
+  const [editPoWeightKg, setEditPoWeightKg] = useState('');
+  const [editPoCostPerKg, setEditPoCostPerKg] = useState('');
+  const [editPoGrade, setEditPoGrade] = useState<QualityGrade>('Grade #1');
+  const [editPoStorageZone, setEditPoStorageZone] = useState<StorageZone>('Commercial Cold Storage (-22°C)');
+  const [editPoStatus, setEditPoStatus] = useState<PurchaseOrderLanding['status']>('Received & In Stock');
+  const [editPoNotes, setEditPoNotes] = useState('');
+  const [editPoError, setEditPoError] = useState<string | null>(null);
+  const [isSavingPO, setIsSavingPO] = useState(false);
+
   // New Inward Catch / PO Form State
   const [poSupplierId, setPoSupplierId] = useState(suppliers[0]?.id || '');
   const [poVessel, setPoVessel] = useState('');
-  const [poSpeciesName, setPoSpeciesName] = useState('Pacific Bluefin Tuna (Hon-Maguro)');
+  const [customSpecies, setCustomSpecies] = useState<string[]>([]);
+  const [isAddingNewSpecies, setIsAddingNewSpecies] = useState(false);
+  const [newSpeciesInput, setNewSpeciesInput] = useState('');
+  const [poSpeciesName, setPoSpeciesName] = useState('');
   const [poWeightKg, setPoWeightKg] = useState('');
   const [poCostPerKg, setPoCostPerKg] = useState('');
   const [poGrade, setPoGrade] = useState<QualityGrade>('Grade #1');
   const [poStorageZone, setPoStorageZone] = useState<StorageZone>('Commercial Cold Storage (-22°C)');
   const [poNotes, setPoNotes] = useState('');
+
+  // Derive available seafood species from live inventory batches + newly added custom species
+  const inventorySpeciesOptions = useMemo(() => {
+    const speciesMap = new Map<string, { name: string; availableKg: number; isCustom: boolean }>();
+
+    for (const batch of batches) {
+      const rawName = (batch.speciesName || '').trim();
+      if (!rawName) continue;
+      const key = rawName.toLowerCase();
+      const existing = speciesMap.get(key);
+      const kg = Math.max(0, Number(batch.availableWeightKg) || 0);
+      if (existing) {
+        existing.availableKg += kg;
+      } else {
+        speciesMap.set(key, { name: rawName, availableKg: kg, isCustom: false });
+      }
+    }
+
+    for (const customName of customSpecies) {
+      const trimmed = customName.trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (!speciesMap.has(key)) {
+        speciesMap.set(key, { name: trimmed, availableKg: 0, isCustom: true });
+      }
+    }
+
+    return Array.from(speciesMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [batches, customSpecies]);
+
+  useEffect(() => {
+    if (inventorySpeciesOptions.length === 0) {
+      if (poSpeciesName !== '') {
+        setPoSpeciesName('');
+      }
+      return;
+    }
+    const exists = inventorySpeciesOptions.some(
+      sp => sp.name.toLowerCase() === poSpeciesName.trim().toLowerCase()
+    );
+    if (!poSpeciesName || !exists) {
+      setPoSpeciesName(inventorySpeciesOptions[0].name);
+    }
+  }, [inventorySpeciesOptions, poSpeciesName]);
+
+  const handleConfirmNewSpecies = () => {
+    const trimmed = newSpeciesInput.trim();
+    if (!trimmed) return;
+
+    const existing = inventorySpeciesOptions.find(
+      sp => sp.name.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (existing) {
+      setPoSpeciesName(existing.name);
+    } else {
+      setCustomSpecies(prev => [...prev, trimmed]);
+      setPoSpeciesName(trimmed);
+    }
+    setNewSpeciesInput('');
+    setIsAddingNewSpecies(false);
+  };
 
   // Aggregations
   const totalPayables = suppliers.reduce((sum, s) => sum + s.outstandingPayableUSD, 0);
@@ -211,6 +320,206 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
     setPreselectedPOId(specificPOId);
     setSuggestedPaymentAmount(suggestedAmount);
     setIsRecordPaymentModalOpen(true);
+  };
+
+  const handleOpenEditSupplier = (sup: Supplier) => {
+    setEditingSupplier(sup);
+    setEditSupName(sup.name || '');
+    setEditSupContact(sup.contactPerson || '');
+    setEditSupType(sup.type || 'Fishermen Co-op');
+    setEditSupEmail(sup.email || '');
+    setEditSupPhone(sup.phone || '');
+    setEditSupPort(sup.portLocation || '');
+    setEditSupCountry(sup.country || '');
+    setEditSupVessels((sup.vesselNames || []).join(', '));
+    setEditSupSpecies((sup.suppliedSpecies || []).join(', '));
+    setEditSupTerms(sup.paymentTerms || 'Net-15');
+    setEditSupBankRef(sup.bankAccountRef || '');
+    setEditSupRating(String(sup.rating ?? 5.0));
+    setEditSupNotes(sup.notes || '');
+    setEditSupError(null);
+  };
+
+  const handleSaveEditedSupplier = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSupplier || !onUpdateSupplier) return;
+    if (!editSupName.trim()) {
+      setEditSupError('Supplier / Co-Op Name is required.');
+      return;
+    }
+    if (!editSupEmail.trim()) {
+      setEditSupError('Email address is required.');
+      return;
+    }
+
+    const parsedRating = Math.min(5, Math.max(1, parseFloat(editSupRating) || 5.0));
+    const vessels = editSupVessels
+      .split(',')
+      .map(v => v.trim())
+      .filter(Boolean);
+    const speciesList = editSupSpecies
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    const updated: Supplier = {
+      ...editingSupplier,
+      name: editSupName.trim(),
+      contactPerson: editSupContact.trim() || 'Fleet Dispatcher',
+      type: editSupType,
+      email: editSupEmail.trim(),
+      phone: editSupPhone.trim(),
+      portLocation: editSupPort.trim() || 'Local Commercial Pier',
+      country: editSupCountry.trim(),
+      vesselNames: vessels,
+      suppliedSpecies: speciesList.length > 0 ? speciesList : ['Mixed Groundfish'],
+      paymentTerms: editSupTerms,
+      bankAccountRef: editSupBankRef.trim() || undefined,
+      rating: Number(parsedRating.toFixed(1)),
+      notes: editSupNotes.trim() || undefined,
+    };
+
+    setIsSavingSupplier(true);
+    setEditSupError(null);
+    try {
+      await onUpdateSupplier(updated);
+      if (selectedSupplier?.id === updated.id) {
+        setSelectedSupplier(updated);
+      }
+      setEditingSupplier(null);
+    } catch (err: any) {
+      setEditSupError(err?.message || 'Failed to save supplier changes.');
+    } finally {
+      setIsSavingSupplier(false);
+    }
+  };
+
+  const handleOpenEditPO = (po: PurchaseOrderLanding) => {
+    const firstItem = po.speciesItems[0];
+    setEditingPO(po);
+    setEditPoSupplierId(po.supplierId);
+    setEditPoVessel(po.vesselName || '');
+    setEditPoPort(po.portLocation || '');
+    setEditPoOrderDate(po.orderDate || '');
+    setEditPoDeliveryDate(po.deliveryDate || '');
+    setEditPoPaymentDueDate(po.paymentDueDate || '');
+    setEditPoReceivedBy(po.receivedBy || '');
+    setEditPoSpeciesName(firstItem?.speciesName || '');
+    setEditPoIsAddingNewSpecies(false);
+    setEditPoNewSpeciesInput('');
+    setEditPoWeightKg(firstItem ? String(firstItem.weightKg) : '');
+    setEditPoCostPerKg(firstItem ? String(firstItem.costPerKg) : '');
+    setEditPoGrade(firstItem?.grade || 'Grade #1');
+    setEditPoStorageZone(firstItem?.storageZone || 'Commercial Cold Storage (-22°C)');
+    setEditPoStatus(po.status || 'Received & In Stock');
+    setEditPoNotes(po.notes || '');
+    setEditPoError(null);
+  };
+
+  const handleConfirmEditNewSpecies = () => {
+    const trimmed = editPoNewSpeciesInput.trim();
+    if (!trimmed) return;
+    const existing = inventorySpeciesOptions.find(
+      sp => sp.name.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (existing) {
+      setEditPoSpeciesName(existing.name);
+    } else {
+      setCustomSpecies(prev => [...prev, trimmed]);
+      setEditPoSpeciesName(trimmed);
+    }
+    setEditPoNewSpeciesInput('');
+    setEditPoIsAddingNewSpecies(false);
+  };
+
+  const handleSaveEditedPO = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPO || !onUpdatePurchaseOrder) return;
+
+    const sup = suppliers.find(s => s.id === editPoSupplierId) || suppliers.find(s => s.id === editingPO.supplierId);
+    const weight = parseFloat(editPoWeightKg);
+    const unitCost = parseFloat(editPoCostPerKg);
+
+    if (isNaN(weight) || weight <= 0) {
+      setEditPoError('Landed weight must be greater than 0 kg.');
+      return;
+    }
+    if (isNaN(unitCost) || unitCost < 0) {
+      setEditPoError('Unit cost must be a valid non-negative number.');
+      return;
+    }
+
+    const pendingNew = editPoIsAddingNewSpecies ? editPoNewSpeciesInput.trim() : '';
+    const effectiveSpecies =
+      pendingNew ||
+      (editPoSpeciesName && editPoSpeciesName !== '__ADD_NEW__' ? editPoSpeciesName.trim() : '');
+    if (!effectiveSpecies) {
+      setEditPoError('Please select or enter a seafood species.');
+      return;
+    }
+
+    if (pendingNew) {
+      const existing = inventorySpeciesOptions.find(
+        sp => sp.name.toLowerCase() === pendingNew.toLowerCase()
+      );
+      if (!existing) {
+        setCustomSpecies(prev => [...prev, pendingNew]);
+      }
+      setEditPoSpeciesName(existing ? existing.name : pendingNew);
+      setEditPoNewSpeciesInput('');
+      setEditPoIsAddingNewSpecies(false);
+    }
+
+    const isPaidInFull = editingPO.paymentStatus === 'Paid in Full';
+    const finalSupplierId = isPaidInFull ? editingPO.supplierId : (sup?.id || editingPO.supplierId);
+    const finalSupplierName = isPaidInFull ? editingPO.supplierName : (sup?.name || editingPO.supplierName);
+    const existingFirst = editingPO.speciesItems[0];
+    const finalWeight = isPaidInFull ? (existingFirst?.weightKg ?? weight) : weight;
+    const finalUnitCost = isPaidInFull ? (existingFirst?.costPerKg ?? unitCost) : unitCost;
+    const finalItemTotal = Number((finalWeight * finalUnitCost).toFixed(2));
+    const additionalItemsTotal = editingPO.speciesItems
+      .slice(1)
+      .reduce((acc, item) => acc + (Number(item.totalCost) || 0), 0);
+    const finalTotalCost = isPaidInFull
+      ? editingPO.totalCostUSD
+      : Number((finalItemTotal + additionalItemsTotal).toFixed(2));
+
+    const updatedPO: PurchaseOrderLanding = {
+      ...editingPO,
+      supplierId: finalSupplierId,
+      supplierName: finalSupplierName,
+      vesselName: editPoVessel.trim() || 'Direct Harvester Haul',
+      portLocation: editPoPort.trim() || sup?.portLocation || editingPO.portLocation,
+      orderDate: editPoOrderDate || editingPO.orderDate,
+      deliveryDate: editPoDeliveryDate || editingPO.deliveryDate,
+      paymentDueDate: editPoPaymentDueDate || editingPO.paymentDueDate,
+      receivedBy: editPoReceivedBy.trim() || editingPO.receivedBy || 'Dock Receiving Master',
+      status: editPoStatus,
+      totalCostUSD: finalTotalCost,
+      notes: editPoNotes.trim() || undefined,
+      speciesItems: [
+        {
+          speciesName: effectiveSpecies,
+          weightKg: finalWeight,
+          costPerKg: finalUnitCost,
+          totalCost: finalItemTotal,
+          grade: editPoGrade,
+          storageZone: editPoStorageZone,
+        },
+        ...editingPO.speciesItems.slice(1),
+      ],
+    };
+
+    setIsSavingPO(true);
+    setEditPoError(null);
+    try {
+      await onUpdatePurchaseOrder(updatedPO);
+      setEditingPO(null);
+    } catch (err: any) {
+      setEditPoError(err?.message || 'Failed to update purchase order.');
+    } finally {
+      setIsSavingPO(false);
+    }
   };
 
   const handleCreateSupplierSubmit = (e: React.FormEvent) => {
@@ -269,7 +578,25 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
     if (isNaN(weight) || isNaN(unitCost) || weight <= 0 || unitCost <= 0) return;
 
     const totalCost = weight * unitCost;
-    const effectiveSpeciesName = poSpeciesName.trim() || 'Pacific Bluefin Tuna (Hon-Maguro)';
+    const pendingNewSpecies = isAddingNewSpecies || inventorySpeciesOptions.length === 0 ? newSpeciesInput.trim() : '';
+    const effectiveSpeciesName =
+      pendingNewSpecies ||
+      (poSpeciesName && poSpeciesName !== '__ADD_NEW__' ? poSpeciesName.trim() : '');
+    if (!effectiveSpeciesName) {
+      setIsAddingNewSpecies(true);
+      return;
+    }
+    if (pendingNewSpecies) {
+      const existing = inventorySpeciesOptions.find(
+        sp => sp.name.toLowerCase() === pendingNewSpecies.toLowerCase()
+      );
+      if (!existing) {
+        setCustomSpecies(prev => [...prev, pendingNewSpecies]);
+      }
+      setPoSpeciesName(existing ? existing.name : pendingNewSpecies);
+      setNewSpeciesInput('');
+      setIsAddingNewSpecies(false);
+    }
     const spPrefix = (effectiveSpeciesName.split(' ')[0] || 'FISH').replace(/[^A-Za-z]/g, '').slice(0, 4).toUpperCase() || 'FISH';
     const assignedLotId = `LOT-${new Date().getFullYear()}-${spPrefix}-${Math.floor(1000 + Math.random() * 9000)}`;
 
@@ -574,6 +901,17 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                         Profile
                       </button>
 
+                      {onUpdateSupplier && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditSupplier(sup)}
+                          className="p-1.5 bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 rounded-xl transition-all cursor-pointer"
+                          title="Edit Supplier Details"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+
                       {sup.status === 'Blacklisted' || sup.status === 'Closed' ? (
                         <button
                           onClick={() => handleOpenStatusModal(sup, 'reactivate')}
@@ -692,6 +1030,18 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                   </div>
 
                   <div className="pt-1 flex gap-2">
+                    {onUpdatePurchaseOrder && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditPO(po)}
+                        className="py-2 px-3 bg-white hover:bg-indigo-50 text-indigo-700 border border-slate-200 rounded-xl text-xs font-bold cursor-pointer flex items-center justify-center gap-1"
+                        title="Edit Purchase Order"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        <span>Edit</span>
+                      </button>
+                    )}
+
                     {sup && (
                       <button
                         onClick={() => handleOpenSupplierProfile(sup, 'ledger')}
@@ -783,6 +1133,18 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
 
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          {onUpdatePurchaseOrder && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditPO(po)}
+                              className="p-1.5 text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 rounded-lg text-xs font-bold inline-flex items-center gap-1 cursor-pointer"
+                              title="Edit Purchase Order"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                              <span className="hidden lg:inline">Edit</span>
+                            </button>
+                          )}
+
                           {sup && (
                             <button
                               onClick={() => handleOpenSupplierProfile(sup, 'ledger')}
@@ -864,6 +1226,18 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                     {formatCurrency(selectedSupplier.outstandingPayableUSD)}
                   </div>
                 </div>
+
+                {onUpdateSupplier && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEditSupplier(selectedSupplier)}
+                    className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                    title="Edit Supplier Profile"
+                  >
+                    <Edit2 className="w-3.5 h-3.5 text-blue-300" />
+                    <span>Edit</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => handleOpenRecordPayment(selectedSupplier)}
@@ -1077,6 +1451,18 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                                 }`}>
                                   {po.paymentStatus}
                                 </span>
+
+                                {onUpdatePurchaseOrder && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditPO(po)}
+                                    className="px-2.5 py-1 bg-white hover:bg-indigo-50 text-indigo-700 border border-slate-200 rounded-lg text-xs font-bold cursor-pointer inline-flex items-center gap-1"
+                                    title="Edit Purchase Order"
+                                  >
+                                    <Edit2 className="w-3 h-3" />
+                                    <span>Edit</span>
+                                  </button>
+                                )}
 
                                 {isUnpaid ? (
                                   <button
@@ -1321,21 +1707,72 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Seafood Species</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">Seafood Species</label>
+                    {inventorySpeciesOptions.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddingNewSpecies(prev => !prev);
+                          setNewSpeciesInput('');
+                        }}
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-cyan-700 hover:text-cyan-800 transition-colors"
+                      >
+                        <Plus className="w-3 h-3" />
+                        {isAddingNewSpecies ? 'Cancel' : 'New Species'}
+                      </button>
+                    )}
+                  </div>
                   <select
-                    value={poSpeciesName}
-                    onChange={(e) => setPoSpeciesName(e.target.value)}
+                    value={isAddingNewSpecies ? '__ADD_NEW__' : poSpeciesName}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '__ADD_NEW__') {
+                        setIsAddingNewSpecies(true);
+                        setNewSpeciesInput('');
+                      } else {
+                        setIsAddingNewSpecies(false);
+                        setPoSpeciesName(val);
+                      }
+                    }}
+                    required={!isAddingNewSpecies && inventorySpeciesOptions.length > 0}
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
                   >
-                    <option value="Pacific Bluefin Tuna (Hon-Maguro)">Pacific Bluefin Tuna (Hon-Maguro)</option>
-                    <option value="Yellowfin Tuna (Ahi Loin)">Yellowfin Tuna (Ahi Loin)</option>
-                    <option value="Wild King & Atlantic Salmon (Icy Fjord)">Wild King & Atlantic Salmon (Icy Fjord)</option>
-                    <option value="Red King Crab (Whole Clusters)">Red King Crab (Whole Clusters)</option>
-                    <option value="North Atlantic Hard-Shell Live Lobster">North Atlantic Hard-Shell Live Lobster</option>
-                    <option value="Kumamoto & Belon Pacific Oysters">Kumamoto & Belon Pacific Oysters</option>
-                    <option value="Jumbo Black Tiger Prawns (U-8 Count)">Jumbo Black Tiger Prawns (U-8 Count)</option>
-                    <option value="Alaskan Black Cod (Sablefish Butterfish)">Alaskan Black Cod (Sablefish Butterfish)</option>
+                    {inventorySpeciesOptions.length === 0 && (
+                      <option value="" disabled>No species in inventory — add a new species</option>
+                    )}
+                    {inventorySpeciesOptions.map(sp => (
+                      <option key={sp.name} value={sp.name}>
+                        {sp.name} ({sp.availableKg > 0 ? `${sp.availableKg.toLocaleString()} kg in inventory` : sp.isCustom ? 'New Species' : 'In Inventory · 0 kg'})
+                      </option>
+                    ))}
+                    <option value="__ADD_NEW__">+ Add New Species...</option>
                   </select>
+                  {(isAddingNewSpecies || inventorySpeciesOptions.length === 0) && (
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="Enter new seafood species..."
+                        value={newSpeciesInput}
+                        onChange={(e) => setNewSpeciesInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleConfirmNewSpecies();
+                          }
+                        }}
+                        className="flex-1 px-2.5 py-2 bg-white border border-cyan-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleConfirmNewSpecies}
+                        disabled={!newSpeciesInput.trim()}
+                        className="px-3 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg text-xs font-bold transition-colors shrink-0"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -1624,6 +2061,503 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                   className="flex-1 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-xs cursor-pointer"
                 >
                   Save Supplier Partner
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Supplier Modal */}
+      {editingSupplier && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white max-w-2xl w-full rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-indigo-100 text-indigo-700 rounded-xl">
+                  <Edit2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Edit Supplier Partner</h3>
+                  <p className="text-[11px] text-slate-500 font-mono-code">{editingSupplier.id}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingSupplier(null)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {editSupError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-medium flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{editSupError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEditedSupplier} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Supplier / Co-Op Name</label>
+                  <input
+                    type="text"
+                    value={editSupName}
+                    onChange={(e) => setEditSupName(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Supplier Category</label>
+                  <select
+                    value={editSupType}
+                    onChange={(e) => setEditSupType(e.target.value as SupplierType)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  >
+                    <option value="Fishermen Co-op">Fishermen Co-op</option>
+                    <option value="Aquaculture Farm">Aquaculture Farm</option>
+                    <option value="Vessel / Fleet Captain">Vessel / Fleet Captain</option>
+                    <option value="Fish Auction / Wholesaler">Fish Auction / Wholesaler</option>
+                    <option value="Direct Marine Import">Direct Marine Import</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Contact Person</label>
+                  <input
+                    type="text"
+                    value={editSupContact}
+                    onChange={(e) => setEditSupContact(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={editSupEmail}
+                    onChange={(e) => setEditSupEmail(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Phone</label>
+                  <input
+                    type="text"
+                    value={editSupPhone}
+                    onChange={(e) => setEditSupPhone(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Payment Settlement Terms</label>
+                  <select
+                    value={editSupTerms}
+                    onChange={(e) => setEditSupTerms(e.target.value as Supplier['paymentTerms'])}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  >
+                    <option value="Net-15">Net-15</option>
+                    <option value="Net-30">Net-30</option>
+                    <option value="Cash on Dock (COD)">Cash on Dock (COD)</option>
+                    <option value="Weekly Settlement">Weekly Settlement</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Port Location</label>
+                  <input
+                    type="text"
+                    value={editSupPort}
+                    onChange={(e) => setEditSupPort(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Country</label>
+                  <input
+                    type="text"
+                    value={editSupCountry}
+                    onChange={(e) => setEditSupCountry(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Bank / Remittance Ref</label>
+                  <input
+                    type="text"
+                    placeholder="ACH / Fedwire Verified"
+                    value={editSupBankRef}
+                    onChange={(e) => setEditSupBankRef(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Partner Rating (1.0 – 5.0)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="5"
+                    step="0.1"
+                    value={editSupRating}
+                    onChange={(e) => setEditSupRating(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 font-mono-code"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Registered Vessels (comma separated)</label>
+                  <input
+                    type="text"
+                    placeholder="F/V Ocean Star, F/V Pacific Dawn"
+                    value={editSupVessels}
+                    onChange={(e) => setEditSupVessels(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Supplied Species (comma separated)</label>
+                  <input
+                    type="text"
+                    value={editSupSpecies}
+                    onChange={(e) => setEditSupSpecies(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Notes & Quota Certifications</label>
+                <textarea
+                  rows={2}
+                  value={editSupNotes}
+                  onChange={(e) => setEditSupNotes(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingSupplier(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingSupplier}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white font-bold text-xs shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {isSavingSupplier && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Save Supplier Changes</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Purchase Order Modal */}
+      {editingPO && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white max-w-2xl w-full rounded-3xl p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-blue-100 text-blue-700 rounded-xl">
+                  <Edit2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Edit Purchase Order (Inward Catch)</h3>
+                  <div className="flex items-center gap-2 text-[11px] text-slate-500 font-mono-code">
+                    <span>{editingPO.id}</span>
+                    {editingPO.lotAssignedId && (
+                      <>
+                        <span>•</span>
+                        <span className="text-indigo-700 font-bold">Lot {editingPO.lotAssignedId}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingPO(null)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {editingPO.paymentStatus === 'Paid in Full' && (
+              <div className="p-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-xs flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                <span>
+                  This Purchase Order is <strong>Paid in Full</strong>. Supplier, weight, and unit cost are locked to preserve settled AP ledger integrity; operational details (vessel, port, dates, grade, zone, status, and notes) remain editable.
+                </span>
+              </div>
+            )}
+
+            {editPoError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-medium flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{editPoError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEditedPO} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Source Supplier / Fleet</label>
+                  <select
+                    value={editPoSupplierId}
+                    onChange={(e) => setEditPoSupplierId(e.target.value)}
+                    disabled={editingPO.paymentStatus === 'Paid in Full'}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 disabled:opacity-60"
+                  >
+                    {suppliers.map(s => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.portLocation})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Vessel / Boat Name</label>
+                  <input
+                    type="text"
+                    value={editPoVessel}
+                    onChange={(e) => setEditPoVessel(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Landing Port Location</label>
+                  <input
+                    type="text"
+                    value={editPoPort}
+                    onChange={(e) => setEditPoPort(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Dock Status</label>
+                  <select
+                    value={editPoStatus}
+                    onChange={(e) => setEditPoStatus(e.target.value as PurchaseOrderLanding['status'])}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  >
+                    <option value="Received & In Stock">Received & In Stock</option>
+                    <option value="Pending Dock Inspection">Pending Dock Inspection</option>
+                    <option value="In Transit">In Transit</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Order Date</label>
+                  <input
+                    type="date"
+                    value={editPoOrderDate}
+                    onChange={(e) => setEditPoOrderDate(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Payment Due Date</label>
+                  <input
+                    type="date"
+                    value={editPoPaymentDueDate}
+                    onChange={(e) => setEditPoPaymentDueDate(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">Seafood Species</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditPoIsAddingNewSpecies(prev => !prev);
+                        setEditPoNewSpeciesInput('');
+                      }}
+                      className="inline-flex items-center gap-1 text-[11px] font-bold text-cyan-700 hover:text-cyan-800 transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      {editPoIsAddingNewSpecies ? 'Cancel' : 'New Species'}
+                    </button>
+                  </div>
+                  <select
+                    value={editPoIsAddingNewSpecies ? '__ADD_NEW__' : editPoSpeciesName}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '__ADD_NEW__') {
+                        setEditPoIsAddingNewSpecies(true);
+                        setEditPoNewSpeciesInput('');
+                      } else {
+                        setEditPoIsAddingNewSpecies(false);
+                        setEditPoSpeciesName(val);
+                      }
+                    }}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  >
+                    {editPoSpeciesName &&
+                      !inventorySpeciesOptions.some(sp => sp.name.toLowerCase() === editPoSpeciesName.trim().toLowerCase()) && (
+                        <option value={editPoSpeciesName}>{editPoSpeciesName}</option>
+                      )}
+                    {inventorySpeciesOptions.map(sp => (
+                      <option key={sp.name} value={sp.name}>
+                        {sp.name} ({sp.availableKg > 0 ? `${sp.availableKg.toLocaleString()} kg in inventory` : sp.isCustom ? 'New Species' : 'In Inventory · 0 kg'})
+                      </option>
+                    ))}
+                    <option value="__ADD_NEW__">+ Add New Species...</option>
+                  </select>
+                  {editPoIsAddingNewSpecies && (
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="Enter new seafood species..."
+                        value={editPoNewSpeciesInput}
+                        onChange={(e) => setEditPoNewSpeciesInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleConfirmEditNewSpecies();
+                          }
+                        }}
+                        className="flex-1 px-2.5 py-2 bg-white border border-cyan-300 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleConfirmEditNewSpecies}
+                        disabled={!editPoNewSpeciesInput.trim()}
+                        className="px-3 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg text-xs font-bold transition-colors shrink-0"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Quality Inspection Grade</label>
+                  <select
+                    value={editPoGrade}
+                    onChange={(e) => setEditPoGrade(e.target.value as QualityGrade)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  >
+                    <option value="Sashimi AAA">Sashimi AAA (Prime sashimi)</option>
+                    <option value="Grade #1">Grade #1 (Top restaurant quality)</option>
+                    <option value="Grade #2">Grade #2 (Standard kitchen)</option>
+                    <option value="Live Prime">Live Prime (Active seawater)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Landed Weight (kg)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    disabled={editingPO.paymentStatus === 'Paid in Full'}
+                    value={editPoWeightKg}
+                    onChange={(e) => setEditPoWeightKg(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono-code font-bold text-xs text-slate-900 disabled:opacity-60"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Landing Unit Cost (/ kg)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    disabled={editingPO.paymentStatus === 'Paid in Full'}
+                    value={editPoCostPerKg}
+                    onChange={(e) => setEditPoCostPerKg(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono-code font-bold text-xs text-slate-900 disabled:opacity-60"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Allocated Storage Zone</label>
+                  <select
+                    value={editPoStorageZone}
+                    onChange={(e) => setEditPoStorageZone(e.target.value as StorageZone)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  >
+                    <option value="Super-Cryo Deep Freeze (-60°C)">Super-Cryo Deep Freeze (-60°C)</option>
+                    <option value="Fresh Slush Ice (0°C to +2°C)">Fresh Slush Ice (0°C to +2°C)</option>
+                    <option value="Commercial Cold Storage (-22°C)">Commercial Cold Storage (-22°C)</option>
+                    <option value="Live Seawater Tank (+8°C)">Live Seawater Tank (+8°C)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Received By</label>
+                  <input
+                    type="text"
+                    value={editPoReceivedBy}
+                    onChange={(e) => setEditPoReceivedBy(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Dock Inspection & Handling Notes</label>
+                <textarea
+                  rows={2}
+                  value={editPoNotes}
+                  onChange={(e) => setEditPoNotes(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                />
+              </div>
+
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between">
+                <div>
+                  <div className="text-xs text-slate-500">Updated Purchase Order Total:</div>
+                  <div className="text-sm font-bold text-slate-900">
+                    {editPoWeightKg || 0} kg × {formatCurrency(parseFloat(editPoCostPerKg) || 0)}/kg
+                  </div>
+                </div>
+                <div className="text-xl font-black text-rose-700 font-mono-code">
+                  {formatCurrency((parseFloat(editPoWeightKg) || 0) * (parseFloat(editPoCostPerKg) || 0))}
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingPO(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingPO}
+                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-bold text-xs shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {isSavingPO && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Save Purchase Order</span>
                 </button>
               </div>
             </form>

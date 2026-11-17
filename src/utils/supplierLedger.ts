@@ -23,38 +23,49 @@ export function buildSupplierLedger(
   purchaseOrders: PurchaseOrderLanding[] = [],
   financialEntries: FinancialLedgerEntry[] = []
 ): { entries: SupplierLedgerEntry[]; summary: SupplierLedgerSummary } {
+  const nameLower = supplier.name.toLowerCase().trim();
+
   // 1. Filter Purchase Orders for this Supplier
   const supPOs = purchaseOrders.filter(po => 
     po.supplierId === supplier.id ||
-    po.supplierName.toLowerCase().trim() === supplier.name.toLowerCase().trim()
+    po.supplierName.toLowerCase().trim() === nameLower
   );
+  const supPOIds = new Set(supPOs.map(po => po.id));
 
-  // 2. Filter Financial Entries (Disbursements / AP Settlements) for this Supplier
+  // 2. Filter Financial Entries (Settled Disbursements / AP Settlements & Reversals) for this Supplier
   const supDisbursements = financialEntries.filter(entry => {
-    // Direct link by supplierId
-    if (entry.supplierId && entry.supplierId === supplier.id) return true;
+    const descLower = (entry.description || '').toLowerCase();
+    const isReversal = descLower.includes('reversal') || descLower.includes('void');
 
-    // Direct reference match
-    if (entry.referenceId && (entry.referenceId.includes(supplier.id) || entry.referenceId.includes(`AP-${supplier.id}`))) {
-      return true;
+    // Never treat Pending PO intake accrual rows as cash disbursements
+    if (entry.status !== 'Settled' && !isReversal) {
+      return false;
+    }
+    if (entry.description.startsWith('Catch Intake Purchase')) {
+      return false;
     }
 
-    // Entity name match
-    const entityLower = (entry.entityName || '').toLowerCase().trim();
-    const nameLower = supplier.name.toLowerCase().trim();
-    const matchesName = entityLower.length > 0 && (entityLower.includes(nameLower) || nameLower.includes(entityLower));
+    const isDirectSupplierId = Boolean(entry.supplierId && entry.supplierId === supplier.id);
+    const isDirectRef = Boolean(
+      entry.referenceId &&
+        (entry.referenceId === supplier.id ||
+          entry.referenceId === `PMT-AP-${supplier.id}` ||
+          entry.referenceId === `AP-${supplier.id}` ||
+          supPOIds.has(entry.referenceId) ||
+          supPOIds.has(entry.referenceId.replace(/^PMT-AP-/, '')))
+    );
 
-    // Match reference to any PO of this supplier
-    const matchesPORef = supPOs.some(po => entry.referenceId && entry.referenceId.includes(po.id));
+    const entityLower = (entry.entityName || '').toLowerCase().trim();
+    const matchesExactName = entityLower.length > 0 && entityLower === nameLower;
 
     const isAPType = entry.type === 'COGS' || 
                      entry.category === 'COGS (Catch Intake)' || 
-                     entry.description.toLowerCase().includes('harvester') || 
-                     entry.description.toLowerCase().includes('supplier') || 
-                     entry.description.toLowerCase().includes('payout') ||
-                     entry.description.toLowerCase().includes('disbursement');
+                     descLower.includes('harvester') || 
+                     descLower.includes('supplier') || 
+                     descLower.includes('payout') ||
+                     descLower.includes('disbursement');
 
-    return (matchesName || matchesPORef) && isAPType;
+    return (isDirectSupplierId || isDirectRef || matchesExactName) && isAPType;
   });
 
   const rawEntries: Array<{

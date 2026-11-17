@@ -17,6 +17,23 @@ export function isReversalLedgerEntry(entry: FinancialLedgerEntry): boolean {
   );
 }
 
+export function isInventoryAdjustmentLedgerEntry(entry: FinancialLedgerEntry): boolean {
+  const id = (entry.id || '').toUpperCase();
+  const cat = (entry.category || '').trim().toLowerCase();
+  const desc = (entry.description || '').toLowerCase();
+  const payMethod = (entry.paymentMethod || '').toLowerCase();
+  const entity = (entry.entityName || '').toLowerCase();
+  return (
+    cat === 'inventory adjustment' ||
+    id.startsWith('FIN-ADJ-') ||
+    id.startsWith('FIN-WO-') ||
+    desc.includes('catalog removal inventory write-off') ||
+    (desc.startsWith('inventory lot ') && desc.includes('adjustment')) ||
+    payMethod.startsWith('adjustment account') ||
+    entity.startsWith('internal cold vault [acc')
+  );
+}
+
 export class FinancialRepository extends BaseRepository<FinancialLedgerEntry, DatabaseFinancialEntryRow> {
   constructor() {
     super({
@@ -27,10 +44,6 @@ export class FinancialRepository extends BaseRepository<FinancialLedgerEntry, Da
       getId: (entry) => entry.id,
       onConflict: 'organization_id,id',
     });
-
-    // Pre-register known optional columns pending database migration 017
-    BaseRepository.registerMissingColumn('financial_ledger_entries', 'customer_id');
-    BaseRepository.registerMissingColumn('financial_ledger_entries', 'notes');
   }
 
   public async getEntries(fallback: FinancialLedgerEntry[] = []): Promise<FinancialLedgerEntry[]> {
@@ -45,25 +58,42 @@ export class FinancialRepository extends BaseRepository<FinancialLedgerEntry, Da
     const canQuery = await this.canAccessSupabase();
     if (canQuery) {
       try {
-        const payload: any = this.toDatabase(entry);
+        const payload: any = { ...this.toDatabase(entry) };
         if (orgId) {
           payload.organization_id = orgId;
         }
-        delete payload.customer_id;
-        delete payload.notes;
-        const { data, error } = await supabase
+        const knownMissing = BaseRepository.getMissingColumns(this.tableName);
+        if (knownMissing) {
+          for (const col of knownMissing) {
+            delete payload[col];
+          }
+        }
+
+        let res = await supabase
           .from(this.tableName)
           .insert(payload)
           .select()
           .single();
 
-        if (!error && data) {
-          const created = this.toDomain(data);
+        for (let attempt = 0; attempt < 3 && res.error; attempt++) {
+          const match = res.error.message?.match(/Could not find the '([^']+)' column of/);
+          if (!match || !match[1]) break;
+          BaseRepository.registerMissingColumn(this.tableName, match[1]);
+          delete payload[match[1]];
+          res = await supabase
+            .from(this.tableName)
+            .insert(payload)
+            .select()
+            .single();
+        }
+
+        if (!res.error && res.data) {
+          const created = this.toDomain(res.data);
           const current = this.getLocalCache([], orgId);
           this.setLocalCache([created, ...current], orgId);
           return created;
-        } else if (error) {
-          console.warn('[FinancialRepository] Insert error:', error.message);
+        } else if (res.error) {
+          console.warn('[FinancialRepository] Insert error:', res.error.message);
         }
       } catch (err) {
         console.warn('[FinancialRepository] Direct insert error:', err);
@@ -142,6 +172,93 @@ export class FinancialRepository extends BaseRepository<FinancialLedgerEntry, Da
     // 3. Offline / unauthenticated local cache cleanup
     const cached = this.getLocalCache([], orgId);
     const remaining = cached.filter((e) => !isReversalLedgerEntry(e));
+    const removed = cached.length - remaining.length;
+    this.setLocalCache(remaining, orgId);
+    return {
+      deletedCount: removed,
+      source: 'local_only',
+    };
+  }
+
+  /**
+   * Clear all Inventory Adjustment entries (and queued stock adjustments) from Supabase
+   * financial_ledger_entries + inventory_adjustments via authorized RPC,
+   * purge matching offline syncQueue entries, and refresh tenant local cache.
+   */
+  public async clearInventoryAdjustmentEntries(): Promise<{
+    deletedCount: number;
+    source: 'supabase_rpc' | 'local_only';
+    requiresSqlMigration?: boolean;
+    error?: string;
+  }> {
+    const orgId = await this.getOrganizationId();
+
+    // 1. Purge any queued inventory adjustment entries from syncQueue
+    const queuedLedger = syncQueue.getByTable(this.tableName, orgId);
+    queuedLedger.forEach((item) => {
+      const recId = String(item.recordId || '').toUpperCase();
+      const cat = String(item.payload?.category || '').toLowerCase();
+      const desc = String(item.payload?.description || '').toLowerCase();
+      const payMethod = String(item.payload?.payment_method || '').toLowerCase();
+      const entity = String(item.payload?.entity_name || '').toLowerCase();
+      if (
+        cat === 'inventory adjustment' ||
+        recId.startsWith('FIN-ADJ-') ||
+        recId.startsWith('FIN-WO-') ||
+        desc.includes('catalog removal inventory write-off') ||
+        (desc.startsWith('inventory lot ') && desc.includes('adjustment')) ||
+        payMethod.startsWith('adjustment account') ||
+        entity.startsWith('internal cold vault [acc')
+      ) {
+        syncQueue.dequeue(item.id);
+      }
+    });
+
+    const queuedAdjustments = syncQueue.getByTable('inventory_adjustments', orgId);
+    queuedAdjustments.forEach((item) => {
+      syncQueue.dequeue(item.id);
+    });
+
+    // 2. Attempt authorized Supabase RPC cleanup
+    const canQuery = await this.canAccessSupabase();
+    if (canQuery) {
+      try {
+        const { data, error } = await supabase.rpc('clear_financial_ledger_inventory_adjustments');
+        if (!error) {
+          const cached = this.getLocalCache([], orgId);
+          this.setLocalCache(cached.filter((e) => !isInventoryAdjustmentLedgerEntry(e)), orgId);
+          return {
+            deletedCount: Number(data ?? 0),
+            source: 'supabase_rpc',
+          };
+        }
+
+        const msg = error.message || '';
+        const isMissingRpc =
+          msg.includes('could not find the function') ||
+          msg.includes('does not exist') ||
+          error.code === '42883' ||
+          error.code === 'PGRST202';
+
+        return {
+          deletedCount: 0,
+          source: 'supabase_rpc',
+          requiresSqlMigration: isMissingRpc || msg.toLowerCase().includes('insert-only'),
+          error: msg,
+        };
+      } catch (err: any) {
+        return {
+          deletedCount: 0,
+          source: 'supabase_rpc',
+          requiresSqlMigration: true,
+          error: err?.message || 'Failed to invoke clear_financial_ledger_inventory_adjustments RPC',
+        };
+      }
+    }
+
+    // 3. Offline / unauthenticated local cache cleanup
+    const cached = this.getLocalCache([], orgId);
+    const remaining = cached.filter((e) => !isInventoryAdjustmentLedgerEntry(e));
     const removed = cached.length - remaining.length;
     this.setLocalCache(remaining, orgId);
     return {

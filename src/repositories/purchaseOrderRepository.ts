@@ -44,24 +44,61 @@ export class PurchaseOrderRepository extends BaseRepository<PurchaseOrderLanding
     return this.getAll(fallback);
   }
 
-  public async savePurchaseOrderWithItems(po: PurchaseOrderLanding): Promise<PurchaseOrderLanding> {
-    const saved = await this.save(po);
+  public async savePurchaseOrderWithItems(po: PurchaseOrderLanding, isNew = true): Promise<PurchaseOrderLanding> {
+    const saved = await this.save(po, isNew);
 
     const canQuery = await this.canAccessSupabase();
     if (canQuery && po.speciesItems && po.speciesItems.length > 0) {
       try {
-        const itemsPayload = po.speciesItems.map((item) => ({
-          po_id: po.id,
-          species_id: getSpeciesIdFromName(item.speciesName),
-          species_name: item.speciesName,
-          weight_kg: item.weightKg,
-          cost_per_kg: item.costPerKg,
-          total_cost: item.totalCost,
-          grade: item.grade,
-          storage_zone: item.storageZone,
-        }));
-        await supabase.from('purchase_order_items').delete().eq('po_id', po.id);
-        await supabase.from('purchase_order_items').insert(itemsPayload);
+        const orgId = await this.getOrganizationId();
+
+        let existingQuery = supabase
+          .from('purchase_order_items')
+          .select('id')
+          .eq('po_id', po.id)
+          .order('created_at', { ascending: true });
+        if (orgId) {
+          existingQuery = existingQuery.eq('organization_id', orgId);
+        }
+
+        const { data: existingRows } = await existingQuery;
+
+        for (let idx = 0; idx < po.speciesItems.length; idx++) {
+          const item = po.speciesItems[idx];
+          const rowPayload: Record<string, any> = {
+            po_id: po.id,
+            species_id: getSpeciesIdFromName(item.speciesName),
+            species_name: item.speciesName,
+            weight_kg: item.weightKg,
+            cost_per_kg: item.costPerKg,
+            total_cost: item.totalCost,
+            grade: item.grade,
+            storage_zone: item.storageZone,
+            ...(orgId ? { organization_id: orgId } : {}),
+          };
+
+          const existingRowId = existingRows && existingRows[idx]?.id;
+          if (existingRowId) {
+            let updateQuery = supabase
+              .from('purchase_order_items')
+              .update(rowPayload)
+              .eq('id', existingRowId);
+            if (orgId) {
+              updateQuery = updateQuery.eq('organization_id', orgId);
+            }
+            const { error: updateErr } = await updateQuery;
+            if (updateErr) {
+              console.warn('[PurchaseOrderRepository] purchase order item update note:', updateErr.message);
+            }
+          } else {
+            const { error: insertErr } = await supabase
+              .from('purchase_order_items')
+              .insert(rowPayload);
+            if (insertErr) {
+              console.warn('[PurchaseOrderRepository] purchase order item insert note:', insertErr.message);
+            }
+          }
+        }
       } catch (err) {
         console.warn('[PurchaseOrderRepository] purchase order items sync note:', err);
       }

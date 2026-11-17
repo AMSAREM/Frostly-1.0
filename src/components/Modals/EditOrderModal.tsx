@@ -17,6 +17,9 @@ import {
 } from 'lucide-react';
 import { ClientOrder, OrderLineItem, InventoryBatch, Customer, OrderStatus, PaymentStatus, AppSettings } from '../../types';
 import { formatCurrency, formatWeight } from '../../utils/formatters';
+import { validateOrderLotAvailability } from '../../utils/inventorySync';
+
+const LB_PER_KG = 2.20462;
 
 interface EditOrderModalProps {
   order: ClientOrder;
@@ -120,20 +123,22 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
 
   const handleItemWeightChange = (index: number, val: string) => {
     const num = parseFloat(val);
+    const weightKg = isNaN(num) ? 0 : Math.max(0, useImperial ? num / LB_PER_KG : num);
     const updated = [...items];
     updated[index] = {
       ...updated[index],
-      requestedWeightKg: isNaN(num) ? 0 : Math.max(0, num)
+      requestedWeightKg: Number(weightKg.toFixed(3))
     };
     setItems(updated);
   };
 
   const handleItemPriceChange = (index: number, val: string) => {
     const num = parseFloat(val);
+    const priceKg = isNaN(num) ? 0 : Math.max(0, useImperial ? num * LB_PER_KG : num);
     const updated = [...items];
     updated[index] = {
       ...updated[index],
-      pricePerKg: isNaN(num) ? 0 : Math.max(0, num)
+      pricePerKg: Number(priceKg.toFixed(2))
     };
     setItems(updated);
   };
@@ -177,6 +182,14 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
     if (!clientName.trim()) {
       setValidationError('Please specify the customer or client business name.');
       return;
+    }
+
+    if (status !== 'Cancelled' && status !== 'Voided') {
+      const availability = validateOrderLotAvailability(items, batches, order);
+      if (!availability.valid) {
+        setValidationError(availability.error || 'Requested weight exceeds available batch stock.');
+        return;
+      }
     }
 
     setIsSubmitting(true);
@@ -508,7 +521,7 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                           >
                             {batches.map((b) => (
                               <option key={b.id} value={b.id}>
-                                {b.speciesName} ({b.id}) - Avail: {b.availableWeightKg}kg
+                                {b.speciesName} ({b.id}) - Avail: {formatWeight(b.availableWeightKg, useImperial)}
                               </option>
                             ))}
                             {batches.length === 0 && (
@@ -535,26 +548,26 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                             type="number"
                             step="0.1"
                             min="0.1"
-                            value={item.requestedWeightKg}
+                            value={useImperial ? Number((item.requestedWeightKg * LB_PER_KG).toFixed(2)) : item.requestedWeightKg}
                             onChange={(e) => handleItemWeightChange(index, e.target.value)}
                             className="w-full h-8 bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-right"
                           />
                           {isBulkDiscountEnabled && item.requestedWeightKg >= bulkThresholdKg && (
                             <div className="mt-1 flex items-center justify-end gap-1">
                               <span className="px-1 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[9px] font-bold">
-                                &gt;{bulkThresholdKg}kg Bulk
+                                &gt;{formatWeight(bulkThresholdKg, useImperial, 0)} Bulk
                               </span>
                             </div>
                           )}
                         </td>
 
-                        {/* Price per Kg */}
+                        {/* Price per Kg/Lb */}
                         <td className="py-2 px-2">
                           <input
                             type="number"
                             step="0.01"
                             min="0"
-                            value={item.pricePerKg}
+                            value={useImperial ? Number((item.pricePerKg / LB_PER_KG).toFixed(2)) : item.pricePerKg}
                             onChange={(e) => handleItemPriceChange(index, e.target.value)}
                             className="w-full h-8 bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-right"
                           />

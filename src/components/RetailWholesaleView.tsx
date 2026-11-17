@@ -162,6 +162,13 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
   const cartGrandTotal = taxableAmount + taxAmount;
   const cartCostTotal = posCart.reduce((sum, item) => sum + (item.product.costPricePerUnit * item.quantity), 0);
 
+  // Stock availability check for POS cart items (packs = 0.5 kg)
+  const overstockedCartItems = posCart.filter(item => {
+    const requiredKg = item.product.unit === 'pack' ? item.quantity * 0.5 : item.quantity;
+    return item.product.stockKg >= 0 && requiredKg > item.product.stockKg + 0.01;
+  });
+  const hasStockShortage = overstockedCartItems.length > 0;
+
   // Credit check logic
   const isCreditAccountSale = posPaymentMethod === 'Customer Credit Account';
   const exceedsCreditLimit = isCreditAccountSale && selectedCreditCustomer 
@@ -174,16 +181,24 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
 
   // Add Item to POS Cart
   const handleAddToCart = (product: RetailWholesaleProduct) => {
+    if (product.stockKg <= 0) return;
     setPosCart(prev => {
       const existing = prev.find(item => item.product.id === product.id);
+      const step = product.unit === 'pack' ? 1 : 0.5;
+      const weightFactor = product.unit === 'pack' ? 0.5 : 1;
       if (existing) {
-        return prev.map(item => 
-          item.product.id === product.id 
-            ? { ...item, quantity: parseFloat((item.quantity + (product.unit === 'pack' ? 1 : 0.5)).toFixed(2)) }
+        const nextQty = parseFloat((existing.quantity + step).toFixed(2));
+        if (nextQty * weightFactor > product.stockKg + 0.01) {
+          return prev;
+        }
+        return prev.map(item =>
+          item.product.id === product.id
+            ? { ...item, quantity: nextQty }
             : item
         );
       }
-      return [...prev, { product, quantity: product.unit === 'pack' ? 1 : 1.0 }];
+      const initialQty = product.unit === 'pack' ? 1 : Math.min(1.0, product.stockKg);
+      return [...prev, { product, quantity: parseFloat(initialQty.toFixed(2)) }];
     });
   };
 
@@ -211,6 +226,7 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
 
   const handleCheckoutSubmit = () => {
     if (posCart.length === 0) return;
+    if (hasStockShortage) return;
     if (isCreditAccountSale && !canSubmitCreditSale) return;
 
     const saleItems: RetailSaleItem[] = posCart.map(item => ({
@@ -246,7 +262,7 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
       taxAmount: taxAmount,
       totalAmount: cartGrandTotal,
       costTotal: cartCostTotal,
-      grossMargin: cartGrandTotal - cartCostTotal,
+      grossMargin: Number((taxableAmount - cartCostTotal).toFixed(2)),
       paymentMethod: posPaymentMethod,
       cashierName: 'Anna Vance (Lead Fishmonger)',
       status: 'Completed',
@@ -800,11 +816,21 @@ export const RetailWholesaleView: React.FC<RetailWholesaleViewProps> = ({
                   </div>
                 )}
 
+                {hasStockShortage && (
+                  <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-[11px] text-rose-800 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div>
+                      <strong>Insufficient Stock:</strong>{' '}
+                      {overstockedCartItems.map(i => `${i.product.name} (max ${i.product.stockKg} kg)`).join(', ')}. Reduce cart quantities before checkout.
+                    </div>
+                  </div>
+                )}
+
                 <button
                   onClick={handleCheckoutSubmit}
-                  disabled={isCreditAccountSale && !canSubmitCreditSale}
+                  disabled={hasStockShortage || (isCreditAccountSale && !canSubmitCreditSale)}
                   className={`w-full mt-3 py-3 rounded-2xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 ${
-                    isCreditAccountSale && !canSubmitCreditSale
+                    hasStockShortage || (isCreditAccountSale && !canSubmitCreditSale)
                       ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none'
                       : isCreditAccountSale
                       ? 'bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer'

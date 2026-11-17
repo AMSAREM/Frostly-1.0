@@ -171,4 +171,36 @@ describe('BatchRepository & Data Flow Tests', () => {
     expect(restored.productSku).toBe('SKU-RET-SAL-01');
     expect(restored.notes).toBe('High yield king salmon retail cuts');
   });
+
+  it('deletes an unreferenced batch from local cache and queues DELETE mutation', async () => {
+    await batchRepository.save(sampleBatch, true);
+    syncQueue.clear();
+
+    await batchRepository.delete(sampleBatch.id);
+
+    expect(batchRepository.getLocalCache()).toHaveLength(0);
+    const queueItems = syncQueue.getAll();
+    expect(queueItems).toHaveLength(1);
+    expect(queueItems[0].operation).toBe('DELETE');
+    expect(queueItems[0].recordId).toBe(sampleBatch.id);
+  });
+
+  it('preserves [DECOMMISSIONED] audit tag in notes across toDatabase and toDomain roundtrip', async () => {
+    const decommissioned: InventoryBatch = {
+      ...sampleBatch,
+      availableWeightKg: 0,
+      linkedProductId: 'prod-1',
+      productSku: 'SKU-COD-1',
+      notes: 'Cold storage verified | [DECOMMISSIONED 2026-11-17 | Spoilage / Cold-Chain Excursions | Acc 5150]',
+    };
+
+    await batchRepository.save(decommissioned, false);
+    const queueItem = syncQueue.getAll()[0];
+    const restored = batchMapper.toDomain(queueItem.payload as any);
+
+    expect(restored.availableWeightKg).toBe(0);
+    expect(restored.notes).toContain('[DECOMMISSIONED 2026-11-17');
+    expect(restored.notes).toContain('Acc 5150');
+    expect(restored.linkedProductId).toBe('prod-1');
+  });
 });

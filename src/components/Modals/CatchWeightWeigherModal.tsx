@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { ClientOrder, InventoryBatch } from '../../types';
 import { formatCurrency, formatWeight, getYieldVariance } from '../../utils/formatters';
+import { validateOrderLotAvailability } from '../../utils/inventorySync';
 import confetti from 'canvas-confetti';
 
 interface CatchWeightWeigherModalProps {
@@ -50,6 +51,12 @@ const CatchWeightWeigherContent: React.FC<CatchWeightWeigherContentProps> = ({
   const [grossScaleReadingKg, setGrossScaleReadingKg] = useState<number>(
     ((order.items || [])[0]?.actualWeighedKg ?? (order.items || [])[0]?.requestedWeightKg ?? 10) + 0.8
   );
+  const [error, setError] = useState<string | null>(null);
+
+  const LB_PER_KG = 2.20462;
+  const unitFactor = useImperial ? LB_PER_KG : 1;
+  const unitLabel = useImperial ? 'lbs' : 'kg';
+  const stepKg = useImperial ? Number((0.5 / LB_PER_KG).toFixed(4)) : 0.25;
 
   const currentItem = items[activeItemIndex];
 
@@ -57,6 +64,7 @@ const CatchWeightWeigherContent: React.FC<CatchWeightWeigherContentProps> = ({
   const netWeightKg = Math.max(0.1, Number((grossScaleReadingKg - tareWeightKg).toFixed(2)));
 
   const handleUpdateCurrentItemWeight = (newNetKg: number) => {
+    setError(null);
     const updated = [...items];
     updated[activeItemIndex] = {
       ...updated[activeItemIndex],
@@ -82,16 +90,26 @@ const CatchWeightWeigherContent: React.FC<CatchWeightWeigherContentProps> = ({
 
   const quotedTotal = order.quotedTotalUSD;
   const varianceUSD = adjustedTotal - quotedTotal;
-  const variancePct = (varianceUSD / quotedTotal) * 100;
+  const variancePct = quotedTotal > 0 ? (varianceUSD / quotedTotal) * 100 : 0;
 
   const handleSaveAndConfirm = () => {
-    onSaveWeighedItems(order.id, items, adjustedTotal);
-    confetti({
-      particleCount: 70,
-      spread: 60,
-      origin: { y: 0.6 }
-    });
-    onClose();
+    setError(null);
+    const availability = validateOrderLotAvailability(items, batches, order);
+    if (!availability.valid) {
+      setError(availability.error || 'Insufficient inventory in lot for weighed weight.');
+      return;
+    }
+    try {
+      onSaveWeighedItems(order.id, items, adjustedTotal);
+      confetti({
+        particleCount: 70,
+        spread: 60,
+        origin: { y: 0.6 }
+      });
+      onClose();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save weighed items.');
+    }
   };
 
   return (
@@ -124,6 +142,13 @@ const CatchWeightWeigherContent: React.FC<CatchWeightWeigherContentProps> = ({
 
         {/* Modal Content */}
         <div className="p-6 sm:p-8 space-y-6">
+          {error && (
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2 font-semibold">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
           {/* Item Selector Tabs */}
           <div className="flex gap-2 overflow-x-auto pb-1">
             {items.map((item, idx) => {
@@ -169,37 +194,37 @@ const CatchWeightWeigherContent: React.FC<CatchWeightWeigherContentProps> = ({
 
                 {/* Main Large Digital Weight Display */}
                 <div className="font-mono-code text-5xl font-extrabold text-emerald-400 tracking-tight my-2">
-                  {netWeightKg.toFixed(2)}
-                  <span className="text-xl text-emerald-600 ml-2">kg</span>
+                  {(netWeightKg * unitFactor).toFixed(2)}
+                  <span className="text-xl text-emerald-600 ml-2">{unitLabel}</span>
                 </div>
 
                 <div className="text-xs text-slate-400 flex items-center gap-3">
-                  <span>Gross: {grossScaleReadingKg.toFixed(2)} kg</span>
+                  <span>Gross: {(grossScaleReadingKg * unitFactor).toFixed(2)} {unitLabel}</span>
                   <span>•</span>
-                  <span>Tare: -{tareWeightKg.toFixed(2)} kg (Box/Ice)</span>
+                  <span>Tare: -{(tareWeightKg * unitFactor).toFixed(2)} {unitLabel} (Box/Ice)</span>
                 </div>
 
                 {/* Interactive Scale Controls */}
                 <div className="flex items-center gap-2 mt-4">
                   <button
                     onClick={() => {
-                      const next = Math.max(0.1, grossScaleReadingKg - 0.25);
+                      const next = Math.max(0.1, grossScaleReadingKg - stepKg);
                       setGrossScaleReadingKg(Number(next.toFixed(2)));
                       handleUpdateCurrentItemWeight(Math.max(0.1, next - tareWeightKg));
                     }}
                     className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 transition-colors cursor-pointer"
                   >
-                    -0.25 kg
+                    {useImperial ? '-0.5 lb' : '-0.25 kg'}
                   </button>
                   <button
                     onClick={() => {
-                      const next = grossScaleReadingKg + 0.25;
+                      const next = grossScaleReadingKg + stepKg;
                       setGrossScaleReadingKg(Number(next.toFixed(2)));
                       handleUpdateCurrentItemWeight(next - tareWeightKg);
                     }}
                     className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 transition-colors cursor-pointer"
                   >
-                    +0.25 kg
+                    {useImperial ? '+0.5 lb' : '+0.25 kg'}
                   </button>
                   <button
                     onClick={handleTare}
@@ -249,7 +274,7 @@ const CatchWeightWeigherContent: React.FC<CatchWeightWeigherContentProps> = ({
                       <div className="flex items-center justify-between pt-1 border-t border-white/10 text-[11px]">
                         <span className="text-slate-400">Yield Differential:</span>
                         <span className={`font-bold ${variance.isOver ? 'text-amber-400' : 'text-indigo-300'}`}>
-                          {variance.diffKg > 0 ? `+${variance.diffKg.toFixed(2)}` : variance.diffKg.toFixed(2)} kg ({variance.pct > 0 ? `+${variance.pct.toFixed(1)}` : variance.pct.toFixed(1)}%)
+                          {variance.diffKg > 0 ? '+' : ''}{(variance.diffKg * unitFactor).toFixed(2)} {unitLabel} ({variance.pct > 0 ? `+${variance.pct.toFixed(1)}` : variance.pct.toFixed(1)}%)
                         </span>
                       </div>
                     );

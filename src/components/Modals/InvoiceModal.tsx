@@ -48,6 +48,7 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
   onRecordPayment
 }) => {
   const [copied, setCopied] = useState(false);
+  const [currentPaymentStatus, setCurrentPaymentStatus] = useState<ClientOrder['paymentStatus']>(order.paymentStatus);
 
   // Match customer for credit facility details
   const matchedCustomer = customers.find(
@@ -61,11 +62,11 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
   };
 
   const totalDue = order.adjustedTotalUSD || order.quotedTotalUSD;
-  const isPaid = order.paymentStatus === 'Paid' || order.paymentStatus === 'Paid in Full';
-  const isVoided = order.status === 'Voided' || order.status === 'Cancelled' || order.paymentStatus === 'Cancelled' || order.paymentStatus === 'Voided';
+  const isPaid = currentPaymentStatus === 'Paid' || currentPaymentStatus === 'Paid in Full';
+  const isVoided = order.status === 'Voided' || order.status === 'Cancelled' || currentPaymentStatus === 'Cancelled' || currentPaymentStatus === 'Voided';
 
   const handleCopySummary = () => {
-    const text = `${companyName || 'AMANS OCEAN SEAFOODS'} INVOICE\nOrder ID: ${order.id}\nClient: ${order.clientName}\nDestination: ${order.deliveryAddress}\nTotal Amount Due: ${formatCurrency(totalDue)}\nStatus: ${order.paymentStatus}\nTerms: ${order.paymentTerms || matchedCustomer?.paymentTerms || 'Net-30'}`;
+    const text = `${companyName || 'AMANS OCEAN SEAFOODS'} INVOICE\nOrder ID: ${order.id}\nClient: ${order.clientName}\nDestination: ${order.deliveryAddress}\nTotal Amount Due: ${formatCurrency(totalDue)}\nStatus: ${currentPaymentStatus}\nTerms: ${order.paymentTerms || matchedCustomer?.paymentTerms || 'Net-30'}`;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -73,13 +74,18 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
 
   const handleSettlePayment = () => {
     if (onRecordPayment && matchedCustomer) {
+      // onRecordPayment handles AR deduction, ledger posting, and setting order paymentStatus = 'Paid'
       onRecordPayment('AR', matchedCustomer.id, totalDue, order.id);
+      setCurrentPaymentStatus('Paid');
+    } else {
+      onUpdatePaymentStatus(order.id, 'Paid in Full');
+      setCurrentPaymentStatus('Paid in Full');
     }
-    onUpdatePaymentStatus(order.id, 'Paid in Full');
   };
 
   const handleMarkAsUnpaid = () => {
     onUpdatePaymentStatus(order.id, 'Invoiced');
+    setCurrentPaymentStatus('Invoiced');
   };
 
   const subtotal = order.adjustedTotalUSD || order.quotedTotalUSD;
@@ -274,7 +280,7 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
                           <span>{item.speciesName}</span>
                           {actualKg >= 10 && (
                             <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded text-[9px] font-bold border border-emerald-300">
-                              &gt;10kg Volume Rate
+                              &gt;{formatWeight(10, useImperial, 0)} Volume Rate
                             </span>
                           )}
                         </div>
@@ -291,12 +297,12 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
                         {item.actualWeighedKg !== null && item.actualWeighedKg !== item.requestedWeightKg && (
                           <span className={`text-[10px] ml-1 ${item.actualWeighedKg > item.requestedWeightKg ? 'text-emerald-600' : 'text-rose-500'}`}>
                             ({item.actualWeighedKg > item.requestedWeightKg ? '+' : ''}
-                            {((item.actualWeighedKg - item.requestedWeightKg)).toFixed(2)})
+                            {((item.actualWeighedKg - item.requestedWeightKg) * (useImperial ? 2.20462 : 1)).toFixed(2)} {useImperial ? 'lbs' : 'kg'})
                           </span>
                         )}
                       </td>
                       <td className="py-3 px-2 text-right font-mono-code text-slate-600">
-                        {formatCurrency(item.pricePerKg)}/{useImperial ? 'lb' : 'kg'}
+                        {formatCurrency(useImperial ? item.pricePerKg / 2.20462 : item.pricePerKg)}/{useImperial ? 'lb' : 'kg'}
                       </td>
                       <td className="py-3 px-2 text-right font-mono-code font-bold text-slate-900">
                         {formatCurrency(itemTotal)}
@@ -325,7 +331,7 @@ const InvoiceModalContent: React.FC<InvoiceModalContentProps> = ({
                       ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                       : 'bg-amber-100 text-amber-800 border border-amber-200'
                 }`}>
-                  {isVoided ? 'Cancelled / Voided' : order.paymentStatus}
+                  {isVoided ? 'Cancelled / Voided' : currentPaymentStatus}
                 </span>
 
                 {!isVoided && (!isPaid ? (

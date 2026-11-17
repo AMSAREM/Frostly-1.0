@@ -29,6 +29,9 @@ import {
   calculateGrossMarginPct, 
   formatQuoteExpiry 
 } from '../../utils/pricingEngine';
+import { validateOrderLotAvailability } from '../../utils/inventorySync';
+
+const LB_PER_KG = 2.20462;
 
 interface NewOrderModalProps {
   batches: InventoryBatch[];
@@ -167,20 +170,22 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
   const bulkDiscountPct = settings?.bulkDiscountPct ?? 10;
   const isBulkDiscountEnabled = settings?.enableBulkDiscount ?? true;
 
-  const handleItemWeightChange = (index: number, weight: number) => {
+  const handleItemWeightChange = (index: number, displayWeight: number) => {
+    const weightKg = useImperial ? displayWeight / LB_PER_KG : displayWeight;
     const updated = [...items];
     updated[index] = {
       ...updated[index],
-      requestedWeightKg: Math.max(0.5, weight)
+      requestedWeightKg: Math.max(0.1, Number(weightKg.toFixed(3)))
     };
     setItems(updated);
   };
 
-  const handleItemPriceChange = (index: number, price: number) => {
+  const handleItemPriceChange = (index: number, displayPrice: number) => {
+    const pricePerKg = useImperial ? displayPrice * LB_PER_KG : displayPrice;
     const updated = [...items];
     updated[index] = {
       ...updated[index],
-      pricePerKg: Math.max(0, price)
+      pricePerKg: Math.max(0, Number(pricePerKg.toFixed(2)))
     };
     setItems(updated);
   };
@@ -299,6 +304,12 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
       }
     }
 
+    const availability = validateOrderLotAvailability(items, batches);
+    if (!availability.valid) {
+      setValidationError(availability.error || 'Requested weight exceeds available batch stock.');
+      return;
+    }
+
     const orderId = `ORD-${Math.floor(8000 + Math.random() * 1999)}`;
     const dueDate = calculateDueDate(creditTerms);
 
@@ -339,8 +350,12 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
       packingSlipGenerated: false
     };
 
-    onAddOrder(newOrder);
-    onClose();
+    try {
+      onAddOrder(newOrder);
+      onClose();
+    } catch (err: any) {
+      setValidationError(err?.message || 'Unable to place order. Check available batch inventory.');
+    }
   };
 
   return (
@@ -754,9 +769,9 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
                         </label>
                         <input
                           type="number"
-                          min={0.5}
-                          step={0.5}
-                          value={item.requestedWeightKg}
+                          min={0.2}
+                          step={0.1}
+                          value={useImperial ? Number((item.requestedWeightKg * LB_PER_KG).toFixed(2)) : item.requestedWeightKg}
                           onChange={(e) => handleItemWeightChange(idx, parseFloat(e.target.value) || 0)}
                           className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-bold text-slate-900 font-mono-code"
                         />
@@ -764,13 +779,13 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
 
                       <div className="sm:col-span-2">
                         <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                          Unit Rate ($/{useImperial ? 'lb' : 'kg'})
+                          Unit Rate ({useImperial ? 'per lb' : 'per kg'})
                         </label>
                         <input
                           type="number"
                           min={0}
-                          step={0.1}
-                          value={item.pricePerKg}
+                          step={0.01}
+                          value={useImperial ? Number((item.pricePerKg / LB_PER_KG).toFixed(2)) : item.pricePerKg}
                           onChange={(e) => handleItemPriceChange(idx, parseFloat(e.target.value) || 0)}
                           className={`w-full bg-white border rounded-xl p-2 text-xs font-bold font-mono-code ${
                             marginEval.isBelowFloor ? 'border-amber-400 text-amber-900' : 'border-slate-200 text-slate-900'
@@ -805,7 +820,7 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
                     <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-xs">
                       <div className="flex items-center gap-2">
                         <span className="text-[11px] text-slate-500">
-                          Batch Landed Cost: <strong className="font-mono text-slate-700">{formatCurrency(batchCost)}/kg</strong>
+                          Batch Landed Cost: <strong className="font-mono text-slate-700">{formatCurrency(useImperial ? batchCost / LB_PER_KG : batchCost)}/{useImperial ? 'lb' : 'kg'}</strong>
                         </span>
                         <span className="text-slate-300">•</span>
                         <div className="flex items-center gap-1.5">
@@ -832,7 +847,7 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({
                             title={`Reset selling rate to target ${targetMarginPct}% gross margin`}
                           >
                             <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
-                            <span>Apply Target {targetMarginPct}% ({formatCurrency(marginEval.suggestedPrice)}/kg)</span>
+                            <span>Apply Target {targetMarginPct}% ({formatCurrency(useImperial ? marginEval.suggestedPrice / LB_PER_KG : marginEval.suggestedPrice)}/{useImperial ? 'lb' : 'kg'})</span>
                           </button>
                         )}
 

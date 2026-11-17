@@ -27,7 +27,7 @@ const EXPENSE_CATEGORIES: { label: string; value: FinancialEntryCategory; desc: 
   { label: 'Packaging, Dry Ice & Cartons', value: 'Packaging & Ice', desc: 'Wax boxes, insulated gel packs & styrofoam' },
   { label: 'Labor & Cutting Crew Wages', value: 'Labor & Cutting Crew', desc: 'Filleting team, dockworkers & handlers' },
   { label: 'Dock Fees & Port Taxes', value: 'Dock Fees & Port Taxes', desc: 'Harbor master dues, berth access & inspection' },
-  { label: 'Inventory Adjustment (COGS)', value: 'COGS (Catch Intake)', desc: 'Direct landed seafood intake cost' }
+  { label: 'Direct Catch Intake (COGS)', value: 'COGS (Catch Intake)', desc: 'Direct landed seafood intake cost' }
 ];
 
 const QUICK_AMOUNTS = [100, 250, 500, 1000, 2500, 5000];

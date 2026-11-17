@@ -21,7 +21,8 @@ import {
   Truck,
   ArrowRight,
   Camera,
-  Upload
+  Upload,
+  Trash2
 } from 'lucide-react';
 import { InventoryBatch } from '../../types';
 import { formatCurrency, formatWeight, formatTemp } from '../../utils/formatters';
@@ -31,6 +32,7 @@ interface LotDetailsModalProps {
   onClose: () => void;
   onOpenPassport: (batch: InventoryBatch) => void;
   onOpenAdjustment: (batch: InventoryBatch) => void;
+  onOpenDelete?: (batch: InventoryBatch) => void;
   onNavigateToRetail?: () => void;
   onUpdateBatch?: (updatedBatch: InventoryBatch) => void;
   onOpenImageUpload?: (batch: InventoryBatch) => void;
@@ -42,6 +44,7 @@ export const LotDetailsModal: React.FC<LotDetailsModalProps> = ({
   onClose,
   onOpenPassport,
   onOpenAdjustment,
+  onOpenDelete,
   onNavigateToRetail,
   onUpdateBatch,
   onOpenImageUpload,
@@ -424,13 +427,26 @@ export const LotDetailsModal: React.FC<LotDetailsModalProps> = ({
 
         {/* Modal Footer Actions */}
         <div className="p-4 sm:p-5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
-          <button
-            onClick={() => onOpenAdjustment(batch)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs border border-slate-200 transition-colors shadow-2xs cursor-pointer"
-          >
-            <Sliders className="w-3.5 h-3.5 text-slate-500" />
-            <span>Adjust Stock / Log Waste</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => onOpenAdjustment(batch)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs border border-slate-200 transition-colors shadow-2xs cursor-pointer"
+            >
+              <Sliders className="w-3.5 h-3.5 text-slate-500" />
+              <span>Adjust Stock / Log Waste</span>
+            </button>
+
+            {onOpenDelete && (
+              <button
+                type="button"
+                onClick={() => onOpenDelete(batch)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs border border-rose-200 transition-colors shadow-2xs cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                <span>Write-Off / Delete</span>
+              </button>
+            )}
+          </div>
 
           <div className="flex items-center gap-2">
             <button
