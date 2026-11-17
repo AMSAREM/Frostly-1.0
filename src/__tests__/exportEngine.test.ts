@@ -5,19 +5,23 @@ import {
   exportInventoryToExcel, 
   exportInventoryToPdf,
   exportWholesaleOrdersToExcel,
-  exportWholesaleOrdersToPdf
+  exportWholesaleOrdersToPdf,
+  exportExpensesToExcel,
+  exportExpensesToPdf
 } from '../utils/exportEngine';
-import { RetailWholesaleProduct, InventoryBatch, ClientOrder } from '../types';
-import * as XLSX from 'xlsx';
+import { RetailWholesaleProduct, InventoryBatch, ClientOrder, FinancialLedgerEntry } from '../types';
+import writeXlsxFile from 'write-excel-file/browser';
 import jsPDF from 'jspdf';
 
-vi.mock('xlsx', async (importOriginal) => {
-  const actual: any = await importOriginal();
-  return {
-    ...actual,
-    writeFile: vi.fn(),
-  };
-});
+const mockToFile = vi.fn().mockResolvedValue(undefined);
+const mockToBlob = vi.fn().mockResolvedValue(new Blob());
+
+vi.mock('write-excel-file/browser', () => ({
+  default: vi.fn(() => ({
+    toFile: mockToFile,
+    toBlob: mockToBlob,
+  })),
+}));
 
 vi.mock('jspdf', () => {
   return {
@@ -145,18 +149,36 @@ const mockOrders: ClientOrder[] = [
   }
 ];
 
-describe('Export Engine (Excel & PDF for Dual Pricing, Inventory & Orders)', () => {
-  it('exports Dual Pricing Catalog to Excel workbook without error', () => {
-    expect(() => {
+const mockExpenses: FinancialLedgerEntry[] = [
+  {
+    id: 'exp-1',
+    date: '2026-11-15',
+    description: 'Blast Freezer Compressor Maintenance',
+    category: 'Cold Storage Utilities',
+    type: 'OpEx',
+    amount: 450,
+    paymentMethod: 'Corporate Card',
+    status: 'Settled',
+    entityName: 'CryoTech Services',
+    referenceId: 'VCH-001',
+    voucherNumber: 'VCH-001',
+    notes: 'Routine quarterly inspection'
+  }
+];
+
+describe('Export Engine (Excel & PDF for Dual Pricing, Inventory, Orders & Expenses)', () => {
+  it('exports Dual Pricing Catalog to Excel workbook without error', async () => {
+    await expect(
       exportDualPricingToExcel({
         products: mockProducts,
         batches: mockBatches,
         companyName: 'Amansocean Test',
         currencySymbol: '$'
-      });
-    }).not.toThrow();
+      })
+    ).resolves.toBeUndefined();
 
-    expect(XLSX.writeFile).toHaveBeenCalled();
+    expect(writeXlsxFile).toHaveBeenCalled();
+    expect(mockToFile).toHaveBeenCalledWith(expect.stringContaining('Amansocean_Test_Dual_Pricing_Catalog_'));
   });
 
   it('exports Dual Pricing Catalog to PDF document without error', () => {
@@ -170,15 +192,16 @@ describe('Export Engine (Excel & PDF for Dual Pricing, Inventory & Orders)', () 
     }).not.toThrow();
   });
 
-  it('exports Cold Vault Inventory Ledger to Excel workbook without error', () => {
-    expect(() => {
+  it('exports Cold Vault Inventory Ledger to Excel workbook without error', async () => {
+    await expect(
       exportInventoryToExcel({
         batches: mockBatches,
         products: mockProducts,
         companyName: 'Amansocean Test',
         currencySymbol: '$'
-      });
-    }).not.toThrow();
+      })
+    ).resolves.toBeUndefined();
+    expect(mockToFile).toHaveBeenCalledWith(expect.stringContaining('Amansocean_Test_Cold_Storage_Inventory_'));
   });
 
   it('exports Cold Vault Inventory Ledger to PDF document without error', () => {
@@ -192,18 +215,38 @@ describe('Export Engine (Excel & PDF for Dual Pricing, Inventory & Orders)', () 
     }).not.toThrow();
   });
 
-  it('exports Wholesale B2B Orders to Excel and PDF without error', () => {
-    expect(() => {
+  it('exports Wholesale B2B Orders to Excel and PDF without error', async () => {
+    await expect(
       exportWholesaleOrdersToExcel({
+        orders: mockOrders,
+        companyName: 'Amansocean Test',
+        currencySymbol: '$'
+      })
+    ).resolves.toBeUndefined();
+    expect(mockToFile).toHaveBeenCalledWith(expect.stringContaining('Amansocean_Test_Wholesale_Orders_'));
+
+    expect(() => {
+      exportWholesaleOrdersToPdf({
         orders: mockOrders,
         companyName: 'Amansocean Test',
         currencySymbol: '$'
       });
     }).not.toThrow();
+  });
+
+  it('exports Operating Expenses to Excel and PDF without error', async () => {
+    await expect(
+      exportExpensesToExcel({
+        expenses: mockExpenses,
+        companyName: 'Amansocean Test',
+        currencySymbol: '$'
+      })
+    ).resolves.toBeUndefined();
+    expect(mockToFile).toHaveBeenCalledWith(expect.stringContaining('Amansocean_Test_Expense_Ledger_'));
 
     expect(() => {
-      exportWholesaleOrdersToPdf({
-        orders: mockOrders,
+      exportExpensesToPdf({
+        expenses: mockExpenses,
         companyName: 'Amansocean Test',
         currencySymbol: '$'
       });

@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import writeXlsxFile, { type CellObject, type Row, type SheetData } from 'write-excel-file/browser';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { RetailWholesaleProduct, InventoryBatch, ClientOrder, FinancialLedgerEntry } from '../types';
@@ -20,6 +20,42 @@ const formatDate = (dateStr?: string): string => {
   }
 };
 
+const toCell = (val: unknown, bold = false): CellObject => {
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    return { type: Number, value: val, ...(bold ? { fontWeight: 'bold' as const } : {}) };
+  }
+  if (typeof val === 'boolean') {
+    return { type: Boolean, value: val, ...(bold ? { fontWeight: 'bold' as const } : {}) };
+  }
+  return {
+    type: String,
+    value: val === null || val === undefined ? '' : String(val),
+    ...(bold ? { fontWeight: 'bold' as const } : {})
+  };
+};
+
+const recordsToSheetData = (rows: Record<string, unknown>[], fallbackHeaders: string[] = []): SheetData => {
+  const headers = rows.length > 0 ? Object.keys(rows[0]) : fallbackHeaders;
+  if (headers.length === 0) {
+    return [[{ type: String, value: 'No data available' }]];
+  }
+  const headerRow: Row = headers.map((header) => ({
+    type: String,
+    value: header,
+    fontWeight: 'bold',
+    backgroundColor: '#0F172A',
+    color: '#FFFFFF'
+  }));
+  const bodyRows: Row[] = rows.map((row) => headers.map((h) => toCell(row[h])));
+  return [headerRow, ...bodyRows];
+};
+
+const aoaToSheetData = (rows: unknown[][]): SheetData => {
+  return rows.map((row, rowIdx) =>
+    row.map((val) => toCell(val, rowIdx === 0))
+  );
+};
+
 /**
  * ============================================================================
  * 1. DUAL PRICING CATALOG EXPORTS (EXCEL & PDF)
@@ -38,9 +74,8 @@ export function exportDualPricingToExcel({
   batches = [],
   companyName = 'Amansocean Seafoods',
   currencySymbol = '$'
-}: ExportDualPricingOptions): void {
+}: ExportDualPricingOptions): Promise<void> {
   const dateStr = new Date().toISOString().split('T')[0];
-  const workbook = XLSX.utils.book_new();
 
   // 1. Main Dual Price Catalog Worksheet
   const catalogRows = products.map(prod => {
@@ -81,31 +116,26 @@ export function exportDualPricingToExcel({
     };
   });
 
-  const catalogWorksheet = XLSX.utils.json_to_sheet(catalogRows);
-
-  // Auto-fit column widths
   const colWidths = [
-    { wch: 14 }, // SKU
-    { wch: 32 }, // Product Name
-    { wch: 24 }, // Cut Type
-    { wch: 14 }, // Category
-    { wch: 14 }, // Grade
-    { wch: 22 }, // Origin
-    { wch: 28 }, // Storage Zone
-    { wch: 18 }, // Cost
-    { wch: 18 }, // Wholesale
-    { wch: 18 }, // Retail
-    { wch: 16 }, // Wholesale Margin
-    { wch: 16 }, // Retail Margin
-    { wch: 14 }, // MOQ
-    { wch: 20 }, // Pack Format
-    { wch: 16 }, // Stock
-    { wch: 20 }, // Total Value
-    { wch: 22 }, // Linked Vault Lot
-    { wch: 16 }  // Parity Status
+    { width: 14 }, // SKU
+    { width: 32 }, // Product Name
+    { width: 24 }, // Cut Type
+    { width: 14 }, // Category
+    { width: 14 }, // Grade
+    { width: 22 }, // Origin
+    { width: 28 }, // Storage Zone
+    { width: 18 }, // Cost
+    { width: 18 }, // Wholesale
+    { width: 18 }, // Retail
+    { width: 16 }, // Wholesale Margin
+    { width: 16 }, // Retail Margin
+    { width: 14 }, // MOQ
+    { width: 20 }, // Pack Format
+    { width: 16 }, // Stock
+    { width: 20 }, // Total Value
+    { width: 22 }, // Linked Vault Lot
+    { width: 16 }  // Parity Status
   ];
-  catalogWorksheet['!cols'] = colWidths;
-  XLSX.utils.book_append_sheet(workbook, catalogWorksheet, 'Dual Price Catalog');
 
   // 2. Executive Summary Worksheet
   const totalStockKg = products.reduce((sum, p) => sum + (Number(p.stockKg) || 0), 0);
@@ -145,12 +175,19 @@ export function exportDualPricingToExcel({
     ['CONFIDENTIAL - FOR INTERNAL COMMERCIAL AND APPROVED CLIENT PROCUREMENT USE ONLY']
   ];
 
-  const summaryWorksheet = XLSX.utils.aoa_to_sheet(summaryData);
-  summaryWorksheet['!cols'] = [{ wch: 38 }, { wch: 40 }];
-  XLSX.utils.book_append_sheet(workbook, summaryWorksheet, 'Commercial Summary');
-
   const cleanCompanyName = companyName.replace(/[^a-zA-Z0-9_-]/g, '_');
-  XLSX.writeFile(workbook, `${cleanCompanyName}_Dual_Pricing_Catalog_${dateStr}.xlsx`);
+  return writeXlsxFile([
+    {
+      sheet: 'Dual Price Catalog',
+      data: recordsToSheetData(catalogRows),
+      columns: colWidths
+    },
+    {
+      sheet: 'Commercial Summary',
+      data: aoaToSheetData(summaryData),
+      columns: [{ width: 38 }, { width: 40 }]
+    }
+  ]).toFile(`${cleanCompanyName}_Dual_Pricing_Catalog_${dateStr}.xlsx`);
 }
 
 export function exportDualPricingToPdf({
@@ -329,12 +366,11 @@ export interface ExportInventoryOptions {
 
 export function exportInventoryToExcel({
   batches,
-  products = [],
+  products: _products = [],
   companyName = 'Amansocean Seafoods',
   currencySymbol = '$'
-}: ExportInventoryOptions): void {
+}: ExportInventoryOptions): Promise<void> {
   const dateStr = new Date().toISOString().split('T')[0];
-  const workbook = XLSX.utils.book_new();
 
   // 1. Detailed Cold Storage Lots Worksheet
   const lotRows = batches.map(batch => {
@@ -379,38 +415,36 @@ export function exportInventoryToExcel({
     };
   });
 
-  const lotsWorksheet = XLSX.utils.json_to_sheet(lotRows);
-  lotsWorksheet['!cols'] = [
-    { wch: 18 }, // Lot ID
-    { wch: 28 }, // Species
-    { wch: 26 }, // Scientific
-    { wch: 14 }, // Category
-    { wch: 14 }, // Grade
-    { wch: 28 }, // Storage Zone
-    { wch: 16 }, // Current Temp
-    { wch: 16 }, // Target Temp
-    { wch: 20 }, // Available Weight
-    { wch: 20 }, // Allocated Weight
-    { wch: 20 }, // Initial Intake
-    { wch: 16 }, // Cost / kg
-    { wch: 18 }, // Wholesale / kg
-    { wch: 18 }, // Lot Cost Basis
-    { wch: 20 }, // Lot Commercial Value
-    { wch: 18 }, // Estimated Profit
-    { wch: 14 }, // Harvest Date
-    { wch: 16 }, // Received Date
-    { wch: 14 }, // Expiry Date
-    { wch: 22 }, // Vessel Name
-    { wch: 18 }, // Vessel Reg
-    { wch: 24 }, // Landing Port
-    { wch: 24 }, // FAO Area
-    { wch: 16 }, // Inspection
-    { wch: 18 }, // Histamine
-    { wch: 18 }, // Product SKU
-    { wch: 20 }, // Product ID
-    { wch: 30 }  // Certifications
+  const lotsCols = [
+    { width: 18 }, // Lot ID
+    { width: 28 }, // Species
+    { width: 26 }, // Scientific
+    { width: 14 }, // Category
+    { width: 14 }, // Grade
+    { width: 28 }, // Storage Zone
+    { width: 16 }, // Current Temp
+    { width: 16 }, // Target Temp
+    { width: 20 }, // Available Weight
+    { width: 20 }, // Allocated Weight
+    { width: 20 }, // Initial Intake
+    { width: 16 }, // Cost / kg
+    { width: 18 }, // Wholesale / kg
+    { width: 18 }, // Lot Cost Basis
+    { width: 20 }, // Lot Commercial Value
+    { width: 18 }, // Estimated Profit
+    { width: 14 }, // Harvest Date
+    { width: 16 }, // Received Date
+    { width: 14 }, // Expiry Date
+    { width: 22 }, // Vessel Name
+    { width: 18 }, // Vessel Reg
+    { width: 24 }, // Landing Port
+    { width: 24 }, // FAO Area
+    { width: 16 }, // Inspection
+    { width: 18 }, // Histamine
+    { width: 18 }, // Product SKU
+    { width: 20 }, // Product ID
+    { width: 30 }  // Certifications
   ];
-  XLSX.utils.book_append_sheet(workbook, lotsWorksheet, 'Vault Lots Master');
 
   // 2. Storage Zone Breakdown Worksheet
   const zones = Array.from(new Set(batches.map(b => b.storageZone)));
@@ -430,19 +464,26 @@ export function exportInventoryToExcel({
     };
   });
 
-  const zoneWorksheet = XLSX.utils.json_to_sheet(zoneSummary);
-  zoneWorksheet['!cols'] = [
-    { wch: 32 },
-    { wch: 16 },
-    { wch: 24 },
-    { wch: 26 },
-    { wch: 24 },
-    { wch: 26 }
-  ];
-  XLSX.utils.book_append_sheet(workbook, zoneWorksheet, 'Cold Zone Analytics');
-
   const cleanCompanyName = companyName.replace(/[^a-zA-Z0-9_-]/g, '_');
-  XLSX.writeFile(workbook, `${cleanCompanyName}_Cold_Storage_Inventory_${dateStr}.xlsx`);
+  return writeXlsxFile([
+    {
+      sheet: 'Vault Lots Master',
+      data: recordsToSheetData(lotRows),
+      columns: lotsCols
+    },
+    {
+      sheet: 'Cold Zone Analytics',
+      data: recordsToSheetData(zoneSummary),
+      columns: [
+        { width: 32 },
+        { width: 16 },
+        { width: 24 },
+        { width: 26 },
+        { width: 24 },
+        { width: 26 }
+      ]
+    }
+  ]).toFile(`${cleanCompanyName}_Cold_Storage_Inventory_${dateStr}.xlsx`);
 }
 
 export function exportInventoryToPdf({
@@ -621,9 +662,8 @@ export function exportWholesaleOrdersToExcel({
   orders,
   companyName = 'Amansocean Seafoods',
   currencySymbol = '$'
-}: ExportOrdersOptions): void {
+}: ExportOrdersOptions): Promise<void> {
   const dateStr = new Date().toISOString().split('T')[0];
-  const workbook = XLSX.utils.book_new();
 
   const orderRows = orders.map(o => {
     const totalVal = o.adjustedTotalUSD || o.quotedTotalUSD || 0;
@@ -652,31 +692,33 @@ export function exportWholesaleOrdersToExcel({
     };
   });
 
-  const worksheet = XLSX.utils.json_to_sheet(orderRows);
-  worksheet['!cols'] = [
-    { wch: 14 },
-    { wch: 28 },
-    { wch: 22 },
-    { wch: 18 },
-    { wch: 26 },
-    { wch: 14 },
-    { wch: 16 },
-    { wch: 18 },
-    { wch: 16 },
-    { wch: 14 },
-    { wch: 14 },
-    { wch: 18 },
-    { wch: 18 },
-    { wch: 20 },
-    { wch: 28 },
-    { wch: 45 },
-    { wch: 16 },
-    { wch: 16 }
-  ];
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Wholesale Orders');
-
   const cleanCompanyName = companyName.replace(/[^a-zA-Z0-9_-]/g, '_');
-  XLSX.writeFile(workbook, `${cleanCompanyName}_Wholesale_Orders_${dateStr}.xlsx`);
+  return writeXlsxFile([
+    {
+      sheet: 'Wholesale Orders',
+      data: recordsToSheetData(orderRows),
+      columns: [
+        { width: 14 },
+        { width: 28 },
+        { width: 22 },
+        { width: 18 },
+        { width: 26 },
+        { width: 14 },
+        { width: 16 },
+        { width: 18 },
+        { width: 16 },
+        { width: 14 },
+        { width: 14 },
+        { width: 18 },
+        { width: 18 },
+        { width: 20 },
+        { width: 28 },
+        { width: 45 },
+        { width: 16 },
+        { width: 16 }
+      ]
+    }
+  ]).toFile(`${cleanCompanyName}_Wholesale_Orders_${dateStr}.xlsx`);
 }
 
 export function exportWholesaleOrdersToPdf({
@@ -840,9 +882,8 @@ export function exportExpensesToExcel({
   expenses,
   companyName = 'Amansocean Seafoods',
   currencySymbol = '$'
-}: ExportExpensesOptions): void {
+}: ExportExpensesOptions): Promise<void> {
   const dateStr = new Date().toISOString().split('T')[0];
-  const workbook = XLSX.utils.book_new();
 
   const rows = expenses.map(exp => ({
     'Date': formatDate(exp.date),
@@ -855,20 +896,6 @@ export function exportExpensesToExcel({
     'Status': exp.status,
     'Notes': exp.notes || ''
   }));
-
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  worksheet['!cols'] = [
-    { wch: 12 },
-    { wch: 18 },
-    { wch: 28 },
-    { wch: 24 },
-    { wch: 36 },
-    { wch: 22 },
-    { wch: 16 },
-    { wch: 12 },
-    { wch: 26 }
-  ];
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Expense Ledger');
 
   // Category Breakdown sheet
   const byCategory = expenses.reduce<Record<string, { total: number; count: number }>>((acc, exp) => {
@@ -898,12 +925,29 @@ export function exportExpensesToExcel({
       ])
   ];
 
-  const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
-  summarySheet['!cols'] = [{ wch: 32 }, { wch: 12 }, { wch: 18 }, { wch: 14 }];
-  XLSX.utils.book_append_sheet(workbook, summarySheet, 'OpEx Summary');
-
   const cleanCompanyName = companyName.replace(/[^a-zA-Z0-9_-]/g, '_');
-  XLSX.writeFile(workbook, `${cleanCompanyName}_Expense_Ledger_${dateStr}.xlsx`);
+  return writeXlsxFile([
+    {
+      sheet: 'Expense Ledger',
+      data: recordsToSheetData(rows),
+      columns: [
+        { width: 12 },
+        { width: 18 },
+        { width: 28 },
+        { width: 24 },
+        { width: 36 },
+        { width: 22 },
+        { width: 16 },
+        { width: 12 },
+        { width: 26 }
+      ]
+    },
+    {
+      sheet: 'OpEx Summary',
+      data: aoaToSheetData(summaryRows),
+      columns: [{ width: 32 }, { width: 12 }, { width: 18 }, { width: 14 }]
+    }
+  ]).toFile(`${cleanCompanyName}_Expense_Ledger_${dateStr}.xlsx`);
 }
 
 export function exportExpensesToPdf({
